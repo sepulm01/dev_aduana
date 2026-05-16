@@ -1,25 +1,51 @@
 {% extends "base.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}Dispositivos{% endblock %}
 {% block content %}
-<h4 class="mb-3"><i class="bi bi-collection"></i> Dispositivos</h4>
+<div class="page-header">
+    <div class="row align-items-center">
+        <div class="col">
+            <div class="page-pretitle">Cámaras ONVIF</div>
+            <h2 class="page-title"><i class="ti ti-layout-grid me-2"></i>Dispositivos</h2>
+        </div>
+        <div class="col-auto ms-auto">
+            <a class="btn btn-primary" href="/discover/">
+                <i class="ti ti-search me-2"></i>Descubrir
+            </a>
+        </div>
+    </div>
+</div>
 
 {% if devices %}
-<div class="row g-3">
+<div class="row row-cards">
     {% for d in devices %}
-    <div class="col-md-4">
-        <div class="card bg-black border-secondary h-100">
+    <div class="col-sm-6 col-lg-4">
+        <div class="card">
+            {% if d.is_online %}
+            <div class="card-status-top bg-green"></div>
+            {% else %}
+            <div class="card-status-top bg-red"></div>
+            {% endif %}
             <div class="card-body">
-                <h5 class="card-title">
-                    {% if d.is_online %}<i class="bi bi-check-circle text-success"></i>{% else %}<i class="bi bi-x-circle text-danger"></i>{% endif %}
+                <div class="d-flex align-items-center mb-3">
+                    <div class="subheader">{% if d.is_online %}En línea{% else %}Desconectado{% endif %}</div>
+                </div>
+                <h3 class="card-title d-flex align-items-center gap-2">
+                    <i class="ti ti-video text-muted"></i>
                     {{ d.name }}
-                </h5>
-                <p class="card-text small text-muted">
-                    {{ d.host }}:{{ d.port }}<br>
-                    {{ d.manufacturer }} {{ d.model }}
-                </p>
+                </h3>
+                <div class="text-muted mb-3">
+                    <small>{{ d.host }}:{{ d.port }}</small>
+                </div>
+                <div class="text-muted mb-3">
+                    <small>{{ d.manufacturer }} {{ d.model }}</small>
+                </div>
                 <div class="d-flex gap-2">
-                    <a href="{% url 'device_detail' d.id %}" class="btn btn-sm btn-outline-info"><i class="bi bi-info-circle"></i></a>
-                    <a href="/live/{{ d.id }}/" class="btn btn-sm btn-outline-success"><i class="bi bi-play-fill"></i> Live</a>
+                    <a class="btn btn-outline-info btn-icon" href="{% url 'device_detail' d.id %}" title="Detalle">
+                        <i class="ti ti-info-circle"></i>
+                    </a>
+                    <a class="btn btn-outline-success" href="/live/{{ d.id }}/">
+                        <i class="ti ti-player-play-filled me-1"></i>Live
+                    </a>
                 </div>
             </div>
         </div>
@@ -27,9 +53,17 @@
     {% endfor %}
 </div>
 {% else %}
-<div class="text-center text-muted py-5">
-    <i class="bi bi-camera-video-off" style="font-size: 4rem;"></i>
-    <p class="mt-2">No hay dispositivos. <a href="{% url 'discover' %}" class="text-info">Descubrir cámaras</a></p>
+<div class="empty">
+    <div class="empty-icon">
+        <i class="ti ti-video-off" style="font-size: 3rem;"></i>
+    </div>
+    <p class="empty-title">No hay dispositivos</p>
+    <p class="empty-subtitle text-muted">Agrega cámaras manualmente o usa el scanner de red.</p>
+    <div class="empty-action">
+        <a class="btn btn-primary" href="/discover/">
+            <i class="ti ti-search me-2"></i>Descubrir cámaras
+        </a>
+    </div>
 </div>
 {% endif %}
 {% endblock %}

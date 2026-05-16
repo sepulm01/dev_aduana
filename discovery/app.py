@@ -20,11 +20,30 @@ PROBE_TIMEOUT = 3
 NMAP_ARGS = "-T4 --open"
 
 
+EXCLUDED_NETS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("10.0.0.0/8"),
+]
+
+
 def _get_local_subnet():
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+    finally:
+        s.close()
     interface = ipaddress.ip_interface(f"{local_ip}/24")
-    return interface.network
+    subnet = interface.network
+    for excluded in EXCLUDED_NETS:
+        if subnet.overlaps(excluded):
+            logger.warning(
+                "Detected subnet %s is in excluded range %s", subnet, excluded
+            )
+            return None
+    return subnet
 
 
 def _probe_onvif(host, port=80):
@@ -90,6 +109,9 @@ def _nmap_scan(timeout):
     devices = []
     try:
         subnet = _get_local_subnet()
+        if not subnet:
+            logger.warning("No valid subnet detected, skipping Nmap scan")
+            return devices
         logger.info("Nmap scanning subnet %s", subnet)
         nm = nmap.PortScanner()
         nm.scan(

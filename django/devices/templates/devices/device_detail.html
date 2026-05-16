@@ -3,68 +3,75 @@
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
-        <li class="breadcrumb-item"><a href="/" class="text-info">Dashboard</a></li>
+        <li class="breadcrumb-item"><a href="/" class="text-reset">Dispositivos</a></li>
         <li class="breadcrumb-item active">{{ device.name }}</li>
     </ol>
 </nav>
 
 <div class="row">
     <div class="col-md-6">
-        <div class="card bg-black border-secondary mb-3">
-            <div class="card-header"><h5 class="mb-0"><i class="bi bi-info-circle"></i> Información</h5></div>
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title"><i class="ti ti-info-circle me-2"></i>Información</h3>
+            </div>
             <div class="card-body">
-                <dl class="row mb-0 small">
-                    <dt class="col-sm-4">Host</dt>
-                    <dd class="col-sm-8">{{ device.host }}:{{ device.port }}</dd>
-                    <dt class="col-sm-4">Fabricante</dt>
-                    <dd class="col-sm-8">{{ device.manufacturer|default:"-" }}</dd>
-                    <dt class="col-sm-4">Modelo</dt>
-                    <dd class="col-sm-8">{{ device.model|default:"-" }}</dd>
-                    <dt class="col-sm-4">Firmware</dt>
-                    <dd class="col-sm-8">{{ device.firmware|default:"-" }}</dd>
-                    <dt class="col-sm-4">Serial</dt>
-                    <dd class="col-sm-8">{{ device.serial_number|default:"-" }}</dd>
-                    <dt class="col-sm-4">Online</dt>
-                    <dd class="col-sm-8">{% if device.is_online %}<span class="text-success">Si</span>{% else %}<span class="text-danger">No</span>{% endif %}</dd>
+                <dl class="dl-row mb-0">
+                    <dt>Host</dt>
+                    <dd>{{ device.host }}:{{ device.port }}</dd>
+                    <dt>Fabricante</dt>
+                    <dd>{{ device.manufacturer|default:"-" }}</dd>
+                    <dt>Modelo</dt>
+                    <dd>{{ device.model|default:"-" }}</dd>
+                    <dt>Firmware</dt>
+                    <dd>{{ device.firmware|default:"-" }}</dd>
+                    <dt>Serial</dt>
+                    <dd>{{ device.serial_number|default:"-" }}</dd>
+                    <dt>Online</dt>
+                    <dd>
+                        {% if device.is_online %}
+                        <span class="badge bg-green">En línea</span>
+                        {% else %}
+                        <span class="badge bg-red">Desconectado</span>
+                        {% endif %}
+                    </dd>
                 </dl>
             </div>
         </div>
 
-        <div class="card bg-black border-secondary mb-3">
-            <div class="card-header"><h6 class="mb-0"><i class="bi bi-eye"></i> Detección de movimiento</h6></div>
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title"><i class="ti ti-eye me-2"></i>Detección de movimiento</h3>
+            </div>
             <div class="card-body" id="motionConfig">
                 <div class="text-center text-muted py-3">
-                    <div class="spinner-border spinner-border-sm"></div>
-                    <p class="mt-2 small">Cargando configuración...</p>
+                    <span class="spinner-border spinner-border-sm"></span>
+                    <p class="mt-2 mb-0 small">Cargando configuración...</p>
                 </div>
             </div>
         </div>
 
-        <div class="card bg-black border-secondary mb-3">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h6 class="mb-0"><i class="bi bi-gear"></i> Capabilities</h6>
-                <div>
+        <div class="card mb-3">
+            <div class="card-header">
+                <div class="card-header-actions">
                     <button id="syncTimeBtn" class="btn btn-sm btn-outline-info me-1" onclick="syncTime()">
-                        <i class="bi bi-clock"></i> Sync time
+                        <i class="ti ti-clock me-1"></i>Sync time
                     </button>
                     <button id="scanBtn" class="btn btn-sm btn-outline-primary" onclick="scanDevice()">
-                        <i class="bi bi-search"></i> Scan
+                        <i class="ti ti-search me-1"></i>Scan
                     </button>
                 </div>
             </div>
-            <div class="card-body" id="capabilities">
-                <div class="text-center text-muted py-3">
-                    <p class="small mb-0" id="scanStatus">
-                        {% if device.camera_specs.last_scan %}
-                            Último scan: {{ device.camera_specs.last_scan }}
-                        {% else %}
-                            Sin escanear. Presiona "Scan".
-                        {% endif %}
-                    </p>
-                </div>
+            <div class="card-body">
+                <p class="mb-0 small text-muted" id="scanStatus">
+                    {% if device.camera_specs.last_scan %}
+                    Último scan: {{ device.camera_specs.last_scan }}
+                    {% else %}
+                    Sin escanear. Presiona "Scan".
+                    {% endif %}
+                </p>
+                <div id="capabilities"></div>
             </div>
         </div>
-
     </div>
 
     <div class="col-md-6">
@@ -73,13 +80,15 @@
             {% include "live/_video_player.html" with suffix="_detail" ptz_supported=ptz_supported no_video_text="Cargando stream..." %}
         </div>
         {% else %}
-        <div class="alert alert-info bg-dark text-info border-secondary small mb-3">
-            <i class="bi bi-info-circle"></i> No hay perfil default. Selecciona uno abajo para ver el video.
+        <div class="alert alert-info">
+            <i class="ti ti-info-circle me-2"></i>No hay perfil default. Selecciona uno abajo para ver el video.
         </div>
         {% endif %}
 
-        <div class="card bg-black border-secondary mb-3">
-            <div class="card-header"><h6 class="mb-0"><i class="bi bi-arrows-move"></i> Presets PTZ</h6></div>
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title"><i class="ti ti-arrows-move me-2"></i>Presets PTZ</h3>
+            </div>
             <div class="card-body">
                 <div class="mb-2">
                     <select id="presetProfileSelect" class="form-select form-select-sm">
@@ -87,8 +96,8 @@
                     </select>
                 </div>
                 <div class="input-group input-group-sm mb-2">
-                    <input type="text" id="presetName" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nombre del preset">
-                    <button class="btn btn-sm btn-success" onclick="savePreset()"><i class="bi bi-plus-lg"></i></button>
+                    <input type="text" id="presetName" class="form-control" placeholder="Nombre del preset">
+                    <button class="btn btn-success" onclick="savePreset()"><i class="ti ti-plus"></i></button>
                 </div>
                 <div id="presetList">
                     <p class="text-muted small text-center mb-0">Selecciona un perfil PTZ</p>
@@ -96,12 +105,14 @@
             </div>
         </div>
 
-        <div class="card bg-black border-secondary mb-3">
-            <div class="card-header"><h5 class="mb-0"><i class="bi bi-broadcast"></i> Perfiles</h5></div>
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title"><i class="ti ti-broadcast me-2"></i>Perfiles</h3>
+            </div>
             <div class="card-body" id="profiles">
                 <div class="text-center text-muted py-3">
-                    <div class="spinner-border spinner-border-sm"></div>
-                    <p class="mt-2 small">Cargando perfiles...</p>
+                    <span class="spinner-border spinner-border-sm"></span>
+                    <p class="mt-2 mb-0 small">Cargando perfiles...</p>
                 </div>
             </div>
         </div>
@@ -124,7 +135,6 @@ const MOTION_CONFIG_URL = '/api/devices/{{ device.id }}/motion-config/';
 const specs = {{ camera_specs_json|safe }};
 const defaultProfileToken = '{{ device.default_profile_token|default:"" }}';
 
-// ---- PTZ Control for detail page ----
 {% if profile_token %}
 window.ptzCtrl_detail = new PTZControl({
     overlayEl: document.getElementById('ptzOverlay_detail'),
@@ -142,7 +152,6 @@ ptzCtrl_detail.init();
 initVideoPlayer('_detail');
 {% endif %}
 
-// ---- Capabilities ----
 async function scanDevice() {
     const btn = document.getElementById('scanBtn');
     const status = document.getElementById('scanStatus');
@@ -161,7 +170,7 @@ async function scanDevice() {
         status.textContent = 'Error de red';
     }
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-search"></i> Scan';
+    btn.innerHTML = '<i class="ti ti-search me-1"></i>Scan';
 }
 
 async function syncTime() {
@@ -174,28 +183,27 @@ async function syncTime() {
         const data = await resp.json();
         const r = data.results?.[0];
         if (r && r.ok) {
-            if (status) status.textContent = 'Hora sincronizada correctamente';
+            status.textContent = 'Hora sincronizada correctamente';
             setTimeout(() => location.reload(), 1500);
         } else {
             const msg = 'Error: ' + (r?.error || 'desconocido');
-            if (status) status.textContent = msg;
-            btn.textContent = ' Error';
+            status.textContent = msg;
+            btn.innerHTML = '<i class="ti ti-alert-triangle me-1"></i>Error';
             btn.classList.replace('btn-outline-info', 'btn-outline-danger');
             setTimeout(() => {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-clock"></i> Sync time';
+                btn.innerHTML = '<i class="ti ti-clock me-1"></i>Sync time';
                 btn.classList.replace('btn-outline-danger', 'btn-outline-info');
             }, 3000);
             return;
         }
     } catch (e) {
-        if (status) status.textContent = 'Error de red';
+        status.textContent = 'Error de red';
     }
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-clock"></i> Sync time';
+    btn.innerHTML = '<i class="ti ti-clock me-1"></i>Sync time';
 }
 
-// ---- Default profile ----
 async function setDefaultProfile(token) {
     try {
         await fetch(DEFAULT_PROFILE_URL, {
@@ -209,7 +217,6 @@ async function setDefaultProfile(token) {
     }
 }
 
-// ---- Presets PTZ ----
 let selectedPresetProfile = '';
 
 async function loadPtzProfiles() {
@@ -253,14 +260,14 @@ async function loadPresets() {
         }
         container.innerHTML = '<div class="list-group list-group-flush">' +
             presets.map(p => `
-                <div class="list-group-item bg-black text-light border-secondary d-flex justify-content-between align-items-center py-1">
+                <div class="list-group-item d-flex justify-content-between align-items-center py-2">
                     <span class="small">${p.name || p.token}</span>
                     <div>
                         <button class="btn btn-sm btn-outline-success me-1 py-0 px-1" onclick="gotoPreset(this, '${p.token}')" title="Ir">
-                            <i class="bi bi-play-fill"></i>
+                            <i class="ti ti-player-play-filled"></i>
                         </button>
                         <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removePreset(this, '${p.token}')" title="Eliminar">
-                            <i class="bi bi-x-lg"></i>
+                            <i class="ti ti-x"></i>
                         </button>
                     </div>
                 </div>
@@ -306,7 +313,7 @@ async function savePreset() {
         console.error('Error saving preset:', e);
     }
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-plus-lg"></i>';
+    btn.innerHTML = '<i class="ti ti-plus"></i>';
 }
 
 async function gotoPreset(btnEl, token) {
@@ -367,7 +374,6 @@ async function removePreset(btnEl, token) {
     }
 }
 
-// ---- Init ----
 async function loadProfiles() {
     try {
         const resp = await fetch(PROFILES_URL);
@@ -384,15 +390,15 @@ async function loadProfiles() {
                 const enc = p.video_encoder?.encoding || '-';
                 const res = p.video_encoder?.resolution;
                 const resStr = res ? `${res.width}x${res.height}` : '-';
-                const hasPtz = p.ptz ? '<i class="bi bi-arrows-move text-info ms-1" title="PTZ"></i>' : '';
+                const hasPtz = p.ptz ? '<i class="ti ti-arrows-move text-info ms-1" title="PTZ"></i>' : '';
                 const isDefault = defaultProfileToken === p.token;
-                return `<div class="list-group-item bg-black text-light border-secondary d-flex justify-content-between align-items-center">
+                return `<div class="list-group-item d-flex justify-content-between align-items-center">
                     <div>
-                        <a href="/live/{{ device.id }}/?profile=${p.token}" class="text-light text-decoration-none">${p.name} ${hasPtz}</a>
-                        ${isDefault ? '<span class="badge bg-info ms-1">Default</span>' : ''}
+                        <a href="/live/{{ device.id }}/?profile=${p.token}" class="text-reset text-decoration-none">${p.name} ${hasPtz}</a>
+                        ${isDefault ? '<span class="badge bg-blue ms-1">Default</span>' : ''}
                         <br><small class="text-muted">${enc} ${resStr}</small>
                     </div>
-                    ${!isDefault ? `<button class="btn btn-sm btn-outline-info py-0 px-1" onclick="setDefaultProfile('${p.token}')" title="Set as default"><i class="bi bi-star"></i></button>` : ''}
+                    ${!isDefault ? `<button class="btn btn-sm btn-outline-info py-0 px-1" onclick="setDefaultProfile('${p.token}')" title="Set as default"><i class="ti ti-star"></i></button>` : ''}
                 </div>`;
             }).join('') +
         '</div>';
@@ -434,14 +440,10 @@ function renderCapabilities() {
         rows += `<tr><td>Última sincro</td><td>${specs.last_time_sync}</td></tr>`;
     }
 
-    if (!rows) {
-        container.innerHTML = `<div class="text-center text-muted py-3"><p class="small mb-0" id="scanStatus">Último scan: ${lastScan}. Sin datos disponibles.</p></div>`;
-        return;
-    }
+    if (!rows) return;
 
     container.innerHTML = `
-        <p class="small text-muted mb-1" id="scanStatus">Último scan: ${lastScan}</p>
-        <table class="table table-sm table-dark table-borderless mb-0 small">
+        <table class="table table-vcenter mt-2 mb-0 small">
             <tbody>${rows}</tbody>
         </table>
     `;
@@ -449,7 +451,6 @@ function renderCapabilities() {
 
 renderCapabilities();
 
-// ---- Motion detection ----
 let motionData = null;
 
 async function loadMotionConfig() {
@@ -458,13 +459,13 @@ async function loadMotionConfig() {
         const resp = await fetch(MOTION_CONFIG_URL);
         if (!resp.ok) {
             const err = await resp.json();
-            container.innerHTML = '<p class="text-danger small text-center mb-0">' + (err.error || 'Error al cargar') + '</p>';
+            container.innerHTML = '<p class="text-danger small mb-0">' + (err.error || 'Error al cargar') + '</p>';
             return;
         }
         motionData = await resp.json();
         renderMotionConfig();
     } catch (e) {
-        container.innerHTML = '<p class="text-danger small text-center mb-0">Error de red al cargar configuración</p>';
+        container.innerHTML = '<p class="text-danger small mb-0">Error de red al cargar configuración</p>';
     }
 }
 
@@ -472,7 +473,7 @@ function renderMotionConfig() {
     const container = document.getElementById('motionConfig');
     const md = motionData?.MotionDetect?.[0];
     if (!md) {
-        container.innerHTML = '<p class="text-muted small text-center mb-0">Sin configuración disponible</p>';
+        container.innerHTML = '<p class="text-muted small mb-0">Sin configuración disponible</p>';
         return;
     }
 
@@ -489,18 +490,18 @@ function renderMotionConfig() {
         const t = parseInt(w.Threshold) || 0;
         const coords = Array.isArray(w.Window) ? w.Window.join(", ") : (w.Window || "-");
         windowsHtml += `
-            <div class="border border-secondary rounded p-2 mb-2">
+            <div class="border rounded p-2 mb-2">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <strong class="small">${w.Name || ("Ventana " + (i + 1))}</strong>
                 </div>
-                <div class="row g-1 small">
+                <div class="row g-2 small">
                     <div class="col-6">
-                        <label class="text-muted">Sensibilidad</label>
+                        <label class="text-muted d-block">Sensibilidad</label>
                         <input type="range" class="form-range win-sensitive" min="0" max="100" step="5" value="${s}" data-idx="${i}" ${enabled ? '' : 'disabled'}>
                         <span class="win-sensitive-val">${s}</span>
                     </div>
                     <div class="col-6">
-                        <label class="text-muted">Umbral</label>
+                        <label class="text-muted d-block">Umbral</label>
                         <input type="range" class="form-range win-threshold" min="0" max="10" step="1" value="${t}" data-idx="${i}" ${enabled ? '' : 'disabled'}>
                         <span class="win-threshold-val">${t}</span>
                     </div>
@@ -521,7 +522,7 @@ function renderMotionConfig() {
         <div class="mb-3">
             <input type="range" class="form-range" id="motionLevel" min="0" max="6" step="1" value="${level}">
         </div>
-        <div class="d-flex gap-2 mb-2">
+        <div class="d-flex gap-3 mb-2">
             <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" id="motionRecord" ${recordEnabled ? 'checked' : ''}>
                 <label class="form-check-label small" for="motionRecord">Grabar</label>
@@ -540,7 +541,7 @@ function renderMotionConfig() {
             ${windowsHtml}
         </div>
         <button class="btn btn-sm btn-outline-success w-100 mt-2" onclick="saveMotionConfig()">
-            <i class="bi bi-check-lg"></i> Guardar configuración
+            <i class="ti ti-check me-1"></i>Guardar configuración
         </button>
     `;
 
@@ -586,7 +587,7 @@ async function saveMotionConfig() {
 
     const btn = document.querySelector('#motionConfig .btn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando...';
 
     try {
         const resp = await fetch(MOTION_CONFIG_URL, {
@@ -596,35 +597,34 @@ async function saveMotionConfig() {
         });
         const data = await resp.json();
         if (data.ok) {
-            btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardado';
+            btn.innerHTML = '<i class="ti ti-check me-1"></i>Guardado';
             btn.classList.replace('btn-outline-success', 'btn-outline-info');
             setTimeout(() => {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardar configuración';
+                btn.innerHTML = '<i class="ti ti-check me-1"></i>Guardar configuración';
                 btn.classList.replace('btn-outline-info', 'btn-outline-success');
             }, 2000);
         } else {
-            btn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Error: ' + (data.error || 'desconocido');
+            btn.innerHTML = '<i class="ti ti-alert-triangle me-1"></i>Error: ' + (data.error || 'desconocido');
             btn.classList.replace('btn-outline-success', 'btn-outline-danger');
             setTimeout(() => {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardar configuración';
+                btn.innerHTML = '<i class="ti ti-check me-1"></i>Guardar configuración';
                 btn.classList.replace('btn-outline-danger', 'btn-outline-success');
             }, 3000);
         }
     } catch (e) {
-        btn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Error de red';
+        btn.innerHTML = '<i class="ti ti-alert-triangle me-1"></i>Error de red';
         btn.classList.replace('btn-outline-success', 'btn-outline-danger');
         setTimeout(() => {
             btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardar configuración';
+            btn.innerHTML = '<i class="ti ti-check me-1"></i>Guardar configuración';
             btn.classList.replace('btn-outline-danger', 'btn-outline-success');
         }, 3000);
     }
 }
 
 loadMotionConfig();
-
 loadProfiles();
 loadPtzProfiles();
 </script>

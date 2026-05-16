@@ -3,8 +3,8 @@
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
-        <li class="breadcrumb-item"><a href="/" class="text-info">Dashboard</a></li>
-        <li class="breadcrumb-item"><a href="{% url 'device_detail' device.id %}" class="text-info">{{ device.name }}</a></li>
+        <li class="breadcrumb-item"><a href="/" class="text-reset">Dispositivos</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'device_detail' device.id %}" class="text-reset">{{ device.name }}</a></li>
         <li class="breadcrumb-item active">Live</li>
     </ol>
 </nav>
@@ -15,32 +15,34 @@
     </div>
 
     <div class="col-md-4">
-        <div class="card bg-black border-secondary mb-3">
-            <div class="card-header"><h6 class="mb-0"><i class="bi bi-info-circle"></i> Información</h6></div>
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title"><i class="ti ti-info-circle me-2"></i>Información</h3>
+            </div>
             <div class="card-body">
-                <dl class="row mb-0 small">
-                    <dt class="col-sm-4">Dispositivo</dt>
-                    <dd class="col-sm-8">{{ device.name }}</dd>
-                    <dt class="col-sm-4">Perfil</dt>
-                    <dd class="col-sm-8" id="currentProfile">{{ profile_token|default:"-" }}</dd>
-                    <dt class="col-sm-4">Stream</dt>
-                    <dd class="col-sm-8" id="streamName">{{ stream_name|default:"-" }}</dd>
-                    <dt class="col-sm-4">Estado PTZ</dt>
-                    <dd class="col-sm-8" id="ptzStatus">-</dd>
+                <dl class="dl-row mb-2">
+                    <dt>Dispositivo</dt>
+                    <dd>{{ device.name }}</dd>
+                    <dt>Perfil</dt>
+                    <dd id="currentProfile">{{ profile_token|default:"-" }}</dd>
+                    <dt>Stream</dt>
+                    <dd id="streamName">{{ stream_name|default:"-" }}</dd>
+                    <dt>Estado PTZ</dt>
+                    <dd id="ptzStatus">-</dd>
                 </dl>
-                <div class="mt-2">
-                    <label class="small text-muted">Perfil</label>
+                <div class="mb-2">
+                    <label class="form-label small text-muted">Perfil</label>
                     <select id="profileSelect" class="form-select form-select-sm">
                         <option value="">Seleccionar perfil...</option>
                     </select>
                 </div>
-                <div class="mt-2">
-                    <a id="liveLink" href="#" class="btn btn-sm btn-success d-none w-100">
-                        <i class="bi bi-play-fill"></i> Live
+                <div class="mb-2">
+                    <a id="liveLink" href="#" class="btn btn-success d-none w-100">
+                        <i class="ti ti-player-play-filled me-2"></i>Live
                     </a>
                 </div>
-                <div id="presetDropdown" class="mt-2 d-none">
-                    <label class="small text-muted">Presets</label>
+                <div id="presetDropdown" class="d-none">
+                    <label class="form-label small text-muted">Presets</label>
                     <select id="presetSelect" class="form-select form-select-sm">
                         <option value="">Seleccionar preset...</option>
                     </select>

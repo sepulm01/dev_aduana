@@ -1,36 +1,69 @@
 {% extends "base.html" %}
-{% block title %}Descubrir{% endblock %}
+{% block title %}Descubrir Dispositivos{% endblock %}
 {% block content %}
-<h4 class="mb-3"><i class="bi bi-search"></i> Descubrir Dispositivos</h4>
-
-<div class="mb-3">
-    <button id="scanBtn" class="btn btn-primary" onclick="startDiscovery()">
-        <i class="bi bi-wifi"></i> Escanear red
-    </button>
+<div class="page-header">
+    <div class="row align-items-center">
+        <div class="col">
+            <div class="page-pretitle">Network Scanner</div>
+            <h2 class="page-title"><i class="ti ti-search me-2"></i>Descubrir Dispositivos</h2>
+        </div>
+    </div>
 </div>
 
-<div id="results" class="d-none"></div>
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title">Escanear red local</h3>
+            </div>
+            <div class="card-body">
+                <button id="scanBtn" class="btn btn-primary" onclick="startDiscovery()">
+                    <i class="ti ti-wifi me-2"></i>Escanear red
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 
-<div class="card bg-black border-secondary mb-3">
-    <div class="card-header"><h5 class="mb-0">Agregar manualmente</h5></div>
+<div id="results" class="d-none">
+    <div class="card mb-3">
+        <div class="card-header">
+            <h3 class="card-title">Dispositivos encontrados</h3>
+        </div>
+        <div class="card-body">
+            <div id="results-list"></div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">Agregar manualmente</h3>
+    </div>
     <div class="card-body">
         <form id="manualForm" onsubmit="return addManual(event)">
-            <div class="row g-2">
-                <div class="col-md-4">
-                    <input type="text" class="form-control form-control-sm" id="host" placeholder="Host/IP" required>
+            <div class="row">
+                <div class="col-md-4 mb-2">
+                    <input type="text" class="form-control" id="host" placeholder="Host / IP" required>
                 </div>
-                <div class="col-md-2">
-                    <input type="number" class="form-control form-control-sm" id="port" value="80" placeholder="Puerto">
+                <div class="col-md-2 mb-2">
+                    <input type="number" class="form-control" id="port" value="80" placeholder="Puerto">
                 </div>
-                <div class="col-md-3">
-                    <input type="text" class="form-control form-control-sm" id="user" placeholder="Usuario">
+                <div class="col-md-3 mb-2">
+                    <input type="text" class="form-control" id="user" placeholder="Usuario">
                 </div>
-                <div class="col-md-3">
-                    <input type="password" class="form-control form-control-sm" id="pass" placeholder="Contraseña">
+                <div class="col-md-3 mb-2">
+                    <input type="password" class="form-control" id="pass" placeholder="Contraseña">
                 </div>
             </div>
-            <button type="submit" class="btn btn-sm btn-outline-info mt-2">Agregar</button>
-            <button type="button" class="btn btn-sm btn-outline-warning mt-2 ms-1" onclick="probeIP()">Probar</button>
+            <div class="d-flex gap-2 mt-2">
+                <button type="submit" class="btn btn-success">
+                    <i class="ti ti-plus me-2"></i>Agregar
+                </button>
+                <button type="button" class="btn btn-outline-warning" onclick="probeIP()">
+                    <i class="ti ti-test me-2"></i>Probar conexión
+                </button>
+            </div>
         </form>
     </div>
 </div>
@@ -41,7 +74,7 @@
 async function startDiscovery() {
     const btn = document.getElementById('scanBtn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Escaneando...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Escaneando...';
 
     try {
         const resp = await fetch('/api/discover/', { method: 'POST' });
@@ -51,29 +84,33 @@ async function startDiscovery() {
         alert('Error: ' + e.message);
     }
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-wifi"></i> Escanear red';
+    btn.innerHTML = '<i class="ti ti-wifi me-2"></i>Escanear red';
 }
 
 function showResults(devices) {
     const container = document.getElementById('results');
+    const list = document.getElementById('results-list');
     container.classList.remove('d-none');
 
-    if (devices.length === 0) {
-        container.innerHTML = '<div class="alert alert-warning">No se encontraron dispositivos</div>';
+    if (!devices || devices.length === 0) {
+        list.innerHTML = '<div class="alert alert-warning"><i class="ti ti-alert-triangle me-2"></i>No se encontraron dispositivos</div>';
         return;
     }
 
-    container.innerHTML = '<h5 class="mb-2">Dispositivos encontrados:</h5>' +
-    '<div class="list-group list-group-flush mb-3">' +
+    list.innerHTML = '<div class="list-group list-group-flush">' +
     devices.map((d, i) => {
         const host = d.xaddrs?.[0] || d.host || '';
-        return `<div class="list-group-item bg-black text-light border-secondary">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    <strong>${d.name || 'Desconocido'}</strong><br>
-                    <small class="text-muted">${d.hardware || ''} — ${host}</small>
+        return `<div class="list-group-item">
+            <div class="row align-items-center">
+                <div class="col">
+                    <div class="fw-bold">${d.name || 'Desconocido'}</div>
+                    <div class="text-muted">${d.hardware || ''} — ${host}</div>
                 </div>
-                <button class="btn btn-sm btn-outline-success" onclick="addDiscovered(${i})">Agregar</button>
+                <div class="col-auto">
+                    <button class="btn btn-success btn-icon" onclick="addDiscovered(${i})" title="Agregar">
+                        <i class="ti ti-plus"></i>
+                    </button>
+                </div>
             </div>
         </div>`;
     }).join('') +
