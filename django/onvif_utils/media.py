@@ -2,10 +2,13 @@ from urllib.parse import urlparse, urlunparse
 
 
 class MediaService:
+    """Wraps the ONVIF Media SOAP service for profile and stream URI queries."""
+
     def __init__(self, client):
         self.client = client
 
     def get_profiles(self):
+        """Return a list of profile dicts with video/audio encoder and PTZ info."""
         profiles = self.client.media.GetProfiles()
         result = []
         for p in profiles:
@@ -45,6 +48,7 @@ class MediaService:
     def get_stream_uri(
         self, profile_token, protocol="RTSP", username=None, password=None
     ):
+        """Get the RTSP stream URI for a profile, optionally injecting credentials."""
         try:
             uri = self.client.media.GetStreamUri(
                 {

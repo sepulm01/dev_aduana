@@ -4,6 +4,13 @@ from onvif import ONVIFCamera
 
 
 class OnvifClient:
+    """ONVIF device client wrapping onvif-zeep with lazy service initialization.
+
+    Provides properties to access Device, Media, and PTZ services,
+    plus convenience methods to read capabilities, video sources,
+    network config, and system time.
+    """
+
     def __init__(self, host, port, username, password):
         self.host = host
         self.port = port
@@ -16,23 +23,27 @@ class OnvifClient:
 
     @property
     def device(self):
+        """Lazy-init DeviceMgmt SOAP service."""
         if self._device is None:
             self._device = self._cam.devicemgmt
         return self._device
 
     @property
     def media(self):
+        """Lazy-init Media SOAP service."""
         if self._media is None:
             self._media = self._cam.create_media_service()
         return self._media
 
     @property
     def ptz(self):
+        """Lazy-init PTZ SOAP service."""
         if self._ptz is None:
             self._ptz = self._cam.create_ptz_service()
         return self._ptz
 
     def get_device_info(self):
+        """Return manufacturer, model, firmware, serial_number, hardware_id."""
         info = self.device.GetDeviceInformation()
         return {
             "manufacturer": info.Manufacturer,
@@ -43,6 +54,7 @@ class OnvifClient:
         }
 
     def get_capabilities(self):
+        """Return network/media/ptz/events/imaging capabilities dict."""
         caps = self.device.GetCapabilities({"Category": ["All"]})
         return {
             "network": caps.Network if hasattr(caps, "Network") else {},
@@ -53,6 +65,7 @@ class OnvifClient:
         }
 
     def get_services(self):
+        """Return ONVIF service profile support (S/T/M/G/Q) and namespace list."""
         services = self.device.GetServices({"IncludeCapability": True})
         namespaces = [s.Namespace for s in services if hasattr(s, "Namespace")]
         return {
@@ -67,6 +80,7 @@ class OnvifClient:
         }
 
     def get_video_sources(self):
+        """Return max width, height, and framerate from the first video source."""
         try:
             sources = self.media.GetVideoSources()
             if sources:
@@ -84,6 +98,7 @@ class OnvifClient:
         return {}
 
     def get_media_capabilities(self):
+        """Return media service capabilities (snapshot, osd, rotation, rtp)."""
         try:
             caps = self.media.GetServiceCapabilities()
             streaming = getattr(caps, "StreamingCapabilities", None) or {}
@@ -103,6 +118,7 @@ class OnvifClient:
             return {}
 
     def get_ptz_capabilities(self):
+        """Return PTZ service capabilities (eflip, reverse)."""
         try:
             caps = self.ptz.GetServiceCapabilities()
             return {
@@ -113,6 +129,7 @@ class OnvifClient:
             return {}
 
     def get_network_interfaces(self):
+        """Return list of network interfaces with MAC, IP, DHCP, MTU."""
         try:
             ifaces = self.device.GetNetworkInterfaces()
             result = []
@@ -140,6 +157,7 @@ class OnvifClient:
             return []
 
     def get_hostname(self):
+        """Return camera hostname string."""
         try:
             hn = self.device.GetHostname()
             return getattr(hn, "Name", "") or ""
@@ -147,6 +165,7 @@ class OnvifClient:
             return ""
 
     def get_dns(self):
+        """Return list of DNS server IPs configured on the camera."""
         try:
             dns = self.device.GetDNS()
             manual = getattr(dns, "DNSManual", None) or []
@@ -160,6 +179,7 @@ class OnvifClient:
             return []
 
     def get_ntp(self):
+        """Return list of NTP server hostnames configured on the camera."""
         try:
             ntp = self.device.GetNTP()
             manual = getattr(ntp, "NTPManual", None) or []
@@ -172,6 +192,7 @@ class OnvifClient:
             return []
 
     def get_system_date_time(self):
+        """Return camera's system time config (type, timezone, DST)."""
         try:
             dt = self.device.GetSystemDateAndTime()
             return {
@@ -183,6 +204,7 @@ class OnvifClient:
             return {}
 
     def set_system_date_time(self, utc_dt=None, tz=None, dst=False):
+        """Set the camera's system date/time to a UTC datetime."""
         now = utc_dt or datetime.now(timezone.utc)
         params = {
             "DateTimeType": "Manual",

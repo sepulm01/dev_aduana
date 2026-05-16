@@ -2,6 +2,12 @@ from abc import ABC, abstractmethod
 
 
 class CameraDriver(ABC):
+    """Abstract base class for camera-specific driver implementations.
+
+    Subclasses implement motion detection config read/write, capability
+    detection, and motion event polling via the camera's native API.
+    """
+
     def __init__(self, device):
         self.device = device
 
@@ -54,4 +60,4 @@ class CameraDriver(ABC):
 
 
 class DriverError(Exception):
-    pass
+    """Raised on driver-level failures (network, auth, unexpected responses)."""

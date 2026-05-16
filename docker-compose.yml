@@ -39,6 +39,9 @@ services:
     environment:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
+      - DISCOVERY_SERVICE_URL=http://host.docker.internal:8765
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,6 +86,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  discovery-service:
+    build: ./discovery
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - DISCOVERY_PORT=8765
 
   nginx:
     image: nginx:alpine

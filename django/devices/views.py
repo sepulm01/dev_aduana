@@ -1,6 +1,9 @@
 import json
 import logging
+import os
 from datetime import datetime, timezone
+
+import requests
 
 from django.shortcuts import render, get_object_or_404
 from django.http import JsonResponse
@@ -34,12 +37,19 @@ def device_detail(request, device_id):
     return render(request, "devices/device_detail.html", ctx)
 
 
+DISCOVERY_SERVICE_URL = os.environ.get("DISCOVERY_SERVICE_URL", "http://localhost:8765")
+
+
 @csrf_exempt
 def discover(request):
     if request.method == "POST":
         timeout = int(request.POST.get("timeout", 10))
-        discovery = DeviceDiscovery(timeout=timeout)
-        devices = discovery.discover()
+        try:
+            devices = DeviceDiscovery.discover_remote(
+                base_url=DISCOVERY_SERVICE_URL, timeout=timeout
+            )
+        except requests.RequestException:
+            devices = DeviceDiscovery(timeout=timeout).discover()
         return JsonResponse(devices, safe=False)
     return render(request, "devices/discover.html")
 
@@ -52,7 +62,12 @@ def probe(request):
         port = int(data.get("port", 80))
         if not host:
             return JsonResponse({"error": "host required"}, status=400)
-        result = DeviceDiscovery.probe_ip(host, port)
+        try:
+            result = DeviceDiscovery.probe_remote(
+                host=host, port=port, base_url=DISCOVERY_SERVICE_URL
+            )
+        except requests.RequestException:
+            result = DeviceDiscovery.probe_ip(host, port)
         return JsonResponse(result)
     return JsonResponse({"error": "POST required"}, status=405)
 

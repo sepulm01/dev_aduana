@@ -3,11 +3,18 @@ from wsdiscovery import WSDiscovery
 
 
 class DeviceDiscovery:
+    """Discover ONVIF devices on the local network via WS-Discovery or delegate."""
+
     def __init__(self, timeout=10):
         self.timeout = timeout
         self._devices = []
 
     def discover(self, timeout=None):
+        """Broadcast WS-Discovery probe and return list of found devices.
+
+        Each device dict includes xaddrs, scopes, types, epr, and extracted
+        name/hardware/profile from ONVIF scope strings.
+        """
         if timeout is not None:
             self.timeout = timeout
 
@@ -44,6 +51,7 @@ class DeviceDiscovery:
 
     @staticmethod
     def probe_ip(host, port=80):
+        """Probe a single host for an ONVIF endpoint at common ports/paths."""
         result = {"host": host, "port": port, "found": False}
 
         for probe_port in [port, 80, 8080, 443]:
@@ -68,3 +76,25 @@ class DeviceDiscovery:
                 except requests.RequestException:
                     continue
         return result
+
+    @staticmethod
+    def discover_remote(base_url="http://localhost:8765", timeout=10):
+        """Delegate discovery to the discovery microservice."""
+        resp = requests.get(
+            f"{base_url}/discover",
+            params={"timeout": timeout},
+            timeout=timeout + 5,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    @staticmethod
+    def probe_remote(host, port=80, base_url="http://localhost:8765"):
+        """Delegate probe to the discovery microservice."""
+        resp = requests.get(
+            f"{base_url}/probe",
+            params={"host": host, "port": port},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()

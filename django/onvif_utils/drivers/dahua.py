@@ -11,6 +11,12 @@ SEGMENT_RE = re.compile(r"^(\w+)(?:\[(\d+)\])?$")
 
 
 class DahuaDriver(CameraDriver):
+    """Driver for Dahua cameras using HTTP CGI (configManager.cgi / eventManager.cgi).
+
+    Communicates with the camera's native CGI API via Digest authentication,
+    bypassing ONVIF for motion configuration and event polling.
+    """
+
     def __init__(self, device):
         super().__init__(device)
         self._base_url = f"http://{device.host}:{device.port}"
@@ -18,6 +24,7 @@ class DahuaDriver(CameraDriver):
         self._session = requests.Session()
 
     def detect(self):
+        """Return driver identifier string ("dahua")."""
         return "dahua"
 
     # ------------------------------------------------------------------
@@ -25,10 +32,15 @@ class DahuaDriver(CameraDriver):
     # ------------------------------------------------------------------
 
     def get_motion_config(self):
+        """Read motion detection configuration from the camera."""
         raw = self._cgi_get("getConfig", {"name": "MotionDetect"})
         return _parse_dahua_table(raw)
 
     def set_motion_config(self, config):
+        """Write motion detection configuration to the camera.
+
+        Raises DriverError if the camera rejects the config.
+        """
         body = _serialize_dahua_table(config, prefix="MotionDetect")
         if not body:
             raise DriverError("empty config, nothing to set")
@@ -41,6 +53,7 @@ class DahuaDriver(CameraDriver):
     # ------------------------------------------------------------------
 
     def poll_motion(self):
+        """Poll the camera for current VideoMotion event status."""
         raw = self._cgi_event_get("getCurrentEvents")
         motion_active = "VideoMotion" in raw
         return {
@@ -50,6 +63,7 @@ class DahuaDriver(CameraDriver):
         }
 
     def get_capabilities(self):
+        """Return hardcoded driver capabilities dict for Dahua cameras."""
         return {
             "motion_detection": True,
             "windows": 4,
@@ -64,6 +78,7 @@ class DahuaDriver(CameraDriver):
     # ------------------------------------------------------------------
 
     def _cgi_event_get(self, action, params=None):
+        """GET from Dahua's eventManager.cgi. Raises DriverError on failure."""
         url = f"{self._base_url}/cgi-bin/eventManager.cgi"
         merged = {"action": action}
         if params:
@@ -76,6 +91,7 @@ class DahuaDriver(CameraDriver):
             raise DriverError(f"Dahua event CGI failed: {e}") from e
 
     def _cgi_get(self, action, params):
+        """GET from Dahua's configManager.cgi. Raises DriverError on failure."""
         url = f"{self._base_url}/cgi-bin/configManager.cgi"
         merged = {"action": action}
         merged.update(params)
@@ -87,6 +103,7 @@ class DahuaDriver(CameraDriver):
             raise DriverError(f"Dahua CGI GET failed: {e}") from e
 
     def _cgi_post(self, action, body_lines):
+        """POST to Dahua's configManager.cgi. Raises DriverError on failure."""
         url = f"{self._base_url}/cgi-bin/configManager.cgi"
         params = {"action": action}
         data = "\r\n".join(body_lines)
