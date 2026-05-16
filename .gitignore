@@ -1,0 +1,37 @@
+# Python
+env/
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Django
+django/db.sqlite3
+django/staticfiles/
+django/media/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+
+# Docker
+*.log
+
+# MediaMTX binary (large, not source)
+mediamtx/mediamtx
+
+# Playwright session files
+.playwright-mcp/

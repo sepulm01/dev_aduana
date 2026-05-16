@@ -1,0 +1,100 @@
+name: mediamtx-manager
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file: .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mediamtx -d mediamtx_manager"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest-ffmpeg
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "8554:8554"
+      - "8889:8889"
+      - "9997:9997"
+      - "8189:8189/udp"
+
+  django-http:
+    build: ./django
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
+    env_file: .env
+    environment:
+      - MEDIAMTX_URL=http://mediamtx:8889
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  django-asgi:
+    build: ./django
+    command: daphne -b 0.0.0.0 -p 8001 config.asgi:application
+    env_file: .env
+    environment:
+      - MEDIAMTX_URL=http://mediamtx:8889
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    build: ./django
+    command: celery -A config worker -l info
+    env_file: .env
+    environment:
+      - MEDIAMTX_URL=http://mediamtx:8889
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build: ./django
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: .env
+    environment:
+      - MEDIAMTX_URL=http://mediamtx:8889
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./django/nginx.conf:/etc/nginx/conf.d/default.conf
+    ports:
+      - "80:80"
+    depends_on:
+      - django-http
+      - django-asgi
+      - mediamtx
+
+volumes:
+  postgres_data:
+  redis_data:

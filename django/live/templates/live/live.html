@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Live - {{ device.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-info">Dashboard</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'device_detail' device.id %}" class="text-info">{{ device.name }}</a></li>
+        <li class="breadcrumb-item active">Live</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-md-8">
+        {% include "live/_video_player.html" with suffix="" ptz_supported=ptz_supported no_video_text="Selecciona un perfil y presiona Live" %}
+    </div>
+
+    <div class="col-md-4">
+        <div class="card bg-black border-secondary mb-3">
+            <div class="card-header"><h6 class="mb-0"><i class="bi bi-info-circle"></i> Información</h6></div>
+            <div class="card-body">
+                <dl class="row mb-0 small">
+                    <dt class="col-sm-4">Dispositivo</dt>
+                    <dd class="col-sm-8">{{ device.name }}</dd>
+                    <dt class="col-sm-4">Perfil</dt>
+                    <dd class="col-sm-8" id="currentProfile">{{ profile_token|default:"-" }}</dd>
+                    <dt class="col-sm-4">Stream</dt>
+                    <dd class="col-sm-8" id="streamName">{{ stream_name|default:"-" }}</dd>
+                    <dt class="col-sm-4">Estado PTZ</dt>
+                    <dd class="col-sm-8" id="ptzStatus">-</dd>
+                </dl>
+                <div class="mt-2">
+                    <label class="small text-muted">Perfil</label>
+                    <select id="profileSelect" class="form-select form-select-sm">
+                        <option value="">Seleccionar perfil...</option>
+                    </select>
+                </div>
+                <div class="mt-2">
+                    <a id="liveLink" href="#" class="btn btn-sm btn-success d-none w-100">
+                        <i class="bi bi-play-fill"></i> Live
+                    </a>
+                </div>
+                <div id="presetDropdown" class="mt-2 d-none">
+                    <label class="small text-muted">Presets</label>
+                    <select id="presetSelect" class="form-select form-select-sm">
+                        <option value="">Seleccionar preset...</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% load static %}
+<script src="{% static 'live/ptz-control.js' %}"></script>
+<script>
+const DEVICE_ID = {{ device.id }};
+const PROFILES_URL = '/api/devices/{{ device.id }}/profiles/';
+const MEDIAMTX_URL = '{{ webrtc_url }}';
+const PRESET_URL = '/api/ptz/{{ device.id }}/preset/';
+
+let currentProfileToken = '{{ profile_token|default:"" }}';
+let selectedProfileToken = '{{ profile_token|default:"" }}';
+
+window.ptzCtrl = new PTZControl({
+    overlayEl: document.getElementById('ptzOverlay'),
+    containerEl: document.getElementById('videoContainer'),
+    toggleBtnEl: document.getElementById('ptzToggleBtn'),
+    statusEl: document.getElementById('ptzStatus'),
+    moveUrl: '/api/ptz/{{ device.id }}/move/',
+    statusUrl: '/api/ptz/{{ device.id }}/status/',
+    profileToken: currentProfileToken,
+    cameraSpecs: {{ camera_specs_json|safe }},
+    ptzSupported: {{ ptz_supported|yesno:"true,false" }},
+    suffix: '',
+});
+
+async function loadProfiles() {
+    try {
+        const resp = await fetch(PROFILES_URL);
+        const profiles = await resp.json();
+        const select = document.getElementById('profileSelect');
+
+        profiles.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.token;
+            const enc = p.video_encoder?.encoding || '';
+            const res = p.video_encoder?.resolution;
+            const resStr = (res?.width && res?.height) ? ` ${res.width}x${res.height}` : '';
+            opt.textContent = `${p.name}${(enc || resStr) ? ` (${enc}${resStr})` : ''}`;
+            if (p.ptz) opt.textContent += ' [PTZ]';
+            select.appendChild(opt);
+        });
+
+        if (currentProfileToken) {
+            select.value = currentProfileToken;
+            onProfileChange();
+        }
+    } catch (e) {
+        console.error('Error loading profiles:', e);
+    }
+}
+
+function onProfileChange() {
+    const select = document.getElementById('profileSelect');
+    selectedProfileToken = select.value;
+    const link = document.getElementById('liveLink');
+
+    if (selectedProfileToken) {
+        link.href = `/live/${DEVICE_ID}/?profile=${selectedProfileToken}`;
+        link.classList.remove('d-none');
+    } else {
+        link.classList.add('d-none');
+    }
+    ptzCtrl.setProfileToken(selectedProfileToken);
+}
+
+document.getElementById('profileSelect').addEventListener('change', onProfileChange);
+
+let presetLoadTimeout = null;
+
+function loadPresets() {
+    if (!currentProfileToken) return;
+    const dropdown = document.getElementById('presetDropdown');
+    const select = document.getElementById('presetSelect');
+
+    if (presetLoadTimeout) clearTimeout(presetLoadTimeout);
+    presetLoadTimeout = setTimeout(async () => {
+        try {
+            const resp = await fetch(PRESET_URL + '?profile_token=' + encodeURIComponent(currentProfileToken));
+            const presets = await resp.json();
+            if (Array.isArray(presets) && presets.length > 0) {
+                select.innerHTML = '<option value="">Seleccionar preset...</option>' +
+                    presets.map(p => `<option value="${p.token}">${p.name || p.token}</option>`).join('');
+                dropdown.classList.remove('d-none');
+            } else {
+                dropdown.classList.add('d-none');
+            }
+        } catch (e) {
+            dropdown.classList.add('d-none');
+        }
+    }, 300);
+}
+
+document.getElementById('presetSelect').addEventListener('change', function() {
+    const token = this.value;
+    if (!token || !currentProfileToken) return;
+    fetch(PRESET_URL, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            action: 'goto',
+            profile_token: currentProfileToken,
+            preset_token: token,
+        }),
+    }).catch(e => console.error('Preset goto error:', e));
+    this.value = '';
+});
+
+initVideoPlayer('');
+ptzCtrl.init();
+loadProfiles();
+
+if (currentProfileToken) {
+    loadPresets();
+}
+</script>
+{% endblock %}

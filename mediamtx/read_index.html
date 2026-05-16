@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<style>
+html, body {
+	margin: 0;
+	padding: 0;
+	height: 100%;
+	font-family: 'Arial', sans-serif;
+}
+#video {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background: rgb(30, 30, 30);
+}
+#message {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	display: flex;
+	align-items: center;
+	text-align: center;
+	justify-content: center;
+	font-size: 16px;
+	font-weight: bold;
+	color: white;
+	pointer-events: none;
+	padding: 20px;
+	box-sizing: border-box;
+	text-shadow: 0 0 5px black;
+}
+
+.style {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    font-size: 18px;
+    color: white;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px black;
+}
+</style>
+
+<script defer src="./reader.js"></script>
+</head>
+<body>
+
+<video id="video"></video>
+
+<div id="message"></div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+
+<script>
+
+const video = document.getElementById('video');
+const message = document.getElementById('message');
+let defaultControls = false;
+
+const setMessage = (str) => {
+  if (str !== '') {
+    video.controls = false;
+  } else {
+    video.controls = defaultControls;
+  }
+  message.innerText = str;
+};
+
+const parseBoolString = (str, defaultVal) => {
+  str = (str || '');
+
+  if (['1', 'yes', 'true'].includes(str.toLowerCase())) {
+    return true;
+  }
+  if (['0', 'no', 'false'].includes(str.toLowerCase())) {
+    return false;
+  }
+  return defaultVal;
+};
+
+const loadAttributesFromQuery = () => {
+  const params = new URLSearchParams(window.location.search);
+  video.controls = parseBoolString(params.get('controls'), true);
+  video.muted = parseBoolString(params.get('muted'), true);
+  video.autoplay = parseBoolString(params.get('autoplay'), true);
+  video.playsInline = parseBoolString(params.get('playsinline'), true);
+  defaultControls = video.controls;
+};
+
+window.addEventListener('DOMContentLoaded', () => {
+  loadAttributesFromQuery();
+
+  new MediaMTXWebRTCReader({
+    url: new URL('whep', window.location.href) + window.location.search,
+    onError: (err) => {
+      setMessage(err);
+    },
+    onTrack: (evt) => {
+      setMessage('');
+      video.srcObject = evt.streams[0];
+    },
+  });
+});
+
+// Código inyectado no original
+
+let mouseX = 0;
+let mouseY = 0;
+let scrollValue = 0;
+let lastMousePosition = { x: 0, y: 0 };
+const clave = window.localStorage.getItem('gallery:csrftoken')
+console.log("csrftoken clave", clave)
+// Obtener el ID del iframe desde la URL
+const params = new URLSearchParams(window.location.search);
+const iframeId = params.get('iframeId');
+console.log("mod7", iframeId );
+
+// Función para obtener la posición del mouse dentro del video
+video.addEventListener('mousemove', function(e) {
+    // Obtener las coordenadas relativas al video
+    const rect = e.target.getBoundingClientRect();
+    lastMousePosition.x = e.clientX - rect.left;
+    lastMousePosition.y = e.clientY - rect.top;
+
+    // Opcional: Mostrar coordenadas en consola para verificación
+    // console.log(`Posición Mouse - X: ${lastMousePosition.x}, Y: ${lastMousePosition.y}`);
+});
+
+// Capturar el scroll del mouse
+video.addEventListener('wheel', function(e) {
+    // Prevenir el scroll por defecto
+    e.preventDefault();
+
+    // Determinar dirección y magnitud del scroll
+    scrollValue = e.deltaY;
+
+    // Opcional: Mostrar valor de scroll en consola
+    console.log(`Scroll: ${scrollValue}`);
+
+    sendMouseData(iframeId,-1,-1,scrollValue)
+    scrollValue = 0;
+
+});
+
+// Evento para manejar el keydown
+window.addEventListener('keydown', function(event) {
+    if (event.ctrlKey) {
+        // Obtenemos las dimensiones del elemento video
+        const videoWidth = video.offsetWidth;
+        const videoHeight = video.offsetHeight;
+        console.log(`Dimensiones del video - Ancho: ${videoWidth}px, Alto: ${videoHeight}px`);
+        console.log(`Desde iframe ID: ${iframeId}, X: ${lastMousePosition.x}, Y: ${lastMousePosition.y}, Z: ${scrollValue}`);
+        type= 'mousePosition',
+        x= lastMousePosition.x,
+        y= lastMousePosition.y,
+        h= videoHeight,
+        w= videoWidth
+        z = scrollValue,
+        id= iframeId // Enviar el ID del iframe
+        sendMouseData(id,x,y,z,w,h)
+    }
+});
+
+// Función para enviar datos al endpoint
+function sendMouseData(id,x,y,z,w,h) {
+  // Obtener el protocolo y el host (sin el puerto)
+  var protocol = window.location.protocol;  // "http:"
+  var host = window.location.hostname;      // "test.streetflow.cl"
+  var newUrl = protocol + '//' + host;
+  //console.log('newUrl',newUrl);
+
+  $.ajax({
+  url: newUrl + '/camaras/api/ptz_control/', // URL para obtener el CSRF
+  method: 'GET',
+  xhrFields: { withCredentials: true },  // Permite enviar y recibir cookies
+  success: function(data) {
+          const csrftoken = data.csrftoken
+
+         // Realiza la solicitud POST con el token CSRF en el encabezado
+         $.ajax({
+            url: newUrl + '/camaras/api/ptz_control/',
+            method: 'POST',
+            data: {
+              id:id, x:x, y:y, z:z,w:w,h:h
+            },
+            //contentType: 'application/json',
+            headers: {
+                'X-CSRFToken': csrftoken  
+            },
+            //xhrFields: { withCredentials: true },  // Para incluir cookies en la solicitud
+            success: function(response) {
+                console.log('Datos enviados exitosamente:', response);
+            },
+            error: function(xhr, status, error) {
+                console.error('Error al enviar datos:', error);
+                
+            }
+        });
+      }})
+    }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,589 @@
+{% extends "base.html" %}
+{% block title %}{{ device.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-info">Dashboard</a></li>
+        <li class="breadcrumb-item active">{{ device.name }}</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card bg-black border-secondary mb-3">
+            <div class="card-header"><h5 class="mb-0"><i class="bi bi-info-circle"></i> Información</h5></div>
+            <div class="card-body">
+                <dl class="row mb-0 small">
+                    <dt class="col-sm-4">Host</dt>
+                    <dd class="col-sm-8">{{ device.host }}:{{ device.port }}</dd>
+                    <dt class="col-sm-4">Fabricante</dt>
+                    <dd class="col-sm-8">{{ device.manufacturer|default:"-" }}</dd>
+                    <dt class="col-sm-4">Modelo</dt>
+                    <dd class="col-sm-8">{{ device.model|default:"-" }}</dd>
+                    <dt class="col-sm-4">Firmware</dt>
+                    <dd class="col-sm-8">{{ device.firmware|default:"-" }}</dd>
+                    <dt class="col-sm-4">Serial</dt>
+                    <dd class="col-sm-8">{{ device.serial_number|default:"-" }}</dd>
+                    <dt class="col-sm-4">Online</dt>
+                    <dd class="col-sm-8">{% if device.is_online %}<span class="text-success">Si</span>{% else %}<span class="text-danger">No</span>{% endif %}</dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="card bg-black border-secondary mb-3">
+            <div class="card-header"><h6 class="mb-0"><i class="bi bi-eye"></i> Detección de movimiento</h6></div>
+            <div class="card-body" id="motionConfig">
+                <div class="text-center text-muted py-3">
+                    <div class="spinner-border spinner-border-sm"></div>
+                    <p class="mt-2 small">Cargando configuración...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-black border-secondary mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="bi bi-gear"></i> Capabilities</h6>
+                <div>
+                    <button id="syncTimeBtn" class="btn btn-sm btn-outline-info me-1" onclick="syncTime()">
+                        <i class="bi bi-clock"></i> Sync time
+                    </button>
+                    <button id="scanBtn" class="btn btn-sm btn-outline-primary" onclick="scanDevice()">
+                        <i class="bi bi-search"></i> Scan
+                    </button>
+                </div>
+            </div>
+            <div class="card-body" id="capabilities">
+                <div class="text-center text-muted py-3">
+                    <p class="small mb-0" id="scanStatus">
+                        {% if device.camera_specs.last_scan %}
+                            Último scan: {{ device.camera_specs.last_scan }}
+                        {% else %}
+                            Sin escanear. Presiona "Scan".
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-black border-secondary mb-3">
+            <div class="card-header"><h6 class="mb-0"><i class="bi bi-arrows-move"></i> Presets PTZ</h6></div>
+            <div class="card-body">
+                <div class="mb-2">
+                    <select id="presetProfileSelect" class="form-select form-select-sm">
+                        <option value="">Seleccionar perfil PTZ...</option>
+                    </select>
+                </div>
+                <div class="input-group input-group-sm mb-2">
+                    <input type="text" id="presetName" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Nombre del preset">
+                    <button class="btn btn-sm btn-success" onclick="savePreset()"><i class="bi bi-plus-lg"></i></button>
+                </div>
+                <div id="presetList">
+                    <p class="text-muted small text-center mb-0">Selecciona un perfil PTZ</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        {% if profile_token %}
+        <div class="mb-3">
+            {% include "live/_video_player.html" with suffix="_detail" ptz_supported=ptz_supported no_video_text="Cargando stream..." %}
+        </div>
+        {% else %}
+        <div class="alert alert-info bg-dark text-info border-secondary small mb-3">
+            <i class="bi bi-info-circle"></i> No hay perfil default. Selecciona uno abajo para ver el video.
+        </div>
+        {% endif %}
+
+        <div class="card bg-black border-secondary mb-3">
+            <div class="card-header"><h5 class="mb-0"><i class="bi bi-broadcast"></i> Perfiles</h5></div>
+            <div class="card-body" id="profiles">
+                <div class="text-center text-muted py-3">
+                    <div class="spinner-border spinner-border-sm"></div>
+                    <p class="mt-2 small">Cargando perfiles...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% load static %}
+<script src="{% static 'live/ptz-control.js' %}"></script>
+<script>
+const DEVICE_ID = {{ device.id }};
+const SCAN_URL = '/api/devices/{{ device.id }}/scan/';
+const SYNC_TIME_URL = '/api/devices/{{ device.id }}/sync-time/';
+const PROFILES_URL = '/api/devices/{{ device.id }}/profiles/';
+const PRESET_URL = '/api/ptz/{{ device.id }}/preset/';
+const DEFAULT_PROFILE_URL = '/api/devices/{{ device.id }}/default-profile/';
+const MOTION_CONFIG_URL = '/api/devices/{{ device.id }}/motion-config/';
+
+const specs = {{ camera_specs_json|safe }};
+const defaultProfileToken = '{{ device.default_profile_token|default:"" }}';
+
+// ---- PTZ Control for detail page ----
+{% if profile_token %}
+window.ptzCtrl_detail = new PTZControl({
+    overlayEl: document.getElementById('ptzOverlay_detail'),
+    containerEl: document.getElementById('videoContainer_detail'),
+    toggleBtnEl: document.getElementById('ptzToggleBtn_detail'),
+    statusEl: null,
+    moveUrl: '/api/ptz/{{ device.id }}/move/',
+    statusUrl: '/api/ptz/{{ device.id }}/status/',
+    profileToken: '{{ profile_token }}',
+    cameraSpecs: {{ camera_specs_json|safe }},
+    ptzSupported: {{ ptz_supported|yesno:"true,false" }},
+    suffix: '_detail',
+});
+ptzCtrl_detail.init();
+initVideoPlayer('_detail');
+{% endif %}
+
+// ---- Capabilities ----
+async function scanDevice() {
+    const btn = document.getElementById('scanBtn');
+    const status = document.getElementById('scanStatus');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    status.textContent = 'Escaneando...';
+    try {
+        const resp = await fetch(SCAN_URL, {method: 'POST'});
+        const data = await resp.json();
+        if (data.ok) {
+            location.reload();
+        } else {
+            status.textContent = 'Error: ' + (data.error || 'desconocido');
+        }
+    } catch (e) {
+        status.textContent = 'Error de red';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-search"></i> Scan';
+}
+
+async function syncTime() {
+    const btn = document.getElementById('syncTimeBtn');
+    const status = document.getElementById('scanStatus');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    try {
+        const resp = await fetch(SYNC_TIME_URL, {method: 'POST'});
+        const data = await resp.json();
+        const r = data.results?.[0];
+        if (r && r.ok) {
+            if (status) status.textContent = 'Hora sincronizada correctamente';
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            const msg = 'Error: ' + (r?.error || 'desconocido');
+            if (status) status.textContent = msg;
+            btn.textContent = ' Error';
+            btn.classList.replace('btn-outline-info', 'btn-outline-danger');
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-clock"></i> Sync time';
+                btn.classList.replace('btn-outline-danger', 'btn-outline-info');
+            }, 3000);
+            return;
+        }
+    } catch (e) {
+        if (status) status.textContent = 'Error de red';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-clock"></i> Sync time';
+}
+
+// ---- Default profile ----
+async function setDefaultProfile(token) {
+    try {
+        await fetch(DEFAULT_PROFILE_URL, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({profile_token: token}),
+        });
+        location.reload();
+    } catch (e) {
+        console.error('Error setting default profile:', e);
+    }
+}
+
+// ---- Presets PTZ ----
+let selectedPresetProfile = '';
+
+async function loadPtzProfiles() {
+    try {
+        const resp = await fetch(PROFILES_URL);
+        if (!resp.ok) return;
+        const profiles = await resp.json();
+        if (!Array.isArray(profiles)) return;
+        const select = document.getElementById('presetProfileSelect');
+        profiles.forEach(p => {
+            if (p.ptz) {
+                const opt = document.createElement('option');
+                opt.value = p.token;
+                opt.textContent = p.name;
+                select.appendChild(opt);
+            }
+        });
+    } catch (e) {
+        console.error('Error loading PTZ profiles:', e);
+    }
+}
+
+document.getElementById('presetProfileSelect').addEventListener('change', function() {
+    selectedPresetProfile = this.value;
+    if (selectedPresetProfile) {
+        loadPresets();
+    } else {
+        document.getElementById('presetList').innerHTML = '<p class="text-muted small text-center mb-0">Selecciona un perfil PTZ</p>';
+    }
+});
+
+async function loadPresets() {
+    const container = document.getElementById('presetList');
+    container.innerHTML = '<div class="text-center py-2"><span class="spinner-border spinner-border-sm"></span></div>';
+    try {
+        const resp = await fetch(PRESET_URL + '?profile_token=' + encodeURIComponent(selectedPresetProfile));
+        const presets = await resp.json();
+        if (!Array.isArray(presets) || presets.length === 0) {
+            container.innerHTML = '<p class="text-muted small text-center mb-0">Sin presets</p>';
+            return;
+        }
+        container.innerHTML = '<div class="list-group list-group-flush">' +
+            presets.map(p => `
+                <div class="list-group-item bg-black text-light border-secondary d-flex justify-content-between align-items-center py-1">
+                    <span class="small">${p.name || p.token}</span>
+                    <div>
+                        <button class="btn btn-sm btn-outline-success me-1 py-0 px-1" onclick="gotoPreset('${p.token}')" title="Ir">
+                            <i class="bi bi-play-fill"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removePreset('${p.token}')" title="Eliminar">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('') +
+        '</div>';
+    } catch (e) {
+        container.innerHTML = '<p class="text-danger small text-center mb-0">Error al cargar presets</p>';
+    }
+}
+
+async function savePreset() {
+    const name = document.getElementById('presetName').value.trim();
+    if (!name || !selectedPresetProfile) return;
+    try {
+        await fetch(PRESET_URL, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'set',
+                profile_token: selectedPresetProfile,
+                name: name,
+            }),
+        });
+        document.getElementById('presetName').value = '';
+        loadPresets();
+    } catch (e) {
+        console.error('Error saving preset:', e);
+    }
+}
+
+async function gotoPreset(token) {
+    if (!selectedPresetProfile) return;
+    try {
+        await fetch(PRESET_URL, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'goto',
+                profile_token: selectedPresetProfile,
+                preset_token: token,
+            }),
+        });
+    } catch (e) {
+        console.error('Error goto preset:', e);
+    }
+}
+
+async function removePreset(token) {
+    if (!selectedPresetProfile) return;
+    try {
+        await fetch(PRESET_URL, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'remove',
+                profile_token: selectedPresetProfile,
+                preset_token: token,
+            }),
+        });
+        loadPresets();
+    } catch (e) {
+        console.error('Error removing preset:', e);
+    }
+}
+
+// ---- Init ----
+async function loadProfiles() {
+    try {
+        const resp = await fetch(PROFILES_URL);
+        const profiles = await resp.json();
+        const container = document.getElementById('profiles');
+
+        if (!Array.isArray(profiles) || profiles.length === 0) {
+            container.innerHTML = '<p class="text-muted small text-center mb-0">Sin perfiles disponibles</p>';
+            return;
+        }
+
+        container.innerHTML = '<div class="list-group list-group-flush">' +
+            profiles.map(p => {
+                const enc = p.video_encoder?.encoding || '-';
+                const res = p.video_encoder?.resolution;
+                const resStr = res ? `${res.width}x${res.height}` : '-';
+                const hasPtz = p.ptz ? '<i class="bi bi-arrows-move text-info ms-1" title="PTZ"></i>' : '';
+                const isDefault = defaultProfileToken === p.token;
+                return `<div class="list-group-item bg-black text-light border-secondary d-flex justify-content-between align-items-center">
+                    <div>
+                        <a href="/live/{{ device.id }}/?profile=${p.token}" class="text-light text-decoration-none">${p.name} ${hasPtz}</a>
+                        ${isDefault ? '<span class="badge bg-info ms-1">Default</span>' : ''}
+                        <br><small class="text-muted">${enc} ${resStr}</small>
+                    </div>
+                    ${!isDefault ? `<button class="btn btn-sm btn-outline-info py-0 px-1" onclick="setDefaultProfile('${p.token}')" title="Set as default"><i class="bi bi-star"></i></button>` : ''}
+                </div>`;
+            }).join('') +
+        '</div>';
+    } catch (e) {
+        document.getElementById('profiles').innerHTML = '<p class="text-danger small text-center mb-0">Error al cargar perfiles</p>';
+    }
+}
+
+function renderCapabilities() {
+    const container = document.getElementById('capabilities');
+    const lastScan = specs.last_scan || '-';
+
+    let rows = '';
+    if (specs.onvif_profiles?.profiles) {
+        const p = specs.onvif_profiles.profiles;
+        rows += `<tr><td>ONVIF</td><td>${['S','T','M','G','Q'].filter(k => p[k]).join(', ') || '-'}</td></tr>`;
+    }
+    if (specs.video_source) {
+        const v = specs.video_source;
+        rows += `<tr><td>Resolución</td><td>${v.max_width || '-'}×${v.max_height || '-'} @ ${v.max_framerate || '-'}fps</td></tr>`;
+    }
+    if (specs.network) {
+        rows += `<tr><td>MAC</td><td>${specs.network.mac || '-'}</td></tr>`;
+        rows += `<tr><td>IP</td><td>${specs.network.ip || '-'}</td></tr>`;
+    }
+    if (specs.hostname) {
+        rows += `<tr><td>Hostname</td><td>${specs.hostname}</td></tr>`;
+    }
+    if (specs.dns?.length) {
+        rows += `<tr><td>DNS</td><td>${specs.dns.join(', ')}</td></tr>`;
+    }
+    if (specs.ntp?.length) {
+        rows += `<tr><td>NTP</td><td>${specs.ntp.join(', ')}</td></tr>`;
+    }
+    if (specs.system_time) {
+        rows += `<tr><td>Zona horaria</td><td>${specs.system_time.tz || '-'}</td></tr>`;
+    }
+    if (specs.last_time_sync) {
+        rows += `<tr><td>Última sincro</td><td>${specs.last_time_sync}</td></tr>`;
+    }
+
+    if (!rows) {
+        container.innerHTML = `<div class="text-center text-muted py-3"><p class="small mb-0" id="scanStatus">Último scan: ${lastScan}. Sin datos disponibles.</p></div>`;
+        return;
+    }
+
+    container.innerHTML = `
+        <p class="small text-muted mb-1" id="scanStatus">Último scan: ${lastScan}</p>
+        <table class="table table-sm table-dark table-borderless mb-0 small">
+            <tbody>${rows}</tbody>
+        </table>
+    `;
+}
+
+renderCapabilities();
+
+// ---- Motion detection ----
+let motionData = null;
+
+async function loadMotionConfig() {
+    const container = document.getElementById('motionConfig');
+    try {
+        const resp = await fetch(MOTION_CONFIG_URL);
+        if (!resp.ok) {
+            const err = await resp.json();
+            container.innerHTML = '<p class="text-danger small text-center mb-0">' + (err.error || 'Error al cargar') + '</p>';
+            return;
+        }
+        motionData = await resp.json();
+        renderMotionConfig();
+    } catch (e) {
+        container.innerHTML = '<p class="text-danger small text-center mb-0">Error de red al cargar configuración</p>';
+    }
+}
+
+function renderMotionConfig() {
+    const container = document.getElementById('motionConfig');
+    const md = motionData?.MotionDetect?.[0];
+    if (!md) {
+        container.innerHTML = '<p class="text-muted small text-center mb-0">Sin configuración disponible</p>';
+        return;
+    }
+
+    const enabled = md.Enable === 'true';
+    const level = parseInt(md.Level) || 0;
+    const windows = Array.isArray(md.MotionDetectWindow) ? md.MotionDetectWindow : [];
+    const eh = md.EventHandler || {};
+    const recordEnabled = eh.RecordEnable === 'true';
+    const alarmEnabled = eh.AlarmOutEnable === 'true';
+
+    let windowsHtml = '';
+    windows.forEach((w, i) => {
+        const s = parseInt(w.Sensitive) || 0;
+        const t = parseInt(w.Threshold) || 0;
+        const coords = Array.isArray(w.Window) ? w.Window.join(", ") : (w.Window || "-");
+        windowsHtml += `
+            <div class="border border-secondary rounded p-2 mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <strong class="small">${w.Name || ("Ventana " + (i + 1))}</strong>
+                </div>
+                <div class="row g-1 small">
+                    <div class="col-6">
+                        <label class="text-muted">Sensibilidad</label>
+                        <input type="range" class="form-range win-sensitive" min="0" max="100" step="5" value="${s}" data-idx="${i}" ${enabled ? '' : 'disabled'}>
+                        <span class="win-sensitive-val">${s}</span>
+                    </div>
+                    <div class="col-6">
+                        <label class="text-muted">Umbral</label>
+                        <input type="range" class="form-range win-threshold" min="0" max="10" step="1" value="${t}" data-idx="${i}" ${enabled ? '' : 'disabled'}>
+                        <span class="win-threshold-val">${t}</span>
+                    </div>
+                </div>
+                <small class="text-muted d-block mt-1">Coords: ${coords}</small>
+            </div>
+        `;
+    });
+
+    container.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="motionEnable" ${enabled ? 'checked' : ''}>
+                <label class="form-check-label small" for="motionEnable">Habilitado</label>
+            </div>
+            <div class="small text-muted">Nivel: <span id="motionLevelVal">${level}</span></div>
+        </div>
+        <div class="mb-3">
+            <input type="range" class="form-range" id="motionLevel" min="0" max="6" step="1" value="${level}">
+        </div>
+        <div class="d-flex gap-2 mb-2">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="motionRecord" ${recordEnabled ? 'checked' : ''}>
+                <label class="form-check-label small" for="motionRecord">Grabar</label>
+            </div>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="motionAlarm" ${alarmEnabled ? 'checked' : ''}>
+                <label class="form-check-label small" for="motionAlarm">Alarma</label>
+            </div>
+        </div>
+        <div class="mb-2">
+            <a class="small text-info" data-bs-toggle="collapse" href="#motionWindows" role="button">
+                Ventanas (${windows.length})
+            </a>
+        </div>
+        <div class="collapse" id="motionWindows">
+            ${windowsHtml}
+        </div>
+        <button class="btn btn-sm btn-outline-success w-100 mt-2" onclick="saveMotionConfig()">
+            <i class="bi bi-check-lg"></i> Guardar configuración
+        </button>
+    `;
+
+    document.getElementById('motionLevel').addEventListener('input', function() {
+        document.getElementById('motionLevelVal').textContent = this.value;
+    });
+
+    document.querySelectorAll('.win-sensitive').forEach(el => {
+        el.addEventListener('input', function() {
+            this.parentElement.querySelector('.win-sensitive-val').textContent = this.value;
+        });
+    });
+    document.querySelectorAll('.win-threshold').forEach(el => {
+        el.addEventListener('input', function() {
+            this.parentElement.querySelector('.win-threshold-val').textContent = this.value;
+        });
+    });
+}
+
+async function saveMotionConfig() {
+    const md = motionData?.MotionDetect?.[0];
+    if (!md) return;
+
+    const enabled = document.getElementById('motionEnable').checked;
+    md.Enable = enabled ? 'true' : 'false';
+    md.Level = document.getElementById('motionLevel').value;
+
+    const eventHandlers = md.EventHandlers?.[0];
+    if (eventHandlers) {
+        eventHandlers.Record = document.getElementById('motionRecord').checked ? 'true' : 'false';
+        eventHandlers.Alarm = document.getElementById('motionAlarm').checked ? 'true' : 'false';
+    }
+
+    const windows = Array.isArray(md.Window) ? md.Window : [];
+    document.querySelectorAll('.win-sensitive').forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        if (windows[idx]) windows[idx].Sensitive = el.value;
+    });
+    document.querySelectorAll('.win-threshold').forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        if (windows[idx]) windows[idx].Threshold = el.value;
+    });
+
+    const btn = document.querySelector('#motionConfig .btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+
+    try {
+        const resp = await fetch(MOTION_CONFIG_URL, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(motionData),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardado';
+            btn.classList.replace('btn-outline-success', 'btn-outline-info');
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardar configuración';
+                btn.classList.replace('btn-outline-info', 'btn-outline-success');
+            }, 2000);
+        } else {
+            btn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Error: ' + (data.error || 'desconocido');
+            btn.classList.replace('btn-outline-success', 'btn-outline-danger');
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardar configuración';
+                btn.classList.replace('btn-outline-danger', 'btn-outline-success');
+            }, 3000);
+        }
+    } catch (e) {
+        btn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Error de red';
+        btn.classList.replace('btn-outline-success', 'btn-outline-danger');
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-lg"></i> Guardar configuración';
+            btn.classList.replace('btn-outline-danger', 'btn-outline-success');
+        }, 3000);
+    }
+}
+
+loadMotionConfig();
+
+loadProfiles();
+loadPtzProfiles();
+</script>
+{% endblock %}

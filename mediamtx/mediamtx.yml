@@ -1,0 +1,40 @@
+api: true
+apiAddress: :9997
+apiAllowOrigins:
+  - '*'
+authMethod: internal
+authInternalUsers:
+  - user: admin
+    pass: mediamtx_admin_pass
+    ips: []
+    permissions:
+      - action: api
+      - action: metrics
+      - action: pprof
+      - action: publish
+      - action: read
+      - action: playback
+  - user: any
+    pass:
+    ips: ['127.0.0.1', '::1', '172.18.0.0/16']
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+hls: true
+hlsAddress: :8888
+hlsAllowOrigins:
+  - '*'
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsVariant: lowLatency
+logDestinations:
+  - stdout
+logLevel: info
+rtsp: true
+rtspAddress: :8554
+rtspAuthMethods: [basic]
+webrtc: true
+webrtcAddress: :8889
+webrtcAllowOrigins:
+  - '*'

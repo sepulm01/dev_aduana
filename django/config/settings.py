@@ -1,0 +1,103 @@
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+SECRET_KEY = "django-insecure-&p8e%y1o3u%8y7+h%003^v!4l)rw@qai-u3^acdzy)(q8)27i*"
+DEBUG = True
+ALLOWED_HOSTS = ["*"]
+
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "channels",
+    "django_celery_beat",
+    "devices.apps.DevicesConfig",
+    "live",
+    "ptz",
+]
+
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+ROOT_URLCONF = "config.urls"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("POSTGRES_DB", "mediamtx_manager"),
+        "USER": os.environ.get("POSTGRES_USER", "mediamtx"),
+        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
+        "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
+        "PORT": 5432,
+    }
+}
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [os.environ.get("REDIS_URL", "redis://localhost:6379/0")],
+        },
+    },
+}
+
+CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULE = {
+    "poll-all-cameras-every-5s": {
+        "task": "devices.tasks.poll_all_cameras",
+        "schedule": 5.0,
+    },
+}
+
+AUTH_PASSWORD_VALIDATORS = []
+
+LANGUAGE_CODE = "es-cl"
+TIME_ZONE = "America/Santiago"
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+MEDIAMTX_URL = os.environ.get("MEDIAMTX_URL", "http://mediamtx:8889")
