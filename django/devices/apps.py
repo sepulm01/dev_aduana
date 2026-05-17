@@ -24,10 +24,11 @@ class DevicesConfig(AppConfig):
                     )
                     client.get_device_info()
                     device.is_online = True
+                    device.failure_count = 0
                 except Exception:
                     device.is_online = False
 
-                device.save(update_fields=["is_online"])
+                device.save(update_fields=["is_online", "failure_count"])
 
             mtx = MediaMTXAPI()
             for attempt in range(10):

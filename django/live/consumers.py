@@ -49,3 +49,17 @@ class DeviceConsumer(AsyncWebsocketConsumer):
                 }
             )
         )
+
+    async def ivs_event(self, event):
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "ivs",
+                    "device_id": event["device_id"],
+                    "code": event.get("code", ""),
+                    "action": event.get("action", ""),
+                    "data": event.get("data", {}),
+                    "timestamp": event.get("timestamp", ""),
+                }
+            )
+        )

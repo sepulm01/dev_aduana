@@ -58,6 +58,69 @@ class CameraDriver(ABC):
         """
         return None
 
+    def get_ivs_rules(self):
+        """Read IVS rules configuration from the camera.
+
+        Returns a list of rule dicts. Each dict contains at minimum:
+            {"name": str, "enable": bool, "type": str, "detections": list}
+
+        Returns [] if IVS is not supported.
+        Raises DriverError on failure.
+        """
+        return []
+
+    def set_ivs_rules(self, rules):
+        """Write IVS rules configuration to the camera.
+
+        Args:
+            rules: list of rule dicts, same structure as returned by get_ivs_rules().
+
+        Returns True on success.
+        Raises DriverError on failure.
+        """
+        return False
+
+    def get_supported_events(self):
+        """Return list of event codes this camera/driver can stream.
+
+        Example: ["SmartMotionHuman", "SmartMotionVehicle", "CrossLineDetection"]
+        """
+        return []
+
+    def start_event_listener(self, callback):
+        """Start a background event listener for this camera.
+
+        Args:
+            callback: callable that receives event dicts:
+                {
+                    "code": str,       # event code like "SmartMotionHuman"
+                    "action": str,     # "Start", "Stop", "Pulse"
+                    "index": int,      # channel index
+                    "data": dict,      # event-specific metadata (Rect, Object IDs, etc)
+                    "timestamp": str   # ISO 8601
+                }
+
+        Returns a cancellable context (call .cancel() to stop).
+
+        IMPORTANT: This must be non-blocking. The implementation should
+        spawn a background thread or use asyncio internally so it does
+        not block the calling thread.
+
+        Returns None if this driver does not support event listeners.
+        """
+        return None
+
+    def ping(self):
+        """Check if the camera is reachable and responsive.
+
+        Returns a dict with:
+            "online": bool
+            "last_seen": datetime or None  (UTC)
+
+        Returns {"online": False, "last_seen": None} on failure.
+        """
+        return {"online": False, "last_seen": None}
+
 
 class DriverError(Exception):
     """Raised on driver-level failures (network, auth, unexpected responses)."""

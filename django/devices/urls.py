@@ -35,4 +35,19 @@ urlpatterns = [
         views.device_motion_config,
         name="device_motion_config",
     ),
+    path(
+        "api/devices/<int:device_id>/ivs/",
+        views.device_ivs_config,
+        name="device_ivs_config",
+    ),
+    path(
+        "api/devices/<int:device_id>/events/",
+        views.device_events,
+        name="device_events",
+    ),
+    path(
+        "api/devices/<int:device_id>/event-listener/",
+        views.device_event_listener_toggle,
+        name="device_event_listener_toggle",
+    ),
 ]

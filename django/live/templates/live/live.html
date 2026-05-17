@@ -29,6 +29,10 @@
                     <dd id="streamName">{{ stream_name|default:"-" }}</dd>
                     <dt>Estado PTZ</dt>
                     <dd id="ptzStatus">-</dd>
+                    <dt>Eventos IVS</dt>
+                    <dd id="ivsEventBadge">
+                        <span class="badge bg-secondary">Sin eventos</span>
+                    </dd>
                 </dl>
                 <div class="mb-2">
                     <label class="form-label small text-muted">Perfil</label>
@@ -38,7 +42,7 @@
                 </div>
                 <div class="mb-2">
                     <a id="liveLink" href="#" class="btn btn-success d-none w-100">
-                        <i class="ti ti-player-play-filled me-2"></i>Live
+                        <i class="ti ti-player-play me-2"></i>Live
                     </a>
                 </div>
                 <div id="presetDropdown" class="d-none">
@@ -47,6 +51,7 @@
                         <option value="">Seleccionar preset...</option>
                     </select>
                 </div>
+                <div id="ivsEventLog" class="small mt-2" style="max-height:120px;overflow-y:auto;"></div>
             </div>
         </div>
     </div>
@@ -167,5 +172,117 @@ loadProfiles();
 if (currentProfileToken) {
     loadPresets();
 }
+
+const wsScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(wsScheme + '//' + window.location.host + '/ws/device/' + DEVICE_ID + '/');
+ws.onopen = function() {
+    console.log('WS connected for device', DEVICE_ID);
+    ws.send(JSON.stringify({type: 'ping'}));
+};
+ws.onmessage = function(e) {
+    try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'pong') return;
+
+        if (msg.type === 'ivs') {
+            handleIVSEvent(msg);
+        } else if (msg.type === 'motion') {
+            handleMotionEvent(msg);
+        }
+    } catch (err) {
+        console.error('WS parse error:', err);
+    }
+};
+ws.onclose = function() {
+    console.log('WS disconnected for device', DEVICE_ID);
+    setTimeout(function() {
+        location.reload();
+    }, 5000);
+};
+ws.onerror = function(e) {
+    console.error('WS error for device', DEVICE_ID, e);
+};
+
+let activeEvents = {};
+let eventLogItems = [];
+
+function handleIVSEvent(msg) {
+    const code = msg.code || '';
+    const action = msg.action || '';
+    const data = msg.data || {};
+    const ts = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString('es-CL') : '';
+
+    const badge = document.getElementById('ivsEventBadge');
+    if (action === 'Start' || action === 'Pulse') {
+        activeEvents[code] = {action, data, ts};
+        badge.innerHTML = '<span class="badge bg-danger pulse-badge"><i class="ti ti-alert-triangle me-1"></i>' + code + '</span>';
+
+        if (data.Object && Array.isArray(data.Object)) {
+            drawIVSOverlay(data.Object);
+        }
+    } else if (action === 'Stop') {
+        delete activeEvents[code];
+        if (Object.keys(activeEvents).length === 0) {
+            badge.innerHTML = '<span class="badge bg-secondary">Sin eventos</span>';
+            clearIVSOverlay();
+        }
+    }
+
+    const log = document.getElementById('ivsEventLog');
+    eventLogItems.unshift({code, action, ts});
+    if (eventLogItems.length > 20) eventLogItems.pop();
+    log.innerHTML = eventLogItems.slice(0, 10).map(function(e) {
+        return '<div class="text-muted small py-1 border-bottom border-secondary"><span class="text-danger">' + e.code + '</span> <span class="text-secondary">' + e.action + '</span> <span class="text-info">' + e.ts + '</span></div>';
+    }).join('');
+}
+
+function handleMotionEvent(msg) {
+    const badge = document.getElementById('ivsEventBadge');
+    if (msg.metadata && msg.metadata.motion_active) {
+        badge.innerHTML = '<span class="badge bg-warning"><i class="ti ti-motion me-1"></i>Movimiento</span>';
+    }
+}
+
+function drawIVSOverlay(objects) {
+    const overlay = document.getElementById('ivsOverlay');
+    if (!overlay) return;
+    overlay.style.display = 'block';
+    overlay.innerHTML = '';
+
+    const container = document.getElementById('videoContainer');
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+
+    objects.forEach(function(obj) {
+        const r = obj.Rect;
+        if (!r || r.length < 4) return;
+
+        const x1 = r[0], y1 = r[1], x2 = r[2], y2 = r[3];
+        const scaleX = rect.width / 1600;
+        const scaleY = rect.height / 900;
+
+        const label = obj.HumamID ? 'H-' + obj.HumamID : obj.VehicleID ? 'V-' + obj.VehicleID : 'Obj';
+
+        overlay.innerHTML += '<div style="position:absolute;left:' + (x1 * scaleX) + 'px;top:' + (y1 * scaleY) + 'px;width:' + ((x2 - x1) * scaleX) + 'px;height:' + ((y2 - y1) * scaleY) + 'px;border:2px solid #ff4444;border-radius:3px;background:rgba(255,68,68,0.1);"><div style="position:absolute;top:-22px;left:0;background:#ff4444;color:#fff;font-size:11px;padding:1px 5px;border-radius:3px;white-space:nowrap;">' + label + '</div></div>';
+    });
+}
+
+function clearIVSOverlay() {
+    const overlay = document.getElementById('ivsOverlay');
+    if (overlay) {
+        overlay.innerHTML = '';
+        overlay.style.display = 'none';
+    }
+}
+
+window.addEventListener('resize', function() {
+    if (Object.keys(activeEvents).length > 0) {
+        Object.values(activeEvents).forEach(function(ev) {
+            if (ev.data && ev.data.Object) {
+                drawIVSOverlay(ev.data.Object);
+            }
+        });
+    }
+});
 </script>
 {% endblock %}

@@ -8,7 +8,7 @@ import requests
 from django.shortcuts import render, get_object_or_404
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from devices.models import Device
+from devices.models import Device, IVSRule
 from live.views import DEFAULT_CAMERA_SPECS
 from onvif_utils.client import OnvifClient
 from onvif_utils.discovery import DeviceDiscovery
@@ -314,3 +314,104 @@ def device_motion_config(request, device_id):
             return JsonResponse({"error": str(e)}, status=500)
 
     return JsonResponse({"error": "GET or POST required"}, status=405)
+
+
+@csrf_exempt
+def device_ivs_config(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+    driver = get_driver(device)
+
+    if request.method == "GET":
+        try:
+            rules = driver.get_ivs_rules()
+            return JsonResponse({"rules": rules})
+        except DriverError as e:
+            return JsonResponse({"error": str(e)}, status=500)
+
+    elif request.method == "POST":
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "JSON required"}, status=400)
+
+        rules = data.get("rules", [])
+        camera_write_ok = False
+        camera_error = None
+        try:
+            driver.set_ivs_rules(rules)
+            camera_write_ok = True
+        except DriverError as e:
+            camera_error = str(e)
+            if "does not support IVS config via CGI" not in camera_error:
+                return JsonResponse({"error": camera_error}, status=500)
+
+        IVSRule.objects.filter(device=device).delete()
+        for idx, rule in enumerate(rules):
+            IVSRule.objects.update_or_create(
+                device=device,
+                index=idx,
+                defaults={
+                    "name": rule.get("name", f"Rule {idx}"),
+                    "rule_type": rule.get("type", "CrossLine"),
+                    "enable": rule.get("enable", True),
+                    "direction": rule.get("direction", "Both"),
+                    "detect_line": rule.get("detect_line", ""),
+                    "detect_region": rule.get("detect_region", ""),
+                    "event_handler": rule.get("event_handler", {}),
+                    "camera_rule_id": idx,
+                },
+            )
+        if camera_write_ok:
+            return JsonResponse({"ok": True})
+        else:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "warning": "Rules saved locally only. Camera does not support IVS config via CGI.",
+                }
+            )
+
+    return JsonResponse({"error": "GET or POST required"}, status=405)
+
+
+@csrf_exempt
+def device_events(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+
+    if request.method != "GET":
+        return JsonResponse({"error": "GET required"}, status=405)
+
+    limit = int(request.GET.get("limit", 100))
+    events = device.events.all()[:limit]
+    return JsonResponse(
+        [
+            {
+                "id": e.id,
+                "code": e.code,
+                "action": e.action,
+                "index": e.index,
+                "data": e.data,
+                "timestamp": e.timestamp.isoformat(),
+            }
+            for e in events
+        ],
+        safe=False,
+    )
+
+
+@csrf_exempt
+def device_event_listener_toggle(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "JSON required"}, status=400)
+
+    enabled = bool(data.get("enable", False))
+    device.event_listener_enabled = enabled
+    device.save()
+    return JsonResponse({"ok": True, "event_listener_enabled": enabled})

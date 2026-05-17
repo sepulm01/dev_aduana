@@ -28,6 +28,9 @@
             <div id="ptzOverlay{{ sfx }}"
                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; display: none;">
             </div>
+            <div id="ivsOverlay{{ sfx }}"
+                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none;">
+            </div>
         </div>
         <div id="noVideo{{ sfx }}" class="align-items-center justify-content-center text-muted" style="aspect-ratio: 16 / 9; display: {% if profile_token %}none{% else %}flex{% endif %};">
             <div class="text-center">
