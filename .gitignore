@@ -35,3 +35,11 @@ mediamtx/mediamtx
 
 # Playwright session files
 .playwright-mcp/
+
+# DeepStream models (large binary files)
+*.pt
+*.onnx
+*.engine
+
+# DeepStream-Yolo build artifacts
+DeepStream-Yolo/
