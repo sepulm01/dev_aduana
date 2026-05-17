@@ -2,11 +2,11 @@ persona
 bicicleta
 auto
 moto
-aeroplane
+aeroplano
 bus
-train
+tren
 camion/pickup
-boat
+bote
 semaforo
 fire hydrant
 stop sign

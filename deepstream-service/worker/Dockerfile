@@ -16,3 +16,5 @@ RUN git clone https://github.com/marcoslucianops/DeepStream-Yolo.git
 WORKDIR /opt/nvidia/deepstream/deepstream/DeepStream-Yolo
 ENV CUDA_VER=12.8
 RUN make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yolo
+
+
