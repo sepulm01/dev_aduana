@@ -1,0 +1,67 @@
+[application]
+enable-perf-measurement=1
+perf-measurement-interval-sec=5
+
+[tiled-display]
+enable=1
+width=1280
+height=720
+rows=1
+columns=1
+nvbuf-memory-type=0
+
+[source0]
+enable=1
+type=3
+uri=rtsp://admin:admin@192.168.1.108:554/stream1
+num-sources=1
+gpu-id=0  
+cudadec-memtype=0                      # dentro del contenedor siempre es 0
+
+[streammux]
+gpu-id=0
+live-source=0
+batch-size=1
+batched-push-timeout=40000
+#width=1920
+#height=1080
+width=1280
+height=720
+enable-padding=0
+nvbuf-memory-type=0
+
+[primary-gie]
+enable=1
+gpu-id=0
+gie-unique-id=1
+batch-size=1
+nvbuf-memory-type=0
+config-file=/opt/nvidia/deepstream/config/yolo/config_infer_primary_yoloV9.txt
+
+[sink0]
+enable = 1
+type = 3
+sync = 0
+source-id = 0
+gpu-id = 0
+nvbuf-memory-type = 0
+bitrate = 8000000
+output-file = /tmp/outsanmartin_v9.mp4
+
+[osd]
+enable=1
+gpu-id=0
+border-width=3
+text-size=10
+text-color=1;1;1;1;
+text-bg-color=0.3;0.3;0.3;1
+font=Serif
+show-clock=0
+clock-x-offset=800
+clock-y-offset=820
+clock-text-size=8
+clock-color=1;0;0;0
+nvbuf-memory-type=0
+
+[tests]
+file-loop=0

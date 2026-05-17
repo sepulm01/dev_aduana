@@ -94,6 +94,46 @@ services:
     environment:
       - DISCOVERY_PORT=8765
 
+  event-stream-service:
+    build: ./event-stream-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://mediamtx:Ch4ngeM3!@postgres:5432/mediamtx_manager
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  redis-event-bridge:
+    build: ./django
+    command: python manage.py redis_event_bridge
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  deepstream-yolo:
+    build: ./deepstream-service
+    restart: unless-stopped
+    volumes:
+      - ./deepstream-service/config:/opt/nvidia/deepstream/config:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: deepstream-app -c /opt/nvidia/deepstream/config/deepstream_app_config.txt
+
   nginx:
     image: nginx:alpine
     volumes:
