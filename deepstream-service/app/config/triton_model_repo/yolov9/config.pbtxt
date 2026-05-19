@@ -1,0 +1,56 @@
+# Triton model repo config for YOLOv9
+# Platform: TensorRT Plan (FP16/FP32)
+# Input: [batch, 3, 640, 640] RGB
+# Output: [batch, 84, 8400] bounding boxes + class scores
+#
+# El archivo de engine (model_b8_gpu0_fp32.engine) debe existir en:
+# /opt/deepstream-config/triton_model_repo/yolov9/1/
+#
+# Para generarlo desde el ONNX ya convertido:
+#   /opt/deepstream-app/yolov9-e-converted.onnx
+#   trtexec --onnx=yolov9-e-converted.onnx \
+#           --fp16 --best \
+#           --minShapes=input:1x3x640x640 \
+#           --optShapes=input:8x3x640x640 \
+#           --maxShapes=input:8x3x640x640 \
+#           --saveEngine=/opt/deepstream-config/triton_model_repo/yolov9/1/model_b8_gpu0_fp16.engine
+
+name: "yolov9"
+platform: "tensorrt_plan"
+max_batch_size: 8
+default_model_filename: "model_b8_gpu0_fp32.engine"
+
+input [
+  {
+    name: "input"
+    data_type: TYPE_FP32
+    format: FORMAT_NCHW
+    dims: [ 3, 640, 640 ]
+    dynamic_batching {
+      preferred_batch_size: [ 1, 2, 4, 8 ]
+      max_queue_delay_us: 100000
+    }
+  }
+]
+
+output [
+  {
+    name: "output"
+    data_type: TYPE_FP32
+    dims: [ 84, 8400 ]
+  }
+]
+
+instance_group [
+  {
+    kind: KIND_GPU
+    count: 1
+    gpus: [ 0 ]
+  }
+]
+
+optimization {
+  priority: PRIORITY_MAX
+  input_tensors_on_gpu: true
+  output_tensors_on_gpu: true
+}

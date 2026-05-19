@@ -1,0 +1,64 @@
+# Triton / nvinferserver config for PeopleNet Transformer (DETR-based, TAO)
+# Uses custom parser NvDsInferParseCustomDDETRTAO for DETR transformer output.
+# 3 classes: person, face, bag
+#
+# Model: resnet50_peoplenet_pruned.etlt → TensorRT engine
+# Tensor I/O: inputs [3, 544, 960], pred_boxes [300, 4], pred_logits [300, 4]
+# Dynamic batching enabled.
+
+infer_config {
+  unique_id: 1
+  gpu_ids: [0]
+  max_batch_size: 16
+
+  backend {
+    triton {
+      model_name: "peoplenet_transformer"
+      version: -1
+      model_repo {
+        root: "/opt/nvidia/deepstream/deepstream/samples/triton_tao_model_repo"
+        strict_model_config: true
+      }
+    }
+  }
+
+  preprocess {
+    network_format: MEDIA_FORMAT_NONE
+    tensor_order: TENSOR_ORDER_LINEAR
+    tensor_name: "inputs"
+    maintain_aspect_ratio: 0
+    frame_scaling_hw: FRAME_SCALING_HW_DEFAULT
+    frame_scaling_filter: 1
+    normalize {
+      scale_factor: 0.017507
+      channel_offsets: [123.675, 116.280, 103.530]
+    }
+  }
+
+  postprocess {
+    other { }
+  }
+
+  extra {
+    copy_input_to_host_buffers: false
+    output_buffer_pool_size: 2
+  }
+}
+
+input_control {
+  process_mode: PROCESS_MODE_FULL_FRAME
+  operate_on_gie_id: -1
+  interval: 0
+}
+
+output_control {
+  output_tensor_meta: false
+}
+
+custom_lib {
+  path: "/opt/nvidia/deepstream/deepstream/samples/triton_tao_model_repo/peoplenet_transformer/custom_parser.so"
+}
+
+extra {
+  custom_process_funcion: "CreateInferServerCustomProcess"
+}

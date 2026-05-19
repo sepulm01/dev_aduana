@@ -1,0 +1,78 @@
+# DeepStream Security App - Application Configuration
+#
+# Modelo seleccionado: yolov9 | trafficcamnet | peoplenet
+# Archivo seleccionado automaticamente por el app basándose en pgie_model_name.
+# Los configs de inferencia van en infer_configs/.
+
+application:
+  # Conexión Redis
+  redis_url: "redis://redis:6379"
+  redis_commands_channel: "deepstream:commands"
+  redis_events_prefix: "device"
+
+  # Heartbeat: cada cuántos frames publicar estado (0 = disabled)
+  heartbeat_interval_frames: 300
+
+  # Intervalo de logs de perf (nvdslogger) en segundos
+  perf_log_interval_sec: 5
+
+  # Si está definido, graba video anotado a ese path.
+  # Si está vacío o ausente, solo usa fakesink (headless).
+  # output_video_file: "/opt/output/recording.mp4"
+
+# Inference (nvinferserver / Triton)
+inference:
+  # Modelo: yolov9 | trafficcamnet | peoplenet
+  # El config file se selecciona automáticamente de infer_configs/
+  pgie_model_name: "yolov9"
+
+  # Batch size del PGIE (no debe exceder max_batch_size de sources)
+  batch_size: 8
+
+  # Intervalo de inferencia: 1 = cada frame, 2 = cada 2 frames, etc.
+  interval: 1
+
+# Tracker (NvDCF con ReID)
+tracker:
+  # Librería del tracker
+  ll_lib_file: "/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so"
+
+  # Archivo de configuración YAML del tracker
+  ll_config_file: "/opt/deepstream-config/config_tracker_NvDCF_accuracy.yml"
+
+  # Resolución del tracker
+  width: 960
+  height: 544
+
+# Analytics (nvdsanalytics) - ROIs, líneas, overcrowding, dirección
+analytics:
+  # Habilitar nvdsanalytics (true/false)
+  enabled: true
+
+  # Archivo de configuración del plugin nvdsanalytics
+  config_file: "/opt/deepstream-config/config_nvdsanalytics.txt"
+
+# Output (tiler + OSD)
+output:
+  width: 1280
+  height: 720
+  osd_enabled: true
+
+# Gestión de fuentes (nvmultiurisrcbincreator)
+sources:
+  # Máximo de fuentes simultáneas (debe coincidir con batch-size del mux)
+  max_batch_size: 3
+
+  # Fuentes iniciales (agregadas al arrancar el pipeline).
+  # Se pueden agregar/quitar en runtime vía Redis (canal deepstream:commands).
+  initial:
+    # Cada fuente necesita: device_id, sensor_id, uri
+    - device_id: 5
+      sensor_id: "cam_5"
+      uri: "rtsp://admin:Rguax910+@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
+
+# Mapeo: source_id (DeepStream) → device_id (Django)
+# Se usa para publicar eventos en el canal Redis correcto (device:{device_id}:events).
+# El redis_event_bridge de Django ya suscribe a device:*:events sin cambios.
+source_to_device_map:
+  0: 5   # DeepStream source 0 → Django device 5

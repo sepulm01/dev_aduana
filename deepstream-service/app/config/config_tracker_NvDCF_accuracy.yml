@@ -5,7 +5,7 @@ TargetManagement:
   preserveStreamUpdateOrder: 0
   maxTargetsPerStream: 150
   outputTerminatedTracks: 1
-  terminatedTrackFilename: video_8_tracker_
+  terminatedTrackFilename: ds_security_tracker_
   minIouDiff4NewTarget: 0.3686
   minTrackerConfidence: 0.1513
   probationAge: 2
@@ -60,7 +60,7 @@ VisualTracker:
   filterChannelWeightsLr: 0.0339
   gaussianSigma: 0.5687
 ReID:
-  reidType: 2
+  reidType: 0
   batchSize: 100
   workspaceSize: 1000
   reidFeatureSize: 256

@@ -1,6 +1,6 @@
 [application]
 enable-perf-measurement = 1
-perf-measurement-interval-sec = 2
+perf-measurement-interval-sec = 5
 terminated-track-output-dir = /opt/nvidia/deepstream/deepstream-8.0/sources/project/DeepStream-Yolo/Tracker_Info
 
 [tiled-display]
@@ -15,7 +15,8 @@ nvbuf-memory-type = 0
 [source0]
 enable = 1
 type = 2
-uri = file:///opt/nvidia/deepstream/deepstream-8.0/sources/project/downloaded_videos/cam_carcel.mp4
+#uri = file:///opt/nvidia/deepstream/deepstream-8.0/sources/project/downloaded_videos/cam_carcel.mp4
+uri = rtsp://admin:Rguax910+@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0
 num-sources = 1
 drop-frame-interval = 0
 gpu-id = 0

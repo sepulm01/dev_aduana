@@ -123,16 +123,22 @@ services:
   deepstream-yolo:
     build: ./deepstream-service
     restart: unless-stopped
+    network_mode: host
+    extra_hosts:
+      - "redis:172.18.0.3"
     volumes:
-      - ./deepstream-service/config:/opt/nvidia/deepstream/config:ro
+      - ./deepstream-service/app/config:/opt/deepstream-app/config:ro
+      - ds_output:/opt/output
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ['1']
               capabilities: [gpu]
-    command: deepstream-app -c /opt/nvidia/deepstream/config/deepstream_app_config.txt
+    depends_on:
+      redis:
+        condition: service_healthy
 
   nginx:
     image: nginx:alpine
@@ -148,3 +154,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  ds_output:
