@@ -83,3 +83,21 @@ class DeviceEvent(models.Model):
 
     def __str__(self):
         return f"{self.device.name} - {self.code} ({self.action}) @ {self.timestamp}"
+
+
+class AnalyticsPreset(models.Model):
+    device = models.ForeignKey(
+        Device, on_delete=models.CASCADE, related_name="analytics_presets"
+    )
+    preset_token = models.CharField(max_length=120)
+    preset_name = models.CharField(max_length=120, blank=True, default="")
+    shapes = models.JSONField(blank=True, default=list)
+    snapshot = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["device", "preset_token"]
+        unique_together = [["device", "preset_token"]]
+
+    def __str__(self):
+        return f"{self.device.name} - {self.preset_name or self.preset_token}"

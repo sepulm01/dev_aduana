@@ -10,6 +10,11 @@
                 <i class="ti ti-arrows-move me-1"></i>PTZ
             </button>
             {% endif %}
+            <button id="analyticsToggleBtn{{ sfx }}"
+                class="btn btn-sm btn-outline-info"
+                onclick="toggleAnalytics('{{ sfx }}')">
+                <i class="ti ti-chart-dots me-1"></i>Analytics
+            </button>
             <button id="fullscreenBtn{{ sfx }}"
                 class="btn btn-sm btn-outline-light"
                 onclick="toggleFullscreen('{{ sfx }}')">
@@ -40,4 +45,15 @@
         </div>
     </div>
 </div>
+<script>
+function toggleAnalytics(sfx) {
+    var overlay = document.getElementById('ivsOverlay' + sfx);
+    var btn = document.getElementById('analyticsToggleBtn' + sfx);
+    if (!overlay) return;
+    var isHidden = overlay.style.display === 'none' || overlay.style.display === '';
+    overlay.style.display = isHidden ? 'block' : 'none';
+    btn.classList.toggle('btn-outline-info', !isHidden);
+    btn.classList.toggle('btn-info', isHidden);
+}
+</script>
 {% endwith %}

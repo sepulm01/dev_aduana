@@ -50,4 +50,29 @@ urlpatterns = [
         views.device_event_listener_toggle,
         name="device_event_listener_toggle",
     ),
+    path(
+        "devices/<int:device_id>/analytics/",
+        views.analytics_editor,
+        name="analytics_editor",
+    ),
+    path(
+        "api/devices/<int:device_id>/analytics/snapshot/",
+        views.analytics_snapshot,
+        name="analytics_snapshot",
+    ),
+    path(
+        "api/devices/<int:device_id>/analytics/presets/",
+        views.analytics_presets,
+        name="analytics_presets",
+    ),
+    path(
+        "api/devices/<int:device_id>/analytics/<str:preset_token>/shapes/",
+        views.analytics_shapes,
+        name="analytics_shapes",
+    ),
+    path(
+        "api/devices/<int:device_id>/analytics/apply/",
+        views.analytics_apply,
+        name="analytics_apply",
+    ),
 ]

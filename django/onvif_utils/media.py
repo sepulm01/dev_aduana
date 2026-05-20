@@ -80,3 +80,29 @@ class MediaService:
             return raw_uri
         except Exception:
             return None
+
+    def get_snapshot_url(self, profile_token, username=None, password=None):
+        """Get the snapshot URI for a profile, optionally injecting credentials."""
+        try:
+            resp = self.client.media.GetSnapshotUri({"ProfileToken": profile_token})
+            raw_uri = resp.Uri if hasattr(resp, "Uri") else None
+            if not raw_uri:
+                return None
+            if username and password:
+                parsed = urlparse(raw_uri)
+                netloc = f"{username}:{password}@{parsed.hostname}"
+                if parsed.port:
+                    netloc += f":{parsed.port}"
+                raw_uri = urlunparse(
+                    (
+                        parsed.scheme,
+                        netloc,
+                        parsed.path,
+                        parsed.params,
+                        parsed.query,
+                        parsed.fragment,
+                    )
+                )
+            return raw_uri
+        except Exception:
+            return None

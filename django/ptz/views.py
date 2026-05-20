@@ -1,12 +1,14 @@
+import base64
 import json
 from datetime import datetime, timezone
 
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
-from devices.models import Device
+from devices.models import Device, AnalyticsPreset
 from onvif_utils.client import OnvifClient
 from onvif_utils.ptz import PTZService
+from onvif_utils.snapshot import capture_frame_rtsp
 
 
 @csrf_exempt
@@ -133,6 +135,22 @@ def preset(request, device_id):
             if not name:
                 return JsonResponse({"error": "name required for set"}, status=400)
             token = svc.set_preset(profile_token, name)
+
+            stream_uri = device.stream_uris.get(profile_token, "")
+            if stream_uri:
+                try:
+                    frame_bytes = capture_frame_rtsp(stream_uri, timeout=10)
+                    snapshot_b64 = base64.b64encode(frame_bytes).decode()
+                    AnalyticsPreset.objects.update_or_create(
+                        device=device,
+                        preset_token=token,
+                        defaults={"preset_name": name, "snapshot": snapshot_b64},
+                    )
+                except Exception as snap_e:
+                    print(
+                        f"Snapshot capture failed for device {device.id} preset {token}: {snap_e}"
+                    )
+
             return JsonResponse({"ok": True, "preset_token": token})
 
         elif action == "goto":

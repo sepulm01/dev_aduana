@@ -6,25 +6,5 @@ osd-mode=0
 
 [roi-filtering-stream-0]
 enable=1
-roi-RF=295;643;579;634;642;913;56;828
-inverse-roi=0
 class-id=-1
-
-[line-crossing-stream-0]
-enable=1
-line-crossing-Exit=789;672;1084;900;851;773;1203;732
-class-id=0
-extended=0
-mode=loose
-
-[direction-detection-stream-0]
-enable=1
-direction-South=284;840;360;662
-direction-North=1106;622;1312;701
-class-id=0
-
-[overcrowding-stream-0]
-enable=1
-roi-OC=295;643;579;634;642;913;56;828
-object-threshold=3
-class-id=-1
+roi-ROI 1=128;72;640;72;640;360;128;360

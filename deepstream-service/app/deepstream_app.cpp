@@ -39,7 +39,7 @@
 #define DEFAULT_MUX_BATCH_TIMEOUT_USEC 40000
 
 struct AppConfig {
-    std::string redis_url = "redis://redis:6379";
+    std::string redis_url = "redis://127.0.0.1:6379";
     std::string redis_commands_channel = "deepstream:commands";
     std::string redis_events_prefix = "device";
     unsigned int heartbeat_interval = 300;
@@ -144,10 +144,23 @@ find_infer_config_for_model(const std::string& model_name,
     return "";
 }
 
+struct AnalyticsReloadCtx {
+    GstElement* nvanalytics;
+    std::string config_file;
+};
+
 static void
 reload_analytics_callback(void* ctx) {
-    (void)ctx;
-    g_print("Analytics reload callback triggered\n");
+    AnalyticsReloadCtx* reload_ctx = static_cast<AnalyticsReloadCtx*>(ctx);
+    if (!reload_ctx || !reload_ctx->nvanalytics) {
+        g_print("Analytics reload: invalid context\n");
+        return;
+    }
+    g_print("Analytics reload: reloading config file: %s\n", reload_ctx->config_file.c_str());
+    g_object_set(G_OBJECT(reload_ctx->nvanalytics),
+                 "config-file", reload_ctx->config_file.c_str(),
+                 NULL);
+    g_print("Analytics config reloaded successfully\n");
 }
 
 int main(int argc, char* argv[]) {
@@ -195,7 +208,7 @@ int main(int argc, char* argv[]) {
     config.tracker_config_file = config_dir + "/config_tracker_NvDCF_accuracy.yml";
     config.analytics_config_file = config_dir + "/config_nvdsanalytics.txt";
 
-    config.redis_url = "redis://redis:6379";
+    config.redis_url = "redis://127.0.0.1:6379";
     config.redis_commands_channel = "deepstream:commands";
     config.max_batch_size = 3;
 
@@ -352,7 +365,8 @@ int main(int argc, char* argv[]) {
                              &source_id_counter, config.redis_url,
                              config.redis_commands_channel,
                              config.max_batch_size);
-    stream_mgr.set_reload_analytics_cb(reload_analytics_callback, nvanalytics);
+    AnalyticsReloadCtx analytics_reload_ctx = {nvanalytics, config.analytics_config_file};
+    stream_mgr.set_reload_analytics_cb(reload_analytics_callback, &analytics_reload_ctx);
     stream_mgr.start();
 
     GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));

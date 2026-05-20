@@ -147,6 +147,7 @@ nvmultiurisrcbincreator (≤8 fuentes RTSP, add/remove en runtime)
 ---
 Configuración Triton para YOLOv9
 El único trabajo manual es escribir el config.pbtxt de YOLOv9 con los tensor names del modelo convertido. El nvinferserver config para YOLOv9 usa custom_lib para el parser custom que ya está compilado (libnvdsinfer_custom_impl_Yolo.so):
+
 # config/triton_model_repo/yolov9/config.pbtxt
 name: "yolov9"
 platform: "tensorrt_plan"
@@ -155,6 +156,7 @@ default_model_filename: "model_b8_gpu0_fp32.engine"
 input [{ name: "input", data_type: TYPE_FP32, format: FORMAT_NCHW, dims: [3, 640, 640] }]
 output [{ name: "output0", data_type: TYPE_FP32, dims: [84, 8400] }]
 instance_group [{ kind: KIND_GPU, count: 1, gpus: [0] }]
+
 # config/infer_configs/pgie_yolov9.txt
 infer_config {
   unique_id: 1
@@ -280,3 +282,48 @@ r.publish("deepstream:commands", json.dumps({
 5. Cambiar modelo (en app_config.yml):
 inference:
   pgie_model_name: "trafficcamnet"  # o "peoplenet"
+
+
+Resumen completo del flujo:
+Cámara RTSP (192.168.1.108)
+    ↓
+DeepStream Pipeline (nvinfer → nvtracker → nvdsanalytics)
+    ↓
+analytics_probe.cpp → detecta objetos/ROI/líneas
+    ↓
+publish_device_event(device_id=5, "DeepStreamDetection", data_json)
+    ↓
+Redis PubSub → canal "device:5:events"
+    ↓
+redis_event_bridge (Django) → subscribe "device:*:events"
+    ↓
+Django Channels → grupo "device_5"
+    ↓
+WebSocket /ws/device/5/ → navegador
+
+Dónde se almacenan las detecciones:
+
+Paso
+Redis
+PostgreSQL
+WebSocket (navegador)
+
+Formato del mensaje que llega al frontend:
+
+{
+  "type": "ivs",
+  "device_id": 5,
+  "code": "DeepStreamDetection",
+  "action": "Detected",
+  "timestamp": "2026-05-19T14:50:00Z",
+  "data": {
+    "source": 0,
+    "frame_num": 1234,
+    "object_id": 45,
+    "class_id": 0,
+    "class_label": "auto",
+    "confidence": 0.87,
+    "bbox": {"left":0.12,"top":0.34,"width":0.05,"height":0.08},
+    "device_id": 5
+  }
+}

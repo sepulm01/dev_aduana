@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -6,9 +7,9 @@ from datetime import datetime, timezone
 import requests
 
 from django.shortcuts import render, get_object_or_404
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
-from devices.models import Device, IVSRule
+from devices.models import Device, IVSRule, AnalyticsPreset
 from live.views import DEFAULT_CAMERA_SPECS
 from onvif_utils.client import OnvifClient
 from onvif_utils.discovery import DeviceDiscovery
@@ -16,6 +17,7 @@ from onvif_utils.drivers import get_driver
 from onvif_utils.drivers.base import DriverError
 from onvif_utils.media import MediaService
 from onvif_utils.mediamtx_api import MediaMTXAPI
+from onvif_utils.snapshot import capture_frame_rtsp
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +138,22 @@ def add_device(request):
 
                 mtx = MediaMTXAPI()
                 mtx.ensure_camera_streams(device.id, profiles_tokens, stream_uris)
+
+                if profiles_tokens and stream_uris:
+                    try:
+                        frame_bytes = capture_frame_rtsp(stream_uris[0], timeout=10)
+                        snapshot_b64 = base64.b64encode(frame_bytes).decode()
+                        AnalyticsPreset.objects.update_or_create(
+                            device=device,
+                            preset_token="__fixed__",
+                            defaults={"snapshot": snapshot_b64},
+                        )
+                    except Exception as snap_e:
+                        logger.warning(
+                            "Snapshot capture failed for device %s: %s",
+                            device.id,
+                            snap_e,
+                        )
             except Exception as e:
                 logger.warning(
                     "Error setting up streams for device %s: %s", device.id, e
@@ -415,3 +433,509 @@ def device_event_listener_toggle(request, device_id):
     device.event_listener_enabled = enabled
     device.save()
     return JsonResponse({"ok": True, "event_listener_enabled": enabled})
+
+
+ANALYTICS_CONFIG_PATH = os.environ.get(
+    "DEEPSTREAM_ANALYTICS_CONFIG", "/opt/deepstream-app/config/config_nvdsanalytics.txt"
+)
+DEEPSTREAM_REDIS_CHANNEL = "deepstream:commands"
+
+
+def _parse_analytics_config(content):
+    sections = {}
+    current_section = None
+    current_key = None
+
+    for line in content.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line[1:-1]
+            sections[current_section] = {}
+            current_key = None
+        elif "=" in line and current_section:
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+
+            if ";" in value:
+                value = [v.strip() for v in value.split(";")]
+
+            if current_key and isinstance(
+                sections[current_section].get(current_key), list
+            ):
+                if key == current_key:
+                    existing = sections[current_section][current_key]
+                    if isinstance(existing, list):
+                        existing.append(value if isinstance(value, list) else [value])
+                    else:
+                        sections[current_section][current_key] = [
+                            existing,
+                            value if isinstance(value, list) else [value],
+                        ]
+                else:
+                    sections[current_section][key] = value
+            else:
+                sections[current_section][key] = value
+            current_key = key
+        elif current_section:
+            sections[current_section][current_key] = line
+
+    return sections
+
+
+def _serialize_analytics_config(sections):
+    lines = [
+        "[property]",
+        "enable=1",
+        "config-width=1280",
+        "config-height=720",
+        "osd-mode=0",
+        "",
+    ]
+
+    for section, props in sections.items():
+        if section == "property":
+            continue
+        lines.append(f"[{section}]")
+        for key, val in props.items():
+            if isinstance(val, list):
+                for v in val:
+                    if isinstance(v, list):
+                        v = ";".join(str(x) for x in v)
+                    else:
+                        v = str(v)
+                    lines.append(f"{key}={v}")
+            else:
+                lines.append(f"{key}={val}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+@csrf_exempt
+def device_analytics_config(request, device_id):
+    get_object_or_404(Device, id=device_id)
+
+    if request.method == "GET":
+        try:
+            with open(ANALYTICS_CONFIG_PATH, "r") as f:
+                content = f.read()
+        except FileNotFoundError:
+            return JsonResponse({"error": "Config file not found"}, status=404)
+        except IOError as e:
+            return JsonResponse({"error": str(e)}, status=500)
+
+        sections = _parse_analytics_config(content)
+        return JsonResponse({"sections": sections})
+
+    elif request.method == "POST":
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "JSON required"}, status=400)
+
+        sections = data.get("sections", {})
+        config_content = _serialize_analytics_config(sections)
+
+        try:
+            with open(ANALYTICS_CONFIG_PATH, "w") as f:
+                f.write(config_content)
+        except IOError as e:
+            return JsonResponse({"error": f"Failed to write config: {e}"}, status=500)
+
+        try:
+            import redis
+            from urllib.parse import urlparse
+
+            redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+            parsed = urlparse(redis_url)
+            r = redis.Redis(
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 6379,
+                db=parsed.path.lstrip("/") if parsed.path else 0,
+                password=parsed.password or None,
+            )
+            r.publish(
+                DEEPSTREAM_REDIS_CHANNEL, json.dumps({"action": "reload_analytics"})
+            )
+        except Exception as e:
+            logger.warning("Failed to publish reload_analytics to Redis: %s", e)
+
+        return JsonResponse({"ok": True})
+
+    return JsonResponse({"error": "GET or POST required"}, status=405)
+
+
+def analytics_editor(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+    specs = device.camera_specs or {}
+    has_ptz = bool(specs.get("ptz_caps"))
+    profile = device.default_profile_token or ""
+    return render(
+        request,
+        "devices/analytics_editor.html",
+        {
+            "device": device,
+            "has_ptz": has_ptz,
+            "default_profile": profile,
+        },
+    )
+
+
+@csrf_exempt
+def analytics_snapshot(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+    profile_token = request.GET.get("profile_token") or device.default_profile_token
+    if not profile_token:
+        return JsonResponse({"error": "profile_token required"}, status=400)
+
+    try:
+        from onvif_utils.client import OnvifClient
+        from onvif_utils.media import MediaService
+
+        client = OnvifClient(device.host, device.port, device.username, device.password)
+        media = MediaService(client)
+        snapshot_url = media.get_snapshot_url(
+            profile_token,
+            username=device.username,
+            password=device.password,
+        )
+        if not snapshot_url:
+            return JsonResponse({"error": "No snapshot URI available"}, status=404)
+
+        import requests
+
+        resp = requests.get(snapshot_url, timeout=5)
+        resp.raise_for_status()
+        return HttpResponse(resp.content, content_type="image/jpeg")
+    except Exception as e:
+        logger.warning("Failed to get snapshot for device %s: %s", device_id, e)
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def analytics_presets(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+    profile_token = request.GET.get("profile_token") or device.default_profile_token
+    if not profile_token:
+        return JsonResponse({"error": "profile_token required"}, status=400)
+
+    specs = device.camera_specs or {}
+    has_ptz = bool(specs.get("ptz_caps"))
+
+    if has_ptz:
+        try:
+            from onvif_utils.client import OnvifClient
+            from onvif_utils.ptz import PTZService
+
+            client = OnvifClient(
+                device.host, device.port, device.username, device.password
+            )
+            ptz = PTZService(client)
+            presets = ptz.get_presets(profile_token)
+
+            stored = {
+                ap.preset_token: ap.snapshot
+                for ap in AnalyticsPreset.objects.filter(device=device)
+            }
+            result = [
+                {
+                    "token": getattr(p, "token", "") or getattr(p, "_token", ""),
+                    "name": getattr(p, "Name", "") or f"Preset {i + 1}",
+                    "snapshot": stored.get(
+                        getattr(p, "token", "") or getattr(p, "_token", ""), ""
+                    ),
+                }
+                for i, p in enumerate(presets)
+            ]
+            return JsonResponse({"presets": result, "has_ptz": True})
+        except Exception as e:
+            return JsonResponse(
+                {"presets": [], "has_ptz": True, "error": str(e)}, status=500
+            )
+    else:
+        ap = AnalyticsPreset.objects.filter(
+            device=device, preset_token="__fixed__"
+        ).first()
+        return JsonResponse(
+            {
+                "presets": [
+                    {
+                        "token": "__fixed__",
+                        "name": "Cámara fija",
+                        "snapshot": ap.snapshot if ap else "",
+                    }
+                ],
+                "has_ptz": False,
+            }
+        )
+
+
+@csrf_exempt
+def analytics_shapes(request, device_id, preset_token):
+    device = get_object_or_404(Device, id=device_id)
+
+    preset = AnalyticsPreset.objects.filter(
+        device=device, preset_token=preset_token
+    ).first()
+
+    if request.method == "GET":
+        if preset:
+            return JsonResponse(
+                {"shapes": preset.shapes, "preset_name": preset.preset_name}
+            )
+        return JsonResponse({"shapes": [], "preset_name": ""})
+
+    elif request.method == "POST":
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "JSON required"}, status=400)
+
+        shapes = data.get("shapes", [])
+        preset_name = data.get("preset_name", "")
+
+        if preset:
+            preset.shapes = shapes
+            preset.preset_name = preset_name
+            preset.save()
+        else:
+            preset = AnalyticsPreset.objects.create(
+                device=device,
+                preset_token=preset_token,
+                preset_name=preset_name,
+                shapes=shapes,
+            )
+        return JsonResponse({"ok": True})
+
+    return JsonResponse({"error": "GET or POST required"}, status=405)
+
+
+ANALYTICS_CONFIG_PATH = os.environ.get(
+    "DEEPSTREAM_ANALYTICS_CONFIG", "/opt/deepstream-app/config/config_nvdsanalytics.txt"
+)
+CANVAS_WIDTH = 854
+CANVAS_HEIGHT = 480
+FRAME_WIDTH = 1280
+FRAME_HEIGHT = 720
+
+
+def _get_active_preset_for_device(device):
+    specs = device.camera_specs or {}
+    has_ptz = bool(specs.get("ptz_caps"))
+
+    if not has_ptz:
+        return device.analytics_presets.filter(preset_token="__fixed__").first()
+
+    profile_token = device.default_profile_token
+    if not profile_token:
+        return None
+
+    try:
+        from onvif_utils.client import OnvifClient
+        from onvif_utils.ptz import PTZService
+
+        client = OnvifClient(device.host, device.port, device.username, device.password)
+        ptz = PTZService(client)
+        status = ptz.get_status(profile_token)
+        presets = ptz.get_presets(profile_token)
+
+        def get_ptz_values(s):
+            if not s:
+                return 0, 0, 0
+            pos = getattr(s, "Position", None)
+            if not pos:
+                return 0, 0, 0
+            pan_tilt = getattr(pos, "PanTilt", None)
+            zoom = getattr(pos, "Zoom", None)
+            px = getattr(pan_tilt, "x", 0) if pan_tilt else 0
+            py = getattr(pan_tilt, "y", 0) if pan_tilt else 0
+            z = getattr(zoom, "x", 0) if zoom else 0
+            return px, py, z
+
+        current_pan, current_tilt, current_zoom = get_ptz_values(status)
+
+        best_match = None
+        best_dist = float("inf")
+        for p in presets:
+            ptoken = getattr(p, "token", "") or getattr(p, "_token", "")
+            preset_obj = device.analytics_presets.filter(preset_token=ptoken).first()
+            if not preset_obj:
+                continue
+            stored_pos = getattr(preset_obj, "ptz_position", None) or {}
+            pp = stored_pos.get("pan", current_pan)
+            pt_val = stored_pos.get("tilt", current_tilt)
+            pz = stored_pos.get("zoom", current_zoom)
+            dist = (
+                abs(pp - current_pan)
+                + abs(pt_val - current_tilt)
+                + abs(pz - current_zoom)
+            )
+            if dist < best_dist:
+                best_dist = dist
+                best_match = preset_obj
+
+        return best_match
+    except Exception as e:
+        logger.warning(
+            "Error determining active preset for device %s: %s", device.id, e
+        )
+        return None
+
+
+def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
+    sections = {}
+
+    for shape in shapes:
+        obj_type = shape.get("object", "")
+        name = shape.get("name", "unnamed")
+        shape_type = shape.get("type", "")
+
+        if obj_type == "polygon" and shape_type == "RF":
+            pts = shape.get("points", [])
+            if len(pts) >= 4:
+                coords = ";".join(
+                    f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
+                    for p in pts
+                )
+                key = f"roi-{name}"
+                if "roi-filtering-stream-0" not in sections:
+                    sections["roi-filtering-stream-0"] = {
+                        "enable": "1",
+                        "class-id": "-1",
+                    }
+                sections["roi-filtering-stream-0"][key] = coords
+
+        elif obj_type == "polygon" and shape_type == "OC":
+            pts = shape.get("points", [])
+            if len(pts) >= 4:
+                coords = ";".join(
+                    f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
+                    for p in pts
+                )
+                key = f"roi-{name}"
+                if "overcrowding-stream-0" not in sections:
+                    sections["overcrowding-stream-0"] = {
+                        "enable": "1",
+                        "class-id": "-1",
+                        "object-threshold": "3",
+                    }
+                sections["overcrowding-stream-0"][key] = coords
+
+        elif obj_type == "line" and shape_type == "cross":
+            x1 = round(shape["x1"] * FRAME_WIDTH)
+            y1 = round(shape["y1"] * FRAME_HEIGHT)
+            x2 = round(shape["x2"] * FRAME_WIDTH)
+            y2 = round(shape["y2"] * FRAME_HEIGHT)
+            key = f"line-crossing-{name}"
+            if "line-crossing-stream-0" not in sections:
+                sections["line-crossing-stream-0"] = {
+                    "enable": "1",
+                    "class-id": "0",
+                    "mode": "loose",
+                }
+            sections["line-crossing-stream-0"][key] = f"{x1};{y1};{x2};{y2}"
+
+        elif obj_type == "line" and shape_type == "direction":
+            x1 = round(shape["x1"] * FRAME_WIDTH)
+            y1 = round(shape["y1"] * FRAME_HEIGHT)
+            x2 = round(shape["x2"] * FRAME_WIDTH)
+            y2 = round(shape["y2"] * FRAME_HEIGHT)
+            key = f"direction-{name}"
+            if "direction-detection-stream-0" not in sections:
+                sections["direction-detection-stream-0"] = {
+                    "enable": "1",
+                    "class-id": "0",
+                }
+            sections["direction-detection-stream-0"][key] = f"{x1};{y1};{x2};{y2}"
+
+    return sections
+
+
+def _serialize_nvdsanalytics(sections):
+    lines = [
+        "[property]",
+        "enable=1",
+        "config-width=1280",
+        "config-height=720",
+        "osd-mode=0",
+        "",
+    ]
+    for section, props in sections.items():
+        lines.append(f"[{section}]")
+        for key, val in props.items():
+            lines.append(f"{key}={val}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@csrf_exempt
+def analytics_apply(request, device_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    device = get_object_or_404(Device, id=device_id)
+    if not device.deepstream_enabled:
+        return JsonResponse(
+            {"error": "DeepStream not enabled for this device"}, status=400
+        )
+
+    preset_token = request.GET.get("preset_token") or (
+        json.loads(request.body).get("preset_token") if request.body else None
+    )
+
+    if preset_token:
+        active_preset = device.analytics_presets.filter(
+            preset_token=preset_token
+        ).first()
+        if not active_preset:
+            return JsonResponse(
+                {"error": f"Preset '{preset_token}' not found"}, status=404
+            )
+    else:
+        active_preset = _get_active_preset_for_device(device)
+        if not active_preset:
+            return JsonResponse(
+                {"error": "No active preset found. Define presets first."}, status=400
+            )
+
+    shapes = active_preset.shapes or []
+    sections = _shapes_to_nvdsanalytics(shapes, stream_idx=0)
+    config_content = _serialize_nvdsanalytics(sections)
+
+    try:
+        with open(ANALYTICS_CONFIG_PATH, "w") as f:
+            f.write(config_content)
+    except IOError as e:
+        return JsonResponse({"error": f"Failed to write config: {e}"}, status=500)
+
+    import time
+
+    time.sleep(0.3)
+
+    try:
+        import redis
+        from urllib.parse import urlparse
+
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        parsed = urlparse(redis_url)
+        r = redis.Redis(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 6379,
+            db=parsed.path.lstrip("/") if parsed.path else 0,
+            password=parsed.password or None,
+        )
+        r.publish("deepstream:commands", json.dumps({"action": "reload_analytics"}))
+    except Exception as e:
+        logger.warning("Failed to publish reload_analytics: %s", e)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "active_preset": active_preset.preset_name or active_preset.preset_token,
+            "shapes_count": len(shapes),
+        }
+    )
