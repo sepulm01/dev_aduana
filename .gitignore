@@ -43,3 +43,4 @@ mediamtx/mediamtx
 
 # DeepStream-Yolo build artifacts
 DeepStream-Yolo/
+*.mp4
