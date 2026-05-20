@@ -939,3 +939,62 @@ def analytics_apply(request, device_id):
             "shapes_count": len(shapes),
         }
     )
+
+
+def _get_redis():
+    import redis
+    from urllib.parse import urlparse
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    parsed = urlparse(redis_url)
+    return redis.Redis(
+        host=parsed.hostname or "localhost",
+        port=parsed.port or 6379,
+        db=parsed.path.lstrip("/") if parsed.path else 0,
+        password=parsed.password or None,
+    )
+
+
+DEEPSTREAM_REDIS_CHANNEL = "deepstream:commands"
+
+
+def _publish_deepstream_command(payload):
+    try:
+        r = _get_redis()
+        r.publish(DEEPSTREAM_REDIS_CHANNEL, json.dumps(payload))
+    except Exception as e:
+        logger.warning("Failed to publish to deepstream: %s", e)
+
+
+@csrf_exempt
+def deepstream_preview_start(request, device_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+    _publish_deepstream_command({"action": "start_preview", "device_id": device_id})
+    return JsonResponse({"ok": True})
+
+
+@csrf_exempt
+def deepstream_preview_stop(request, device_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+    _publish_deepstream_command({"action": "stop_preview", "device_id": device_id})
+    return JsonResponse({"ok": True})
+
+
+@csrf_exempt
+def deepstream_preview_keepalive(request, device_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+    key = f"deepstream_preview:{device_id}"
+    try:
+        r = _get_redis()
+        is_new = not r.exists(key)
+        r.setex(key, 30, "1")
+        if is_new:
+            _publish_deepstream_command(
+                {"action": "start_preview", "device_id": device_id}
+            )
+    except Exception as e:
+        logger.warning("Keepalive failed: %s", e)
+    return JsonResponse({"ok": True})

@@ -1,0 +1,51 @@
+################################################################################
+# DeepStream Bridge App Config
+# Uses deepstream-server as base + Redis bridge for commands & analytics
+################################################################################
+
+rest-server:
+  within_multiurisrcbin: 0
+
+server-app-ctx:
+  uri_list: rtsp://admin:mediamtx_admin_pass@mediamtx:8554/cam_1_MediaProfile00002_hw
+  httpIp: "localhost"
+  httpPort: "9000"
+  pipeline_width: 1280
+  pipeline_height: 720
+  maxBatchSize: 3
+  batched_push_timeout: 33333
+  live_source: 1
+  drop_pipeline_eos: 1
+
+multiurisrcbin:
+  uri-list: rtsp://admin:mediamtx_admin_pass@mediamtx:8554/cam_1_MediaProfile00002_hw
+  port: 9000
+  live-source: 1
+  width: 1280
+  height: 720
+  batched-push-timeout: 33333
+  max-batch-size: 3
+  disable-passthrough: 1
+  drop-pipeline-eos: 1
+  rtsp-reconnect-interval: 5
+  rtsp-reconnect-attempts: 3
+  config-file-path: config_nvstreammux.txt
+
+osd:
+  process-mode: 1
+  display-text: 1
+
+tiler:
+  width: 1280
+  height: 720
+
+sink:
+  qos: 0
+
+primary-gie:
+  plugin-type: 0
+  config-file-path: dsbridge_pgie_config.yml
+
+analytics:
+  enable: 1
+  config-file: config_nvdsanalytics.txt

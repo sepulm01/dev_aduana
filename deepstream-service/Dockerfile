@@ -20,8 +20,8 @@ WORKDIR /opt/nvidia/deepstream/deepstream/DeepStream-Yolo
 ENV CUDA_VER=12.8
 RUN make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yolo
 
-COPY app/ /opt/deepstream-app/
 COPY worker/ /opt/deepstream-app/worker/
+COPY bridge/ /opt/deepstream-app/bridge/
 
 RUN mkdir -p /opt/nvidia/deepstream/deepstream/sources/project && \
     cp /opt/deepstream-app/worker/model_b3_gpu0_fp32.engine \
@@ -29,13 +29,7 @@ RUN mkdir -p /opt/nvidia/deepstream/deepstream/sources/project && \
     cp /opt/deepstream-app/worker/resnet50_market1501.etlt_b100_gpu0_fp32.engine \
        /opt/nvidia/deepstream/deepstream/sources/project/resnet50_market1501.etlt_b100_gpu0_fp32.engine
 
-RUN mkdir -p /opt/deepstream-config/triton_model_repo/yolov9/1 && \
-    ln -sf /opt/nvidia/deepstream/deepstream/sources/project/model_b3_gpu0_fp32.engine \
-           /opt/deepstream-config/triton_model_repo/yolov9/1/model_b8_gpu0_fp32.engine 2>/dev/null || \
-    cp /opt/nvidia/deepstream/deepstream/sources/project/model_b3_gpu0_fp32.engine \
-       /opt/deepstream-config/triton_model_repo/yolov9/1/model_b8_gpu0_fp32.engine
-
-WORKDIR /opt/deepstream-app
+WORKDIR /opt/deepstream-app/bridge
 RUN make CUDA_VER=12.8
 
-CMD ["/opt/deepstream-app/deepstream-security-app", "/opt/deepstream-app/config/app_config.yml"]
+CMD ["/opt/deepstream-app/bridge/dsbridge-app", "/opt/deepstream-app/bridge/dsbridge_config.yml"]

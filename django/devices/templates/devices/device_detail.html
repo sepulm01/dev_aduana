@@ -74,6 +74,21 @@
                 <div class="alert alert-warning mt-2 mb-0 py-2 px-3 small">
                     <i class="ti ti-alert-triangle me-1"></i>DeepStream no está habilitado para esta cámara.
                 </div>
+                {% else %}
+                <div id="dsPreviewCard" class="mt-2">
+                    <div class="d-flex align-items-center justify-content-between small text-muted mb-1">
+                        <span><i class="ti ti-eye me-1"></i>Vista DeepStream</span>
+                        <span id="dsPreviewStatus" class="badge bg-secondary">Inactivo</span>
+                    </div>
+                    <div id="dsVideoContainer" style="position:relative;width:100%;aspect-ratio:16/9;background:#000;">
+                        <iframe id="dsPreviewFrame"
+                            src="/stream/deepstream_preview/"
+                            style="width:100%;height:100%;border:0;position:absolute;top:0;left:0;"
+                            allow="autoplay;encrypted-media"
+                            allowfullscreen>
+                        </iframe>
+                    </div>
+                </div>
                 {% endif %}
             </div>
         </div>
@@ -1014,5 +1029,46 @@ async function toggleEventListener() {
         console.error('Error toggling event listener:', e);
     }
 }
+
+{% if device.deepstream_enabled %}
+(function() {
+    const DEVICE_ID = {{ device.id }};
+    const DS_START_URL = '/api/devices/' + DEVICE_ID + '/deepstream/preview/start/';
+    const DS_STOP_URL  = '/api/devices/' + DEVICE_ID + '/deepstream/preview/stop/';
+    const DS_KEEPALIVE_URL = '/api/devices/' + DEVICE_ID + '/deepstream/preview/keepalive/';
+
+    let dsHeartbeatInterval = null;
+
+    async function startDsPreview() {
+        try {
+            await fetch(DS_START_URL, {method: 'POST'});
+            document.getElementById('dsPreviewStatus').textContent = 'Activo';
+            document.getElementById('dsPreviewStatus').className = 'badge bg-success';
+            document.getElementById('dsPreviewFrame').style.display = 'block';
+        } catch (e) {
+            console.error('Failed to start DeepStream preview:', e);
+        }
+    }
+
+    function stopDsPreview() {
+        if (dsHeartbeatInterval) {
+            clearInterval(dsHeartbeatInterval);
+            dsHeartbeatInterval = null;
+        }
+        fetch(DS_STOP_URL, {method: 'POST', keepalive: true}).catch(() => {});
+        document.getElementById('dsPreviewStatus').textContent = 'Inactivo';
+        document.getElementById('dsPreviewStatus').className = 'badge bg-secondary';
+    }
+
+    function keepalive() {
+        fetch(DS_KEEPALIVE_URL, {method: 'POST'}).catch(() => {});
+    }
+
+    startDsPreview();
+    dsHeartbeatInterval = setInterval(keepalive, 15000);
+
+    window.addEventListener('beforeunload', stopDsPreview);
+})();
+{% endif %}
 </script>
 {% endblock %}

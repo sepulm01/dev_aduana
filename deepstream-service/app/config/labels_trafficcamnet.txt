@@ -1,4 +1,0 @@
-Vehicle
-TwoWheeler
-Person
-RoadSign

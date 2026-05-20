@@ -11,7 +11,16 @@ docker-compose exec django-http python manage.py <cmd>
 docker-compose logs -f django-http
 ```
 
-### Django management (inside container or via `../env/bin/python`)
+### DeepStream C++ (deepstream-yolo)
+
+```bash
+docker-compose build deepstream-yolo          # rebuild C++ app
+docker-compose up -d deepstream-yolo          # restart
+docker-compose logs -f deepstream-yolo        # tail logs
+docker-compose run --rm deepstream-yolo bash  # shell inside container
+```
+
+### Django management (inside container)
 
 ```bash
 python manage.py runserver --noreload    # dev server
@@ -118,14 +127,107 @@ from onvif_utils.mediamtx_api import MediaMTXAPI
 - RTSP URLs must be percent-encoded via `_encode_rtsp_url()` (especially `+` → `%2B`)
 - Camera paths never hardcoded in `mediamtx.yml` — only in DB + MediaMTX REST API
 
-### Startup
+### Redis Hostname
 
-- `AppConfig.ready()` restores MediaMTX paths in a **daemon thread** (not inline — avoids `populate()` reentrancy)
-- Devices without `stream_uris` or credentials are skipped during auto-restore
-- Always use `--noreload` with `runserver` to prevent `ready()` double-fire
-- `docker-entrypoint.sh` runs migrations with a pg_advisory_lock for safety
+All services connect to Redis via Docker DNS name `redis`, not `127.0.0.1`.
+Use `redis://redis:6379` (not `redis://127.0.0.1:6379`) in config files and code.
 
-### Celery Tasks
+---
+
+## Services Architecture
+
+| Service | Purpose |
+|---|---|
+| `django-http` | REST API + UI (gunicorn, port 8000) |
+| `django-asgi` | WebSockets (daphne, port 8001) |
+| `celery-worker` | Async tasks (poll motion, heartbeat) |
+| `celery-beat` | Task scheduler (polls every 5s) |
+| `redis-event-bridge` | Subscribes `device:*:events` → Channels |
+| `mediamtx` | RTSP/WebRTC streaming server |
+| `discovery-service` | WS-Discovery + nmap ONVIF scanner (Flask, port 8765) |
+| `event-stream-service` | Dahua event streaming (HTTP attach) |
+| `deepstream-yolo` | GPU analytics (YOLOv9 + nvdsanalytics) |
+| `nginx` | Reverse proxy (port 80) |
+
+---
+
+## DeepStream C++ Code Style
+
+### Build system
+
+- Compiled inside Docker container using DeepStream 8.0 base (`nvcr.io/nvidia/deepstream:8.0-gc-triton-devel`)
+- Makefile uses `CUDA_VER=12.8`
+- Output binary: `deepstream-security-app`
+
+### Key files
+
+| File | Responsibility |
+|---|---|
+| `deepstream_app.cpp` | Main: pipeline construction, teardown, main loop |
+| `analytics_probe.cpp` | Pad probe: accumulates nvdsanalytics events → Redis |
+| `stream_manager.cpp` | Redis subscriber: handles add/remove/preview commands |
+| `redis_publisher.cpp` | hiredis wrapper: publish device events + heartbeat |
+
+### Redis communication
+
+- **URL:** `redis://redis:6379` (Docker DNS, not 127.0.0.1)
+- **Commands channel:** `deepstream:commands` (Django → DeepStream)
+- **Events:** published to `device:{device_id}:events` (DeepStream → Django)
+- Commands are JSON with `"action": "add"`, `"remove"`, `"start_preview"`, `"stop_preview"`, `"reload_analytics"`, `"quit"`
+
+### Analytics throttle pattern
+
+Events are accumulated per `device_id` in a 1-second window (`DeviceAccum` struct).
+At window expiry, a single `AnalyticsSummary` message is published per device:
+```json
+{"code":"AnalyticsSummary","action":"summary","index":0,"timestamp":"...","data":{"device_id":5,"line_crossings":{"L1":3},"object_counts":{"person":2}}}
+```
+Per-object `DeepStreamDetection` events are NOT published — only aggregated summaries.
+
+### Source-to-device dynamic map
+
+- `StreamManager` calls `on_source_added_(source_id, device_id)` after a source bin is added
+- `AnalyticsProbe.update_source_map(source_id, device_id)` stores the mapping
+- `on_source_removed_(source_id)` removes the mapping entry
+- The map is accessed inside the GStreamer pad probe (thread-safe via mutex)
+
+### RTSP preview sink (DeepStream → MediaMTX)
+
+A `tee` element splits nvosd src:
+- Branch 0 → `fake_sink` (headless)
+- Branch 1 → `queue6` → `nvvideoconvert` → `x264enc` → `rtspclientsink`
+
+The rtspclientsink pushes to `rtsp://mediamtx:8554/deepstream_preview`.
+State is managed via `gst_element_set_state(rtsp_sink_, GST_STATE_PLAYING/NULL)` from `handle_preview(bool start)`.
+
+**Tee pad naming (DeepStream 8.0):**
+- Sink pad is `"sink"` (static, use `gst_element_get_static_pad`)
+- Src pads are `"src_%u"` (request, use `gst_element_get_request_pad`)
+
+### GStreamer pad linking
+
+Use `gst_pad_link(src_pad, sink_pad)` (not `gst_pad_link_full` — not available in this version).
+Always `gst_object_unref` pads after linking.
+Always check return value `!= GST_PAD_LINK_OK`.
+
+### ONVIF / zeep type access
+
+`PTZStatus` from zeep is a zeep object, not a dict. Access nested fields via `getattr()`:
+```python
+pan = getattr(getattr(status, 'Position', None), 'PanTilt', None)
+if pan: x = pan.x
+```
+
+### Snapshot capture (ffmpeg)
+
+Use `onvif_utils/snapshot.py::capture_frame_rtsp(rtsp_uri, timeout=10)`:
+- RTSP transport: `tcp`
+- Capture one frame: `-vframes 1`
+- Output format: MJPEG → base64 stored in `AnalyticsPreset.snapshot`
+
+---
+
+## Celery Tasks
 
 - Tasks use `@shared_task` decorator (not `@task`)
 - Use `bind=True` and `max_retries=N` for tasks that need retry logic
@@ -154,6 +256,13 @@ from onvif_utils.mediamtx_api import MediaMTXAPI
 - `get_driver(device)` factory in `drivers/__init__.py` selects by manufacturer
 - Driver methods: `detect()`, `get_motion_config()`, `set_motion_config()`, `get_capabilities()`, `poll_motion()`
 
+### Startup
+
+- `AppConfig.ready()` restores MediaMTX paths in a **daemon thread** (not inline — avoids `populate()` reentrancy)
+- Devices without `stream_uris` or credentials are skipped during auto-restore
+- Always use `--noreload` with `runserver` to prevent `ready()` double-fire
+- `docker-entrypoint.sh` runs migrations with a pg_advisory_lock for safety
+
 ### nginx
 
 - nginx config at `django/nginx.conf` — serves as reverse proxy
@@ -167,3 +276,5 @@ from onvif_utils.mediamtx_api import MediaMTXAPI
 - Do NOT use `h264_nvenc` — always `libx264` for cross-compatibility
 - Do NOT add inline comments (`#`) unless adding a necessary caveat
 - Do NOT use CBVs (class-based views) — this project uses FBVs exclusively
+- Do NOT use `gst_element_get_request_pad(tee, "sink_0")` — tee sink is a static pad named `"sink"`
+- Do NOT hardcode Redis host as `127.0.0.1` in DeepStream config — use `redis://redis:6379`
