@@ -307,7 +307,7 @@ std::string RedisBridge::make_detection_json(int device_id, int source_id,
     std::ostringstream oss;
     oss << "{\"code\":\"DeepStreamDetection\","
         << "\"action\":\"Pulse\","
-        << "\"timestamp\":\"" << time(nullptr) << "\","
+        << "\"timestamp\":" << (time(nullptr) * 1000LL) << ","
         << "\"data\":{"
         << "\"device_id\":" << device_id << ","
         << "\"source\":" << source_id << ","

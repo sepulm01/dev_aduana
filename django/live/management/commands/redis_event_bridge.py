@@ -50,13 +50,13 @@ class RedisEventBridge:
                 client = redis.from_url(self.redis_url, decode_responses=True)
                 client.ping()
                 pubsub = client.pubsub()
-                pubsub.subscribe("device:*:events")
+                pubsub.psubscribe("device:*:events")
                 logger.info("Subscribed to Redis pubsub device:*:events")
                 self._running = True
 
                 while self._running:
                     msg = pubsub.get_message(timeout=1.0)
-                    if msg and msg["type"] == "message":
+                    if msg and msg["type"] == "pmessage":
                         channel = msg["channel"]
                         try:
                             device_id = int(channel.split(":")[1])
