@@ -43,6 +43,8 @@ mediamtx/mediamtx
 *.tlt
 *.trt
 *.etlt
+*.bin
+*.cal
 
 # DeepStream-Yolo build artifacts
 DeepStream-Yolo/
