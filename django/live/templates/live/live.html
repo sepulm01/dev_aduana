@@ -261,7 +261,9 @@ function drawIVSOverlay(objects) {
         const scaleX = rect.width / 1600;
         const scaleY = rect.height / 900;
 
-        const label = obj.HumamID ? 'H-' + obj.HumamID : obj.VehicleID ? 'V-' + obj.VehicleID : 'Obj';
+        const prefix = (obj.class_label || 'Obj').charAt(0).toUpperCase();
+        const id = obj.HumamID || obj.VehicleID || obj.object_id;
+        const label = prefix + '-' + id;
 
         overlay.innerHTML += '<div style="position:absolute;left:' + (x1 * scaleX) + 'px;top:' + (y1 * scaleY) + 'px;width:' + ((x2 - x1) * scaleX) + 'px;height:' + ((y2 - y1) * scaleY) + 'px;border:2px solid #ff4444;border-radius:3px;background:rgba(255,68,68,0.1);"><div style="position:absolute;top:-22px;left:0;background:#ff4444;color:#fff;font-size:11px;padding:1px 5px;border-radius:3px;white-space:nowrap;">' + label + '</div></div>';
     });
