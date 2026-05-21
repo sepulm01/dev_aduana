@@ -285,7 +285,7 @@ inference:
 
 
 Resumen completo del flujo:
-Cámara RTSP (192.168.1.108)
+Cámara RTSP
     ↓
 DeepStream Pipeline (nvinfer → nvtracker → nvdsanalytics)
     ↓
@@ -301,12 +301,6 @@ Django Channels → grupo "device_5"
     ↓
 WebSocket /ws/device/5/ → navegador
 
-Dónde se almacenan las detecciones:
-
-Paso
-Redis
-PostgreSQL
-WebSocket (navegador)
 
 Formato del mensaje que llega al frontend:
 
@@ -328,7 +322,7 @@ Formato del mensaje que llega al frontend:
   }
 }
 
-
+#####################################################################
 
 20 May 2026:
 Implementado. Resumen de lo construido:
@@ -381,4 +375,19 @@ deepstream-service/
     ├── entrypoint-model.sh        # symlink active model + launch
     └── download-models.sh         # guía NGC
 Lo que resolvió el problema de conversión
-Los modelos con sufijo _decrypted o _onnx en NGC vienen en formato ONNX que nvinfer convierte automáticamente con TensorRT 10.9. Los .tlt/.etlt originales usan UFF internamente, deprecado en TRT 10.
+Los modelos con sufijo _decrypted o _onnx en NGC vienen en formato ONNX que nvinfer convierte automáticamente con TensorRT 10.9. Los .tlt/.etlt originales usan UFF internamente, deprecado en TRT 10.t
+
+
+Para Facedetection:
+
+facenet_pruned_quantized_v2.0.1.etlt   → PGIE (detección, bboxes)
+fpenet.etlt                            → SGIE 1 (landmarks, 80 puntos)
+w600k_r50.onnx (InsightFace)           → SGIE 2 (embeddings 512-d)
+
+tao-converter fpenet.etlt \
+  -k tlt_encode \
+  -d 1,80,80,3 \      # input shape FPENet
+  -o output_cov \
+  -e fpenet.engine \
+  -t int8 \
+  -c fpenet_cal.txt
