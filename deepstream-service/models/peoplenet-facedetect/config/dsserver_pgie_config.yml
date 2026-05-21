@@ -1,0 +1,25 @@
+property:
+  gpu-id: 0
+  net-scale-factor: 1.0
+  model-color-format: 0
+  tlt-model-key: nvidia_tlt
+  tlt-encoded-model: /opt/models/active/peoplenet.tlt
+  model-engine-file: /opt/models/active/peoplenet.engine
+  labelfile-path: /opt/models/active/labels/labels_people.txt
+  batch-size: 3
+  network-mode: 0
+  num-detected-classes: 3
+  interval: 0
+  gie-unique-id: 1
+  process-mode: 1
+  network-type: 0
+  cluster-mode: 2
+  maintain-aspect-ratio: 1
+  symmetric-padding: 1
+  infer-dims: 3;544;960
+  parse-bbox-func-name: NvDsInferParseBbox
+
+class-attrs-all:
+  pre-cluster-threshold: 0.25
+  topk: 300
+  nms-iou-threshold: 0.45

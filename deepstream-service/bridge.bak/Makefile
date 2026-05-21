@@ -1,5 +1,5 @@
 ################################################################################
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 #
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
@@ -10,12 +10,9 @@
 # its affiliates is strictly prohibited.
 ################################################################################
 
-CUDA_VER?=
-ifeq ($(CUDA_VER),)
-  $(error "CUDA_VER is not set")
-endif
+CUDA_VER?=12.8
 
-APP:= deepstream-server-app
+APP:= dsbridge-app
 
 CC:= g++
 
@@ -26,18 +23,19 @@ NVDS_VERSION:=8.0
 LIB_INSTALL_DIR?=/opt/nvidia/deepstream/deepstream-$(NVDS_VERSION)/lib/
 APP_INSTALL_DIR?=/opt/nvidia/deepstream/deepstream-$(NVDS_VERSION)/bin/
 
-SRCS:= $(wildcard *.cpp)
+SRCS:= deepstream_server_app.cpp rest_server_callbacks.cpp redis_bridge.cpp
 
-INCS:= $(wildcard *.h) \
+INCS:= $(wildcard *.h) redis_bridge.hpp
 
 PKGS:= gstreamer-1.0
 
 OBJS:= $(SRCS:.cpp=.o)
 
 CFLAGS+= -I/opt/nvidia/deepstream/deepstream/sources/includes \
-	 -I/opt/nvidia/deepstream/deepstream/sources/apps-common/includes \
-         -I /usr/local/cuda-$(CUDA_VER)/include \
-	 -I/usr/include/jsoncpp
+	 -I/opt/nvidia/deepstream/deepstream/sources/apps/apps-common/includes \
+         -I/usr/local/cuda-$(CUDA_VER)/include \
+	 -I/usr/include/jsoncpp \
+	 -I/usr/include/hiredis
 
 CFLAGS+= $(shell pkg-config --cflags $(PKGS))
 
@@ -45,7 +43,8 @@ LIBS:= $(shell pkg-config --libs $(PKGS))
 
 LIBS+= -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart -lnvdsgst_helper -lnvdsgst_customhelper -lnvds_rest_server -lm \
 		-L$(LIB_INSTALL_DIR) -lnvdsgst_meta -lnvds_meta -lnvds_yml_parser \
-		-lcuda -Wl,-rpath,$(LIB_INSTALL_DIR) -lnvds_rest_server
+		-lcuda -Wl,-rpath,$(LIB_INSTALL_DIR) -lnvds_rest_server \
+		-lhiredis
 
 ifeq ($(TARGET_DEVICE),aarch64)
    LIBS+= -L/usr/lib/aarch64-linux-gnu/tegra/ -lgstnvcustomhelper -ljsoncpp
@@ -66,5 +65,3 @@ install: $(APP)
 
 clean:
 	rm -rf $(OBJS) $(APP)
-
-

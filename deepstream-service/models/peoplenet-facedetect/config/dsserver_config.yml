@@ -1,0 +1,42 @@
+rest-server:
+  within_multiurisrcbin: 1
+
+multiurisrcbin:
+  uri-list:
+  port: 9000
+  live-source: 1
+  width: 1920
+  height: 1080
+  batched-push-timeout: 33333
+  max-batch-size: 3
+  disable-passthrough: 1
+  drop-pipeline-eos: 1
+  config-file-path: config_new_nvstreammux.txt
+
+osd:
+  process-mode: 1
+  display-text: 1
+
+tiler:
+  width: 1280
+  height: 720
+
+sink:
+  qos: 0
+
+encoder:
+  codec: 1
+  enable: 0
+
+primary-gie:
+  plugin-type: 0
+  config-file-path: dsserver_pgie_config.yml
+
+secondary-gie0:
+  plugin-type: 0
+  config-file-path: dsserver_sgie0_config.yml
+  operate-on-gie-id: 1
+  operate-on-class-ids: 0
+
+analytics:
+  enable: 0

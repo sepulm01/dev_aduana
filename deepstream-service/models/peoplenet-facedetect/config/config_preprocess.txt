@@ -1,0 +1,12 @@
+[property]
+enable=1
+config-file=/opt/models/active/config/config_preprocess.txt
+processing-width=960
+processing-height=544
+network-input-shape=3;3;544;960
+scaling-factor=1.0
+network-mode=0
+model-color-format=0
+maintain-aspect-ratio=1
+symmetric-padding=1
+gpu-id=0

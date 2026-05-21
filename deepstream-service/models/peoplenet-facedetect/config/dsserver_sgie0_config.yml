@@ -1,0 +1,28 @@
+property:
+  gpu-id: 0
+  net-scale-factor: 0.0039215697906911373
+  model-color-format: 0
+  tlt-model-key: nvidia_tlt
+  tlt-encoded-model: /opt/models/active/facenet.etlt
+  model-engine-file: /opt/models/active/facenet.engine
+  labelfile-path: /opt/models/active/labels/labels_faces.txt
+  batch-size: 3
+  network-mode: 0
+  num-detected-classes: 1
+  interval: 0
+  gie-unique-id: 2
+  process-mode: 2
+  network-type: 0
+  cluster-mode: 2
+  maintain-aspect-ratio: 1
+  symmetric-padding: 1
+  infer-dims: 3;416;736
+  parse-bbox-func-name: NvDsInferParseBbox
+  operate-on-gie-id: 1
+  operate-on-class-ids: 0
+  int8-calib-file: /opt/models/active/facenet_calib.txt
+
+class-attrs-all:
+  pre-cluster-threshold: 0.5
+  topk: 100
+  nms-iou-threshold: 0.5

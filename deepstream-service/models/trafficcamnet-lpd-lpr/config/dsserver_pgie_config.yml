@@ -1,0 +1,24 @@
+property:
+  gpu-id: 0
+  net-scale-factor: 0.00392156862745098
+  model-color-format: 0
+  onnx-file: /opt/models/active/trafficcamnet.onnx
+  model-engine-file: /opt/models/active/trafficcamnet.engine
+  labelfile-path: /opt/models/active/labels/labels_trafficcam.txt
+  batch-size: 3
+  network-mode: 0
+  num-detected-classes: 4
+  interval: 0
+  gie-unique-id: 1
+  process-mode: 1
+  network-type: 0
+  cluster-mode: 2
+  maintain-aspect-ratio: 1
+  symmetric-padding: 1
+  infer-dims: 3;544;960
+  parse-bbox-func-name: NvDsInferParseBbox
+
+class-attrs-all:
+  pre-cluster-threshold: 0.25
+  topk: 300
+  nms-iou-threshold: 0.45

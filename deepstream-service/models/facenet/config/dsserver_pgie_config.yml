@@ -1,0 +1,26 @@
+property:
+  gpu-id: 0
+  net-scale-factor: 0.0039215697906911373
+  model-color-format: 0
+  tlt-model-key: nvidia_tlt
+  tlt-encoded-model: /opt/models/active/model.etlt
+  model-engine-file: /opt/models/active/model.engine
+  labelfile-path: /opt/models/active/labels/labels.txt
+  batch-size: 3
+  network-mode: 0
+  num-detected-classes: 1
+  interval: 0
+  gie-unique-id: 1
+  process-mode: 1
+  network-type: 0
+  cluster-mode: 2
+  maintain-aspect-ratio: 1
+  symmetric-padding: 1
+  infer-dims: 3;416;736
+  parse-bbox-func-name: NvDsInferParseBbox
+  int8-calib-file: /opt/models/active/int8_calibration.txt
+
+class-attrs-all:
+  pre-cluster-threshold: 0.5
+  topk: 100
+  nms-iou-threshold: 0.5
