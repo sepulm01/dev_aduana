@@ -40,6 +40,9 @@ mediamtx/mediamtx
 *.pt
 *.onnx
 *.engine
+*.tlt
+*.trt
+*.etlt
 
 # DeepStream-Yolo build artifacts
 DeepStream-Yolo/

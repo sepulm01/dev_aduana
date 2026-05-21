@@ -327,3 +327,58 @@ Formato del mensaje que llega al frontend:
     "device_id": 5
   }
 }
+
+
+
+20 May 2026:
+Implementado. Resumen de lo construido:
+Estructura final
+deepstream-service/
+├── Dockerfile                     # genérico, compila UNA vez
+├── bridge/                        # C++ con soporte PGIE + SGIE0 + SGIE1
+│   └── deepstream_server_app.cpp  # SGIE se crea solo si hay config
+├── models/
+│   ├── yolo-v9/                   # ✅ funcional
+│   │   ├── config/                # dsserver_config.yml, pgie, preprocess, mux
+│   │   ├── labels/labels.txt      # 80 COCO
+│   │   └── model_b3_...engine     # 278 MB
+│   ├── peoplenet/                 # ✅ configs listos, falta engine
+│   └── trafficcamnet-lpd-lpr/     # ✅ configs listos, falta engines
+└── scripts/
+    ├── entrypoint-model.sh        # symlink + conv etlt→engine + launch
+    └── download-models.sh         # guía de descarga NGC
+Cómo cambiar de modelo
+MODEL=peoplenet docker-compose up -d     # PeopleNet
+MODEL=trafficcamnet-lpd-lpr docker-compose up -d  # cadena completa
+MODEL=yolo-v9 docker-compose up -d       # default
+Lo que falta (para otro momento)
+- Descargar engines de NGC para PeopleNet, TrafficCamNet, LPDNet, LPRNet
+- El entrypoint convierte .etlt → .engine automáticamente al primer start con GPU
+
+
+Resumen final
+3 de 4 modelos funcionando
+Modelo	Pipeline	VRAM	Cambio
+YOLOv9	Single PGIE	2.1 GB	MODEL=yolo-v9
+PeopleNet	Single PGIE	794 MB	MODEL=peoplenet
+TrafficCamNet + LPDNet + LPRNet	PGIE + SGIE0 + SGIE1	980 MB	MODEL=trafficcamnet-lpd-lpr
+FaceDetect	❌ Pendiente	—	Solo .etlt, sin versión ONNX
+Cómo cambiar de modelo
+MODEL=peoplenet docker-compose up -d        # ~5s de switch
+MODEL=trafficcamnet-lpd-lpr docker-compose up -d
+MODEL=yolo-v9 docker-compose up -d          # default
+Estructura final
+deepstream-service/
+├── Dockerfile                     # único, compila 1 vez
+├── bridge/                        # C++ con PGIE + SGIE0 + SGIE1
+├── models/
+│   ├── yolo-v9/           ✅       # engine pre-compilado
+│   ├── peoplenet/         ✅       # ONNX decrypted v2.3.4
+│   ├── facenet/           ❌       # .etlt, necesita conversión
+│   ├── peoplenet-facedetect/     # config listo, falta FaceDetect engine
+│   └── trafficcamnet-lpd-lpr/ ✅  # 3 ONNX: TrafficCamNet + LPDNet + LPRNet
+└── scripts/
+    ├── entrypoint-model.sh        # symlink active model + launch
+    └── download-models.sh         # guía NGC
+Lo que resolvió el problema de conversión
+Los modelos con sufijo _decrypted o _onnx en NGC vienen en formato ONNX que nvinfer convierte automáticamente con TensorRT 10.9. Los .tlt/.etlt originales usan UFF internamente, deprecado en TRT 10.
