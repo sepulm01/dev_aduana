@@ -970,8 +970,21 @@ def _publish_deepstream_command(payload):
 def deepstream_preview_start(request, device_id):
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
-    _publish_deepstream_command({"action": "start_preview", "device_id": device_id})
-    return JsonResponse({"ok": True})
+    device = get_object_or_404(Device, id=device_id)
+    profile_token = device.default_profile_token
+    stream_uri = ""
+    if profile_token and device.stream_uris:
+        stream_uri = device.stream_uris.get(profile_token, "")
+    _publish_deepstream_command(
+        {
+            "action": "start_preview",
+            "device_id": device_id,
+            "camera_id": str(device_id),
+            "rtsp_uri": stream_uri,
+            "camera_name": device.name,
+        }
+    )
+    return JsonResponse({"ok": True, "stream_uri": stream_uri})
 
 
 @csrf_exempt
@@ -992,8 +1005,19 @@ def deepstream_preview_keepalive(request, device_id):
         is_new = not r.exists(key)
         r.setex(key, 30, "1")
         if is_new:
+            device = get_object_or_404(Device, id=device_id)
+            profile_token = device.default_profile_token
+            stream_uri = ""
+            if profile_token and device.stream_uris:
+                stream_uri = device.stream_uris.get(profile_token, "")
             _publish_deepstream_command(
-                {"action": "start_preview", "device_id": device_id}
+                {
+                    "action": "start_preview",
+                    "device_id": device_id,
+                    "camera_id": str(device_id),
+                    "rtsp_uri": stream_uri,
+                    "camera_name": device.name,
+                }
             )
     except Exception as e:
         logger.warning("Keepalive failed: %s", e)

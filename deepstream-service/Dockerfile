@@ -5,6 +5,8 @@ RUN bash user_additional_install.sh
 
 RUN apt-get update && apt-get install -y \
     libjsoncpp-dev \
+    libhiredis-dev \
+    libcurl4-gnutls-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone https://github.com/NVIDIA-AI-IOT/deepstream_tools.git && \

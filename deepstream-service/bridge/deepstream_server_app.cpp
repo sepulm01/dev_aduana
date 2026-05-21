@@ -18,6 +18,8 @@
 #include <sys/time.h>
 #include <cuda_runtime_api.h>
 #include <iostream>
+#include <fstream>
+#include <map>
 
 #include "gstnvdsmeta.h"
 #include "nvds_yml_parser.h"
@@ -25,6 +27,7 @@
 #include "gst-nvmessage.h"
 #include "gst-nvdscustommessage.h"
 #include "gst-nvevent.h"
+#include "redis_bridge.hpp"
 
 #define MAX_DISPLAY_LEN 64
 
@@ -150,6 +153,25 @@ pad_probe_event_on_fakesink (GstPad * pad, GstPadProbeInfo * info,
   return GST_PAD_PROBE_OK;
 }
 
+static gboolean
+load_labels_file(const std::string& path, std::map<int, std::string>& labels)
+{
+  std::ifstream f(path);
+  if (!f.is_open()) {
+    g_printerr("Could not open labels file: %s\n", path.c_str());
+    return FALSE;
+  }
+  std::string line;
+  int id = 0;
+  while (std::getline(f, line)) {
+    if (!line.empty()) {
+      labels[id] = line;
+      id++;
+    }
+  }
+  f.close();
+  return TRUE;
+}
 
 static gboolean
 bus_call (GstBus * bus, GstMessage * msg, gpointer data)
@@ -402,6 +424,19 @@ main (int argc, char *argv[])
     }
     nvds_parse_nvdsanalytics(appctx.nvanalytics, argv[1], "analytics");
   }
+
+  GstElement *nvtracker = gst_element_factory_make("nvtracker", "tracker");
+  if (!nvtracker) {
+    g_printerr("nvtracker element could not be created. Exiting.\n");
+    return -1;
+  }
+  if (nvds_parse_tracker(nvtracker, argv[1], "tracker") != NVDS_YAML_PARSER_SUCCESS) {
+    g_printerr("Failed to parse tracker config. Exiting.\n");
+    return -1;
+  }
+  g_print("Tracker configured successfully\n");
+
+  GstElement *queue_t = gst_element_factory_make("queue", "queue_t");
   /* Add queue elements between every two elements */
   appctx.queue1 = gst_element_factory_make ("queue", "queue1");
   appctx.queue2 = gst_element_factory_make ("queue", "queue2");
@@ -544,7 +579,7 @@ main (int argc, char *argv[])
                       appctx.queue5, appctx.sink, NULL);
   } else {
    gst_bin_add_many (GST_BIN (appctx.pipeline), appctx.queue1, appctx.preprocess,
-                      appctx.pgie, appctx.queue2, appctx.nvanalytics, appctx.queue6,
+                      appctx.pgie, appctx.queue2, nvtracker, queue_t, appctx.nvanalytics, appctx.queue6,
                       appctx.nvdslogger, appctx.tiler, appctx.queue3, appctx.nvvidconv,
                       appctx.queue4, appctx.nvosd, appctx.queue5, appctx.sink,
                       sgie0, sgie1, NULL);
@@ -569,7 +604,7 @@ main (int argc, char *argv[])
         if (!gst_element_link_many (
               gst_nvmultiurisrcbincreator_get_bin(appctx.nvmultiurisrcbinCreator),
               appctx.queue1, appctx.preprocess, appctx.pgie, sgie0, sgie1, appctx.queue2,
-              appctx.nvanalytics, appctx.queue6,
+              nvtracker, queue_t, appctx.nvanalytics, appctx.queue6,
               appctx.nvdslogger, appctx.tiler, appctx.queue3, appctx.nvvidconv,
               appctx.queue4, appctx.nvosd, appctx.queue5, NULL)) {
           g_printerr ("Elements could not be linked. Exiting.\n");
@@ -579,7 +614,7 @@ main (int argc, char *argv[])
         if (!gst_element_link_many (
               gst_nvmultiurisrcbincreator_get_bin(appctx.nvmultiurisrcbinCreator),
               appctx.queue1, appctx.preprocess, appctx.pgie, sgie0, appctx.queue2,
-              appctx.nvanalytics, appctx.queue6,
+              nvtracker, queue_t, appctx.nvanalytics, appctx.queue6,
               appctx.nvdslogger, appctx.tiler, appctx.queue3, appctx.nvvidconv,
               appctx.queue4, appctx.nvosd, appctx.queue5, NULL)) {
           g_printerr ("Elements could not be linked. Exiting.\n");
@@ -589,7 +624,7 @@ main (int argc, char *argv[])
         if (!gst_element_link_many (
               gst_nvmultiurisrcbincreator_get_bin(appctx.nvmultiurisrcbinCreator),
               appctx.queue1, appctx.preprocess, appctx.pgie, appctx.queue2,
-              appctx.nvanalytics, appctx.queue6,
+              nvtracker, queue_t, appctx.nvanalytics, appctx.queue6,
               appctx.nvdslogger, appctx.tiler, appctx.queue3, appctx.nvvidconv,
               appctx.queue4, appctx.nvosd, appctx.queue5, NULL)) {
           g_printerr ("Elements could not be linked. Exiting.\n");
@@ -608,7 +643,7 @@ main (int argc, char *argv[])
       if (sgie1) {
         if (!gst_element_link_many (appctx.multiuribin, appctx.queue1,
                                     appctx.preprocess, appctx.pgie, sgie0, sgie1, appctx.queue2,
-                                    appctx.nvanalytics, appctx.queue6,
+                                    nvtracker, queue_t, appctx.nvanalytics, appctx.queue6,
                                     appctx.nvdslogger, appctx.tiler, appctx.queue3,
                                     appctx.nvvidconv, appctx.queue4, appctx.nvosd,
                                     appctx.queue5, NULL)) {
@@ -618,7 +653,7 @@ main (int argc, char *argv[])
       } else if (sgie0) {
         if (!gst_element_link_many (appctx.multiuribin, appctx.queue1,
                                     appctx.preprocess, appctx.pgie, sgie0, appctx.queue2,
-                                    appctx.nvanalytics, appctx.queue6,
+                                    nvtracker, queue_t, appctx.nvanalytics, appctx.queue6,
                                     appctx.nvdslogger, appctx.tiler, appctx.queue3,
                                     appctx.nvvidconv, appctx.queue4, appctx.nvosd,
                                     appctx.queue5, NULL)) {
@@ -628,7 +663,7 @@ main (int argc, char *argv[])
       } else {
         if (!gst_element_link_many (appctx.multiuribin, appctx.queue1,
                                     appctx.preprocess, appctx.pgie, appctx.queue2,
-                                    appctx.nvanalytics, appctx.queue6,
+                                    nvtracker, queue_t, appctx.nvanalytics, appctx.queue6,
                                     appctx.nvdslogger, appctx.tiler, appctx.queue3,
                                     appctx.nvvidconv, appctx.queue4, appctx.nvosd,
                                     appctx.queue5, NULL)) {
@@ -668,6 +703,22 @@ main (int argc, char *argv[])
         pad_probe_event_on_fakesink, (void *) &appctx, NULL);
     gst_object_unref (sink_pad);
   }
+
+  std::map<int, std::string> class_labels;
+  load_labels_file("/opt/models/active/labels/labels.txt", class_labels);
+
+  RedisBridge redis_bridge("redis", &appctx);
+  redis_bridge.set_labels(class_labels);
+  redis_bridge.start();
+
+  GstPad* analytics_src_pad = gst_element_get_static_pad(appctx.nvanalytics, "src");
+  if (analytics_src_pad) {
+    gst_pad_add_probe(analytics_src_pad, GST_PAD_PROBE_TYPE_BUFFER,
+                      RedisBridge::analytics_pad_probe, &redis_bridge, NULL);
+    g_print("[Main] Analytics pad probe added on nvanalytics src\n");
+    gst_object_unref(analytics_src_pad);
+  }
+
   /* Set the pipeline to "playing" state */
   g_print ("Using file: %s\n", argv[1]);
 
@@ -680,6 +731,7 @@ main (int argc, char *argv[])
 
   /* Out of the main loop, clean up nicely */
   g_print ("Returned, stopping playback\n");
+  redis_bridge.stop();
   gst_element_set_state (appctx.pipeline, GST_STATE_NULL);
   if(appctx.restServer) {
     g_print ("Calling gst_nvmultiurisrcbincreator_deinit\n");
