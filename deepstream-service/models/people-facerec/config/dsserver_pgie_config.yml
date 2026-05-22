@@ -1,11 +1,10 @@
 property:
   gpu-id: 0
-  net-scale-factor: 1.0
+  net-scale-factor: 0.00392156862745098
   model-color-format: 0
-  tlt-model-key: nvidia_tlt
-  tlt-encoded-model: /opt/models/active/peoplenet.tlt
+  onnx-file: /opt/models/active/peoplenet.onnx
   model-engine-file: /opt/models/active/peoplenet.engine
-  labelfile-path: /opt/models/active/labels/labels_people.txt
+  labelfile-path: /opt/models/active/labels/labels.txt
   batch-size: 3
   network-mode: 0
   num-detected-classes: 3

@@ -1,0 +1,21 @@
+property:
+  gpu-id: 0
+  onnx-file: /opt/models/active/2d106det.onnx
+  model-engine-file: /opt/models/active/2d106det.onnx_b3_gpu0_fp32.engine
+  infer-dims: 3;192;192
+  batch-size: 3
+  network-mode: 0
+  gie-unique-id: 2
+  process-mode: 2
+  network-type: 1
+  operate-on-gie-id: 1
+  operate-on-class-ids: 2
+  output-tensor-meta: 1
+  model-color-format: 0
+  net-scale-factor: 1.0
+  offsets: 0.0;0.0;0.0
+  maintain-aspect-ratio: 1
+  symmetric-padding: 1
+  interval: 0
+  classifier-async-mode: 0
+  classifier-threshold: 0.0

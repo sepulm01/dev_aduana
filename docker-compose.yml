@@ -2,7 +2,7 @@ name: mediamtx-manager
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     env_file: .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -124,6 +124,21 @@ services:
       redis:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+
+  face-receiver:
+    build: ./django
+    command: python manage.py face_receiver
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "127.0.0.1:12348:12348"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   deepstream:

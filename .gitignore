@@ -49,3 +49,10 @@ mediamtx/mediamtx
 # DeepStream-Yolo build artifacts
 DeepStream-Yolo/
 *.mp4
+*.jpg
+*.png
+*.log
+*.txt
+*.cache
+*.bak
+*.tmp

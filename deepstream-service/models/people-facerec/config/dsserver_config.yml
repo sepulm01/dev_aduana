@@ -28,6 +28,10 @@ encoder:
   codec: 1
   enable: 0
 
+primary-gie:
+  plugin-type: 0
+  config-file-path: dsserver_pgie_config.yml
+
 tracker:
   tracker-width: 640
   tracker-height: 384
@@ -35,9 +39,13 @@ tracker:
   ll-lib-file: /opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so
   ll-config-file: config_tracker_IOU.yml
 
-primary-gie:
+secondary-gie0:
   plugin-type: 0
-  config-file-path: dsserver_pgie_config.yml
+  config-file-path: dsserver_sgie0_config.yml
+
+secondary-gie1:
+  plugin-type: 0
+  config-file-path: dsserver_sgie1_config.yml
 
 analytics:
   enable: 0

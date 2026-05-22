@@ -45,7 +45,7 @@ LIBS:= $(shell pkg-config --libs $(PKGS))
 
 LIBS+= -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart -lnvdsgst_helper -lnvdsgst_customhelper -lnvds_rest_server -lm \
 		-L$(LIB_INSTALL_DIR) -lnvdsgst_meta -lnvds_meta -lnvds_yml_parser \
-		-lcuda -lhiredis -lcurl \
+		-lcuda -lhiredis -lcurl -lnvds_batch_jpegenc \
 		-Wl,-rpath,$(LIB_INSTALL_DIR) -lnvds_rest_server
 
 ifeq ($(TARGET_DEVICE),aarch64)

@@ -1,1 +1,0 @@
-../facenet/facenet_vpruned_quantized_v2.0.1/int8_calibration.txt

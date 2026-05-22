@@ -14,11 +14,13 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
     "channels",
     "django_celery_beat",
     "devices.apps.DevicesConfig",
     "live",
     "ptz",
+    "detections",
 ]
 
 MIDDLEWARE = [
@@ -95,7 +97,13 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
 STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },

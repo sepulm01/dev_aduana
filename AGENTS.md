@@ -27,7 +27,16 @@ celery -A config worker -l info
 ruff check . && ruff format .                 # lint + format
 ```
 
-Available DeepStream models: `yolo-v9`, `peoplenet`, `trafficcamnet-lpd-lpr`, `peoplenet-facedetect`. `facenet` is broken — see TensorRT compatibility below.
+Available DeepStream models: `yolo-v9`, `peoplenet`, `people-facerec`, `trafficcamnet-lpd-lpr`.
+
+`people-facerec` extends peoplenet with:
+- SGIE0: `2d106det.onnx` (106-point facial landmarks, 3×192×192, classifier mode)
+- SGIE1: `w600k_r50.onnx` (ArcFace 512-d embeddings, 3×112×112, classifier mode)
+- Both SGIE operate on face bboxes (peoplenet class_id=2) in `network-type: 1` (classifier)
+- Shares peoplenet engine/ONNX via symlinks, no duplication
+- Redis output includes `"Faces"` array with `object_id`, `quality_score`, `landmarks` (212 floats), `embedding` (512 floats)
+- Quality gate: percentage of 106 landmark points within [0,1] normalized crop region
+- Both SGIE engines auto-compile on first run (2d106det: ~25s, w600k_r50: ~36s), cached to .engine files
 
 ---
 
@@ -117,8 +126,7 @@ PGIE+SGIE0+SGIE1: ... → identity → nvinfer(pgie) → nvinfer(sgie0) → nvin
 - **Only use `_decrypted` or `_onnx` suffix models from NGC**
 - `nvinfer` auto-converts ONNX → `.engine` at runtime (`onnx-file` config key)
 - Working models: `peoplenet` (794 MB ONNX), `trafficcamnet-lpd-lpr` (3x ONNX), `yolo-v9` (pre-compiled engine)
-- `facenet` (FaceDetect): **broken** — only ETLT format available, not supported. Needs manual ETLT→ONNX conversion via TAO Toolkit before use.
-- For ETLT configs that DO work on older DS: require `uff-input-blob-name` and `output-blob-names` alongside `tlt-encoded-model`/`tlt-model-key`
+- peoplenet already covers face detection — no separate FaceDetect model needed
 
 ### REST API
 21 endpoints on port 8080 (when `within_multiurisrcbin: 0`). When `within_multiurisrcbin: 1`, REST runs inside nvmultiurisrcbin element. Key endpoints: `GET /health/get-dsready-state`, `POST /stream/add`, `POST /stream/remove`, `POST /app/quit`. Full list in `deepstream-service/bridge/README`.

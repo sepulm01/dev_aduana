@@ -13,3 +13,4 @@ wsdiscovery>=2,<3
 lxml>=5,<6
 pillow>=10,<12
 isodate>=0.6,<1
+pgvector>=0.4,<1

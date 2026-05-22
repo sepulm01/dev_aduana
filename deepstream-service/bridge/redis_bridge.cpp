@@ -1,18 +1,40 @@
 #include "redis_bridge.hpp"
 #include "gstnvdsmeta.h"
+#include "gstnvdsinfer.h"
 #include "nvds_analytics_meta.h"
+#include "nvbufsurface.h"
 #include <sstream>
 #include <ctime>
 #include <cstring>
 #include <cstdlib>
 #include <curl/curl.h>
 #include <json/json.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
 
 extern "C" {
 #include <hiredis/hiredis.h>
 }
 
 #define FLUSH_INTERVAL_US 1000000
+
+#pragma pack(push, 1)
+struct FaceCropPacket {
+    uint32_t device_id;
+    uint64_t object_id;
+    float quality_score;
+    float bbox_left;
+    float bbox_top;
+    float bbox_width;
+    float bbox_height;
+    uint64_t timestamp_ms;
+};
+#pragma pack(pop)
+
+static const char END_MARKER[] = "END!";
 
 RedisBridge::RedisBridge(const std::string& redis_url, void* appctx)
     : redis_url_(redis_url),
@@ -22,7 +44,12 @@ RedisBridge::RedisBridge(const std::string& redis_url, void* appctx)
       subscriber_thread_(nullptr),
       running_(FALSE),
       last_flush_time_(0),
-      rest_port_(9000)
+      rest_port_(9000),
+      enc_ctx_(nullptr),
+      crop_sock_fd_(-1),
+      crop_sock_host_("face-receiver"),
+      crop_sock_port_(12348),
+      crop_sock_connected_(false)
 {
     g_mutex_init(&lock_);
 }
@@ -43,6 +70,137 @@ void RedisBridge::set_labels(const std::map<int, std::string>& labels)
 void RedisBridge::set_rest_port(int port)
 {
     rest_port_ = port;
+}
+
+void RedisBridge::set_crop_socket(const std::string& host, int port)
+{
+    crop_sock_host_ = host;
+    crop_sock_port_ = port;
+}
+
+bool RedisBridge::connect_crop_socket()
+{
+    crop_sock_fd_ = socket(AF_INET, SOCK_STREAM, 0);
+    if (crop_sock_fd_ < 0) {
+        g_printerr("[RedisBridge] socket() failed\n");
+        return false;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(crop_sock_port_);
+    addr.sin_addr.s_addr = inet_addr(crop_sock_host_.c_str());
+
+    if (addr.sin_addr.s_addr == INADDR_NONE) {
+        struct hostent* he = gethostbyname(crop_sock_host_.c_str());
+        if (!he) {
+            g_printerr("[RedisBridge] DNS lookup failed for %s\n",
+                       crop_sock_host_.c_str());
+            close(crop_sock_fd_);
+            crop_sock_fd_ = -1;
+            return false;
+        }
+        memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+    }
+
+    int ret = connect(crop_sock_fd_, (struct sockaddr*)&addr, sizeof(addr));
+    if (ret < 0) {
+        g_printerr("[RedisBridge] Crop socket connect to %s:%d failed\n",
+                   crop_sock_host_.c_str(), crop_sock_port_);
+        close(crop_sock_fd_);
+        crop_sock_fd_ = -1;
+        return false;
+    }
+
+    crop_sock_connected_ = true;
+    g_print("[RedisBridge] Crop socket connected to %s:%d\n",
+            crop_sock_host_.c_str(), crop_sock_port_);
+    return true;
+}
+
+void RedisBridge::close_crop_socket()
+{
+    crop_sock_connected_ = false;
+    if (crop_sock_fd_ >= 0) {
+        shutdown(crop_sock_fd_, SHUT_RDWR);
+        close(crop_sock_fd_);
+        crop_sock_fd_ = -1;
+    }
+}
+
+bool RedisBridge::send_face_crop(NvDsObjectMeta* obj_meta, NvDsFrameMeta* frame_meta,
+                                  int device_id, const FaceEmbedding& fe)
+{
+    if (!crop_sock_connected_ || crop_sock_fd_ < 0) return false;
+
+    for (NvDsMetaList* l_user = obj_meta->obj_user_meta_list; l_user;
+         l_user = l_user->next) {
+        NvDsUserMeta* user_meta = (NvDsUserMeta*)l_user->data;
+        if (!user_meta) continue;
+        if (user_meta->base_meta.meta_type != NVDS_CROP_IMAGE_META)
+            continue;
+
+        NvDsObjEncOutParams* enc = (NvDsObjEncOutParams*)user_meta->user_meta_data;
+        if (!enc || !enc->outBuffer || enc->outLen == 0) continue;
+
+        FaceCropPacket pkt;
+        pkt.device_id = (uint32_t)device_id;
+        pkt.object_id = obj_meta->object_id;
+        pkt.quality_score = fe.quality_score;
+        pkt.bbox_left = obj_meta->detector_bbox_info.org_bbox_coords.left / 1920.0f;
+        pkt.bbox_top = obj_meta->detector_bbox_info.org_bbox_coords.top / 1080.0f;
+        pkt.bbox_width = obj_meta->detector_bbox_info.org_bbox_coords.width / 1920.0f;
+        pkt.bbox_height = obj_meta->detector_bbox_info.org_bbox_coords.height / 1080.0f;
+        pkt.timestamp_ms = (uint64_t)(time(nullptr) * 1000LL);
+
+        ssize_t sent;
+
+        sent = send(crop_sock_fd_, enc->outBuffer, enc->outLen, MSG_NOSIGNAL);
+        if (sent < 0) {
+            g_printerr("[RedisBridge] Crop JPEG send failed\n");
+            close_crop_socket();
+            return false;
+        }
+
+        sent = send(crop_sock_fd_, END_MARKER, strlen(END_MARKER), MSG_NOSIGNAL);
+        if (sent < 0) {
+            close_crop_socket();
+            return false;
+        }
+
+        sent = send(crop_sock_fd_, &pkt, sizeof(pkt), MSG_NOSIGNAL);
+        if (sent < 0) {
+            close_crop_socket();
+            return false;
+        }
+
+        if (!fe.embedding.empty()) {
+            sent = send(crop_sock_fd_, fe.embedding.data(),
+                        fe.embedding.size() * sizeof(float), MSG_NOSIGNAL);
+            if (sent < 0) {
+                close_crop_socket();
+                return false;
+            }
+        } else {
+            float zero[512] = {};
+            send(crop_sock_fd_, zero, sizeof(zero), MSG_NOSIGNAL);
+        }
+
+        if (!fe.landmarks.empty()) {
+            sent = send(crop_sock_fd_, fe.landmarks.data(),
+                        fe.landmarks.size() * sizeof(float), MSG_NOSIGNAL);
+            if (sent < 0) {
+                close_crop_socket();
+                return false;
+            }
+        } else {
+            float zero[212] = {};
+            send(crop_sock_fd_, zero, sizeof(zero), MSG_NOSIGNAL);
+        }
+        return true;
+    }
+    return false;
 }
 
 bool RedisBridge::start()
@@ -71,6 +229,13 @@ bool RedisBridge::start()
 
     g_print("[RedisBridge] Connected to Redis at %s\n", redis_url_.c_str());
 
+    enc_ctx_ = nvds_obj_enc_create_context(0);
+    if (!enc_ctx_) {
+        g_printerr("[RedisBridge] Failed to create encoder context\n");
+    }
+
+    connect_crop_socket();
+
     running_ = TRUE;
     GThread* th = g_thread_new("redis-subscriber", subscriber_thread_func, this);
     if (!th) {
@@ -95,6 +260,13 @@ void RedisBridge::stop()
     if (subscriber_thread_) {
         g_thread_join(subscriber_thread_);
         subscriber_thread_ = nullptr;
+    }
+
+    close_crop_socket();
+
+    if (enc_ctx_) {
+        nvds_obj_enc_destroy_context(enc_ctx_);
+        enc_ctx_ = nullptr;
     }
 
     if (sub_ctx_) {
@@ -300,9 +472,69 @@ void RedisBridge::handle_command(const std::string& json_str)
     }
 }
 
+float RedisBridge::compute_quality_score(const std::vector<float>& landmarks,
+                                          float bbox_left, float bbox_top,
+                                          float bbox_width, float bbox_height)
+{
+    if (landmarks.size() < 10) return 0.0f;
+
+    size_t num_points = landmarks.size() / 2;
+    int points_inside = 0;
+
+    for (size_t i = 0; i < num_points; ++i) {
+        float x = landmarks[i * 2];
+        float y = landmarks[i * 2 + 1];
+
+        if (x >= 0.0f && x <= 1.0f && y >= 0.0f && y <= 1.0f) {
+            points_inside++;
+        }
+    }
+
+    return (float)points_inside / (float)num_points;
+}
+
+bool RedisBridge::extract_sgie_tensor_data(NvDsObjectMeta* parent_obj, guint unique_id,
+                                            std::vector<float>& data)
+{
+    if (!parent_obj) return false;
+
+    for (NvDsMetaList* l_user = parent_obj->obj_user_meta_list; l_user;
+         l_user = l_user->next) {
+        NvDsUserMeta* user_meta = (NvDsUserMeta*)l_user->data;
+        if (!user_meta) continue;
+        if (user_meta->base_meta.meta_type != NVDSINFER_TENSOR_OUTPUT_META)
+            continue;
+
+        NvDsInferTensorMeta* tm =
+            (NvDsInferTensorMeta*)user_meta->user_meta_data;
+        if (!tm || tm->unique_id != unique_id) continue;
+
+        for (guint l = 0; l < tm->num_output_layers; ++l) {
+            if (!tm->out_buf_ptrs_host || !tm->out_buf_ptrs_host[l])
+                continue;
+
+            NvDsInferLayerInfo* layer = &tm->output_layers_info[l];
+            if (!layer) continue;
+
+            guint total = layer->inferDims.numElements;
+            if (total == 0 || total > 10000) continue;
+
+            float* buf = (float*)tm->out_buf_ptrs_host[l];
+            if (!buf) continue;
+
+            for (guint j = 0; j < total; ++j) {
+                data.push_back((float)buf[j]);
+            }
+        }
+        return !data.empty();
+    }
+    return false;
+}
+
 std::string RedisBridge::make_detection_json(int device_id, int source_id,
                                               guint64 frame_num,
-                                              const std::vector<DetectionObject>& objects)
+                                              const std::vector<DetectionObject>& objects,
+                                              const std::vector<FaceEmbedding>& face_embeddings)
 {
     std::ostringstream oss;
     oss << "{\"code\":\"DeepStreamDetection\","
@@ -332,7 +564,34 @@ std::string RedisBridge::make_detection_json(int device_id, int source_id,
             << "}";
     }
 
-    oss << "]}}";
+    oss << "]";
+
+    if (!face_embeddings.empty()) {
+        oss << ",\"Faces\":[";
+        for (size_t i = 0; i < face_embeddings.size(); ++i) {
+            if (i > 0) oss << ",";
+            const FaceEmbedding& fe = face_embeddings[i];
+            oss << "{\"object_id\":" << fe.object_id << ","
+                << "\"quality_score\":" << fe.quality_score << ",";
+
+            oss << "\"landmarks\":[";
+            for (size_t j = 0; j < fe.landmarks.size(); ++j) {
+                if (j > 0) oss << ",";
+                oss << fe.landmarks[j];
+            }
+            oss << "],";
+
+            oss << "\"embedding\":[";
+            for (size_t j = 0; j < fe.embedding.size(); ++j) {
+                if (j > 0) oss << ",";
+                oss << fe.embedding[j];
+            }
+            oss << "]}";
+        }
+        oss << "]";
+    }
+
+    oss << "}}";
     return oss.str();
 }
 
@@ -353,11 +612,24 @@ GstPadProbeReturn RedisBridge::analytics_pad_probe(GstPad* pad, GstPadProbeInfo*
     RedisBridge* bridge = static_cast<RedisBridge*>(user_data);
     GstBuffer* buf = GST_BUFFER(info->data);
 
+    GstMapInfo inmap = GST_MAP_INFO_INIT;
+    NvBufSurface* ip_surf = nullptr;
+    if (gst_buffer_map(buf, &inmap, GST_MAP_READ)) {
+        ip_surf = (NvBufSurface*)inmap.data;
+    }
+
     NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
-    if (!batch_meta) return GST_PAD_PROBE_OK;
+    if (!batch_meta) {
+        if (ip_surf) gst_buffer_unmap(buf, &inmap);
+        return GST_PAD_PROBE_OK;
+    }
 
     guint64 current_time = g_get_monotonic_time();
     std::map<int, std::vector<DetectionObject>> per_device_objects;
+    std::map<int, std::vector<FaceEmbedding>> per_device_faces;
+    std::vector<std::pair<NvDsObjectMeta*, NvDsFrameMeta*>> face_obj_metas;
+
+    int face_index = 0;
 
     for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame;
          l_frame = l_frame->next) {
@@ -406,8 +678,74 @@ GstPadProbeReturn RedisBridge::analytics_pad_probe(GstPad* pad, GstPadProbeInfo*
                            ? "HumamID" : "VehicleID";
 
             per_device_objects[device_id].push_back(det);
+
+            if (obj_meta->class_id == 2) {
+                FaceEmbedding fe;
+                fe.object_id = obj_meta->object_id;
+
+                bool has_lm = bridge->extract_sgie_tensor_data(obj_meta, 2, fe.landmarks);
+                bool has_emb = bridge->extract_sgie_tensor_data(obj_meta, 3, fe.embedding);
+
+                if (has_lm && !fe.landmarks.empty()) {
+                    fe.quality_score = bridge->compute_quality_score(
+                        fe.landmarks, det.left, det.top, det.width, det.height);
+                } else {
+                    fe.quality_score = 0.0f;
+                }
+
+                if (has_emb && !fe.embedding.empty()) {
+                    per_device_faces[device_id].push_back(fe);
+                }
+
+                if (ip_surf && bridge->enc_ctx_ && bridge->crop_sock_connected_) {
+                    NvDsObjEncUsrArgs objData = {};
+                    objData.saveImg = TRUE;
+                    objData.attachUsrMeta = TRUE;
+                    objData.quality = 80;
+                    objData.objNum = ++face_index;
+                    nvds_obj_enc_process(bridge->enc_ctx_, &objData,
+                                         ip_surf, obj_meta, frame_meta);
+                    face_obj_metas.push_back({obj_meta, frame_meta});
+                }
+            }
         }
     }
+
+    if (bridge->enc_ctx_ && ip_surf && !face_obj_metas.empty()) {
+        nvds_obj_enc_finish(bridge->enc_ctx_);
+
+        size_t idx = 0;
+        for (auto& pair : face_obj_metas) {
+            NvDsObjectMeta* obj_meta = pair.first;
+            int device_id = 1;
+            {
+                g_mutex_lock(&bridge->lock_);
+                auto it = bridge->source_to_device_.find(
+                    ((NvDsFrameMeta*)pair.second)->source_id);
+                if (it != bridge->source_to_device_.end())
+                    device_id = it->second;
+                else
+                    bridge->source_to_device_[((NvDsFrameMeta*)pair.second)->source_id] = 1;
+                g_mutex_unlock(&bridge->lock_);
+            }
+
+            const FaceEmbedding* fe = nullptr;
+            auto f_map_it = per_device_faces.find(device_id == 0
+                ? ((NvDsFrameMeta*)pair.second)->source_id : device_id);
+            if (f_map_it != per_device_faces.end() && idx < f_map_it->second.size()) {
+                fe = &f_map_it->second[idx];
+            }
+            FaceEmbedding dummy;
+            dummy.object_id = obj_meta->object_id;
+            dummy.quality_score = 0.0f;
+            if (!fe) fe = &dummy;
+
+            bridge->send_face_crop(obj_meta, pair.second, device_id, *fe);
+            idx++;
+        }
+    }
+
+    if (ip_surf) gst_buffer_unmap(buf, &inmap);
 
     if (current_time - bridge->last_flush_time_ >= FLUSH_INTERVAL_US) {
         for (auto& kv : per_device_objects) {
@@ -415,8 +753,14 @@ GstPadProbeReturn RedisBridge::analytics_pad_probe(GstPad* pad, GstPadProbeInfo*
             std::vector<DetectionObject>& objects = kv.second;
             if (objects.empty()) continue;
 
+            std::vector<FaceEmbedding> faces;
+            auto f_it = per_device_faces.find(device_id);
+            if (f_it != per_device_faces.end()) {
+                faces = f_it->second;
+            }
+
             std::string json = bridge->make_detection_json(
-                device_id, 0, 0, objects);
+                device_id, 0, 0, objects, faces);
 
             g_mutex_lock(&bridge->lock_);
             if (bridge->pub_ctx_) {
@@ -428,8 +772,8 @@ GstPadProbeReturn RedisBridge::analytics_pad_probe(GstPad* pad, GstPadProbeInfo*
             }
             g_mutex_unlock(&bridge->lock_);
 
-            g_print("[AnalyticsProbe] device=%d objects=%zu\n",
-                    device_id, objects.size());
+            g_print("[AnalyticsProbe] device=%d objects=%zu faces=%zu\n",
+                    device_id, objects.size(), faces.size());
         }
         bridge->last_flush_time_ = current_time;
     }
