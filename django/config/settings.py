@@ -110,3 +110,5 @@ STORAGES = {
 }
 
 MEDIAMTX_URL = os.environ.get("MEDIAMTX_URL", "http://mediamtx:8889")
+
+FACE_MATCH_COOLDOWN_SECONDS = 30

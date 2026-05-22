@@ -8,9 +8,9 @@ from datetime import datetime
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
-from django.db.models import F
 from pgvector.django import CosineDistance
 
 from detections.models import Detection
@@ -24,6 +24,7 @@ END_MARKER = b"END!"
 
 BUFFER_TIMEOUT_SEC = 10
 SCORE_THRESHOLD = 0.0
+COOLDOWN_SEC = getattr(settings, "FACE_MATCH_COOLDOWN_SECONDS", 300)
 
 
 class FaceBuffer:
@@ -211,6 +212,17 @@ class Command(BaseCommand):
             except struct.error:
                 pass
 
+        result = None
+        if embedding_list:
+            result = self._check_match(entry["device_id"], embedding_list)
+            if result is not None:
+                matched, distance = result
+                now = datetime.now()
+                matched_ts = matched.timestamp.replace(tzinfo=None)
+                delta = (now - matched_ts).total_seconds()
+                if delta < COOLDOWN_SEC:
+                    return
+
         obj = Detection(
             device_id=entry["device_id"],
             object_id=entry["object_id"],
@@ -231,42 +243,72 @@ class Command(BaseCommand):
             obj.crop.save(filename, ContentFile(entry["jpeg_bytes"]), save=False)
 
         obj.save()
-        self._check_match(obj)
 
-        print(
-            f"[FaceReceiver] Saved face oid={entry['object_id']} "
-            f"score={entry['quality_score']:.2f}"
-        )
+        if result is not None:
+            self._broadcast_match(obj, matched, distance)
+        else:
+            self._broadcast_new_face(obj)
 
-    def _check_match(self, detection):
-        if not detection.embedding:
-            return
-        try:
-            matches = (
-                Detection.objects.filter(device_id=detection.device_id)
-                .exclude(id=detection.id)
-                .exclude(embedding__isnull=True)
-                .annotate(distance=CosineDistance("embedding", detection.embedding))
-                .filter(distance__lt=0.35)
-                .order_by("distance")[:2]
+        tag = "[FaceReceiver]"
+        if result is not None:
+            print(
+                f"{tag} Saved face (re-id) oid={entry['object_id']} "
+                f"score={entry['quality_score']:.2f} -> "
+                f"matched={matched.object_id} dist={distance:.4f}"
             )
-            channel_layer = get_channel_layer()
-            for match in matches:
-                async_to_sync(channel_layer.group_send)(
-                    f"device_{detection.device_id}",
-                    {
-                        "type": "face_match",
-                        "device_id": detection.device_id,
-                        "object_id": detection.object_id,
-                        "matched_id": match.object_id,
-                        "distance": round(float(match.distance), 4),
-                        "timestamp": str(detection.timestamp),
-                    },
-                )
-                print(
-                    f"[FaceReceiver] MATCH: face {detection.object_id} -> "
-                    f"{match.object_id} (dist={match.distance:.4f})"
-                )
-                return
+        else:
+            print(
+                f"{tag} Saved face (new) oid={entry['object_id']} "
+                f"score={entry['quality_score']:.2f}"
+            )
+
+    def _check_match(self, device_id, embedding_list):
+        if not embedding_list:
+            return None
+        try:
+            match = (
+                Detection.objects.filter(device_id=device_id)
+                .exclude(embedding__isnull=True)
+                .annotate(distance=CosineDistance("embedding", embedding_list))
+                .filter(distance__lt=0.35)
+                .order_by("distance")
+                .first()
+            )
+            if match:
+                return (match, float(match.distance))
+            return None
         except Exception as e:
             print(f"[FaceReceiver] Match error: {e}")
+            return None
+
+    def _broadcast_match(self, detection, matched, distance):
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"device_{detection.device_id}",
+                {
+                    "type": "face_match",
+                    "device_id": detection.device_id,
+                    "object_id": detection.object_id,
+                    "matched_id": matched.object_id,
+                    "distance": round(distance, 4),
+                    "timestamp": str(detection.timestamp),
+                },
+            )
+        except Exception as e:
+            print(f"[FaceReceiver] Broadcast error: {e}")
+
+    def _broadcast_new_face(self, detection):
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"device_{detection.device_id}",
+                {
+                    "type": "new_face",
+                    "device_id": detection.device_id,
+                    "object_id": detection.object_id,
+                    "timestamp": str(detection.timestamp),
+                },
+            )
+        except Exception as e:
+            print(f"[FaceReceiver] Broadcast error: {e}")

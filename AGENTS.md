@@ -24,21 +24,10 @@ python manage.py sync_mediamtx                # sync camera paths to MediaMTX
 python manage.py test                         # all tests
 python manage.py test app.tests.test_file.TestClass.test_name  # single test
 celery -A config worker -l info
-ruff check . && ruff format .                 # lint + format
+ruff check . && ruff format .                 # lint + format (no config file, uses defaults)
 ```
 
 Available DeepStream models: `yolo-v9`, `peoplenet`, `people-facerec`, `trafficcamnet-lpd-lpr`.
-
-`people-facerec` extends peoplenet with:
-- SGIE0: `2d106det.onnx` (106-point facial landmarks, 3×192×192, classifier mode)
-- SGIE1: `w600k_r50.onnx` (ArcFace 512-d embeddings, 3×112×112, classifier mode)
-- Both SGIE operate on face bboxes (peoplenet class_id=2) in `network-type: 1` (classifier)
-- Shares peoplenet engine/ONNX via symlinks, no duplication
-- Redis output includes `"Faces"` array with `object_id`, `quality_score`, `landmarks` (212 floats), `embedding` (512 floats)
-- Quality gate: percentage of 106 landmark points within [0,1] normalized crop region
-- Both SGIE engines auto-compile on first run (2d106det: ~25s, w600k_r50: ~36s), cached to .engine files
-
----
 
 ## Code Style Guidelines
 
@@ -64,10 +53,10 @@ Order: stdlib → blank line → Django/third-party → blank line → local. On
 - Errors: `JsonResponse({"error": msg}, status=N)`, success: `JsonResponse({"ok": True})`
 - Lookups: `get_object_or_404(Model, id=...)`, validate required params early → `status=400`
 - URLs: use `path()` (not `re_path`/`url`), `{% url 'name' arg %}`, AJAX with absolute paths
+  - Exception: `re_path()` is necessary for Channels WebSocket routing (see `live/routing.py`)
 - Templates: extend `base.html`, use `{% block title/content/scripts %}`
 - **UI framework:** Tabler UI (Bootstrap 5-based dark theme) — `tabler.min.css` + `ti ti-*` icons
-- Theme: `data-bs-theme="dark"` on `<html>`, font: Inter via Google Fonts
-- JS: inline `<script>` in `{% block scripts %}`, vanilla ES6+ `async/await` + `fetch()`, no jQuery/frameworks
+- JS: inline `<script>` in `{% block scripts %}`, vanilla ES6+ `async/await` + `fetch()`, no jQuery
 - Locale: `es-cl`, timezone: `America/Santiago`, UI text in Spanish
 
 ### Error Handling
@@ -80,21 +69,23 @@ Order: stdlib → blank line → Django/third-party → blank line → local. On
 - `default_auto_field = "django.db.models.BigAutoField"` in each `AppConfig`
 - `JSONField(blank=True, default=dict)`, `CharField(blank=True, default="")`
 - Descriptive migration names, `Meta.ordering` as list, `__str__` as `f"{self.name} ({self.host})"`
+- pgvector: `VectorField(dimensions=512)` + `IvfflatIndex` for cosine-distance face matching
 
 ### Redis
 All services connect via Docker DNS `redis://redis:6379` — never hardcode `127.0.0.1`.
-
----
 
 ## Services Architecture
 
 | Service | Role |
 |---|---|
+| `postgres` | Database (pgvector/pgvector:pg16) |
+| `redis` | Message broker + cache (redis:7-alpine) |
 | `django-http` | REST API + UI (gunicorn:8000) |
 | `django-asgi` | WebSockets (daphne:8001) |
 | `celery-worker` | Async tasks (poll motion) |
 | `celery-beat` | Scheduler (every 5s) |
 | `redis-event-bridge` | Redis `device:*:events` → Channels |
+| `face-receiver` | TCP :12348, face crops/embeddings → `Detection` records |
 | `mediamtx` | RTSP:8554, WebRTC:8889, API:9997 |
 | `discovery-service` | WS-Discovery + nmap ONVIF (Flask:8765) |
 | `event-stream-service` | Dahua event streaming |
@@ -103,55 +94,54 @@ All services connect via Docker DNS `redis://redis:6379` — never hardcode `127
 
 MediaMTX: stream naming `cam_{device_id}_{profile_token}`, `_hw` suffix for transcoded. ffmpeg: `-c:v libx264 -preset ultrafast -tune zerolatency -c:a copy`. API auth: `admin:mediamtx_admin_pass`. RTSP URLs must percent-encode `+` → `%2B`.
 
----
+## Management Commands
+
+| Command | App | Purpose |
+|---|---|---|
+| `sync_mediamtx` | devices | Recreates MediaMTX paths for cameras with credentials |
+| `deepstream_control` | devices | Sends `add`/`remove`/`status` to DeepStream via Redis pubsub |
+| `redis_event_bridge` | live | Daemon: subscribes Redis `device:*:events` → Channels WebSocket groups |
+| `face_receiver` | live | TCP server (:12348): face `Detection` records, cosine-distance face matching, `FACE_MATCH_COOLDOWN_SECONDS` dedup |
 
 ## DeepStream
 
 ### Build & Model Selection
-- Compiled inside `nvcr.io/nvidia/deepstream:8.0-gc-triton-devel`, CUDA 12.8
-- Binary: `/opt/deepstream-app/bridge/deepstream-server-app`
-- Model switch: `MODEL=<profile> docker-compose up -d deepstream` → `entrypoint-model.sh` symlinks `/opt/models/active/` to profile
-- **Video test path:** `/opt/videos/` (host `/var/www/dev_security/videos/` mounted ro)
-- **PERF_MODE=1** for headless benchmarking: `nvmultiurisrcbin → nvdslogger → fakesink` (no inference)
+- NVIDIA DeepStream 8.0, CUDA 12.8, binary `/opt/deepstream-app/bridge/deepstream-server-app`
+- Model switch: `MODEL=<profile>` env var, `entrypoint-model.sh` symlinks `/opt/models/active/` to profile
+- **PERF_MODE=1** for benchmarking: `nvmultiurisrcbin → nvdslogger → fakesink` (no inference)
+- `people-facerec` uses det_10g as PGIE with custom RetinaFace parser (`libnvds_retinaface_parser.so`): SGIE0=`2d106det.onnx` (106-pt landmarks, 3×192×192), SGIE1=`w600k_r50.onnx` (ArcFace 512-d, 3×112×112). Both classifier mode, operate on face bboxes (class_id=0). Redis output format: `Faces[object_id, quality_score, landmarks(212 floats), embedding(512 floats)]`. Quality gate: % of 106 landmark points within [0,1] normalized region.
 
 ### Pipeline
 ```
 PGIE only:       nvmultiurisrcbin → streammux → identity → nvinfer → tiler → nvosd → sink
 PGIE+SGIE0+SGIE1: ... → identity → nvinfer(pgie) → nvinfer(sgie0) → nvinfer(sgie1) → tiler → nvosd → sink
 ```
-`nvdspreprocess` broken in DS 8.0 → use `identity` as passthrough. SGIE bins added conditionally in C++ when `secondary-gie0`/`secondary-gie1` keys exist in YAML config. `gst_pad_link()` only (not `_full`), unref pads after linking, check `!= GST_PAD_LINK_OK`.
+`nvdspreprocess` broken in DS 8.0 → use `identity` as passthrough. `gst_pad_link()` only (not `_full`), unref pads after linking, check `!= GST_PAD_LINK_OK`. SGIE bins conditional on `secondary-gie0`/`secondary-gie1` YAML keys.
 
-### TensorRT 10.9 Compatibility
-- **`.tlt` / `.etlt` models are INCOMPATIBLE** — UFF parser removed in TRT 10.9
-- **Only use `_decrypted` or `_onnx` suffix models from NGC**
-- `nvinfer` auto-converts ONNX → `.engine` at runtime (`onnx-file` config key)
-- Working models: `peoplenet` (794 MB ONNX), `trafficcamnet-lpd-lpr` (3x ONNX), `yolo-v9` (pre-compiled engine)
-- peoplenet already covers face detection — no separate FaceDetect model needed
+### TensorRT 10.9
+- **`.tlt`/`.etlt` models INCOMPATIBLE** — UFF parser removed. Only use `_decrypted`/`_onnx` models from NGC.
+- `nvinfer` auto-converts ONNX → `.engine` (`onnx-file` config key). det_10g covers face detection.
+- REST API: 21 endpoints on port 8080. Key: `GET /health/get-dsready-state`, `POST /stream/add|remove`, `POST /app/quit`. Full list: `deepstream-service/bridge/README`.
 
-### REST API
-21 endpoints on port 8080 (when `within_multiurisrcbin: 0`). When `within_multiurisrcbin: 1`, REST runs inside nvmultiurisrcbin element. Key endpoints: `GET /health/get-dsready-state`, `POST /stream/add`, `POST /stream/remove`, `POST /app/quit`. Full list in `deepstream-service/bridge/README`.
+## Celery, WebSocket, PTZ & Drivers
 
----
+### Celery
+- `@shared_task` (not `@task`), `bind=True` + `max_retries=N`. Beat: `poll_all_cameras` every 5s.
+- Broadcast via `channels.layers.get_channel_layer()` + `async_to_sync` to `device_{device_id}`.
 
-## Celery & WebSocket
+### WebSocket
+- `AsyncWebsocketConsumer`, events: `motion_event`, `device_status`. `receive()` handles `ping`→`pong`.
+- Frontend: `/ws/device/{device_id}/`, Channels routing uses `re_path()` (exception to `path()`-only rule).
 
-- Tasks: `@shared_task` (not `@task`), `bind=True` + `max_retries=N` for retry
-- Broadcast: `channels.layers.get_channel_layer()` + `async_to_sync` to group `device_{device_id}`
-- Beat schedule: `poll_all_cameras` every 5s in `CELERY_BEAT_SCHEDULE`
-- Consumers: `AsyncWebsocketConsumer`, events: `motion_event`, `device_status`
-- Frontend connects `/ws/device/{device_id}/`, `receive()` handles `ping` → `pong`
+### PTZ & Drivers
+- PTZ: `/api/ptz/<device_id>/move|status|preset/`, detected via `device.camera_specs.ptz_caps`.
+- Drivers: `onvif_utils/drivers/`, extend `CameraDriver`, `get_driver(device)` factory by manufacturer.
+- Snapshot: `capture_frame_rtsp(rtsp_uri)` — RTSP TCP, 1 frame, MJPEG→base64.
+- ONVIF/zeep: nested fields via `getattr()` (not dict).
 
-## PTZ, Drivers, Startup
-
-- PTZ: `/api/ptz/<device_id>/move|status|preset/`, detected via `device.camera_specs.ptz_caps`
-- Drivers: `onvif_utils/drivers/`, extend `CameraDriver`, `get_driver(device)` factory by manufacturer
-- Snapshot: `onvif_utils/snapshot.py::capture_frame_rtsp(rtsp_uri)` — RTSP TCP, 1 frame, MJPEG→base64
-- ONVIF/zeep: nested fields accessed via `getattr()` (not dict), e.g. `getattr(getattr(status, 'Position', None), 'PanTilt', None)`
-- Startup: `AppConfig.ready()` uses **daemon thread** for MediaMTX restore (avoids `populate()` reentrancy)
-- Migrations: run with pg_advisory_lock in `docker-entrypoint.sh`
-- Always `--noreload` with `runserver` to prevent `ready()` double-fire
-
----
+### Startup
+- `AppConfig.ready()` uses **daemon thread** for MediaMTX restore (avoids `populate()` reentrancy).
+- Migrations: pg_advisory_lock in `docker-entrypoint.sh`. Always `--noreload` with `runserver`.
 
 ## Anti-patterns (avoid)
 
@@ -162,5 +152,20 @@ PGIE+SGIE0+SGIE1: ... → identity → nvinfer(pgie) → nvinfer(sgie0) → nvin
 - Do NOT add shebang lines to Django modules
 - Do NOT add inline comments unless documenting a necessary caveat
 - Do NOT hardcode Redis as `127.0.0.1` — use `redis://redis:6379`
-- Do NOT use `re_path` or `url` in URLconfs — `path()` only
+- Do NOT use `re_path`/`url` in URLconfs — `path()` only (except Channels WebSocket routing)
 - Do NOT use `gst_element_get_request_pad(tee, "sink_0")` — tee sink pad is static `"sink"`
+
+## Detections / Face Recognition
+
+- `detections.Detection` uses pgvector `VectorField(dimensions=512)`, `IvfflatIndex` with `vector_cosine_ops`.
+- Face receiver (TCP :12348): JPEG crop → `END!` marker → `FaceCropPacket` struct (40 bytes) → 512d embedding → 212d landmarks. Crops saved to `detections/crops/YYYY/MM/DD/`.
+- `FaceBuffer` keeps best-scoring crop per `(device_id, object_id)` for 10s, flushed on disappearance.
+- `FACE_MATCH_COOLDOWN_SECONDS = 30` — same-person detections within cooldown are skipped.
+- WebSocket: broadcasts `"new_face"` (first seen), `"face_match"` with `matched_id`+`distance` (re-id).
+- DeepStream C++: `redis_bridge.cpp` crop socket auto-reconnects if `face-receiver` restarts.
+
+## Notes
+
+- **No test suite yet** — add tests inside individual app `tests/` directories.
+- **No ruff config** — uses ruff defaults (88-char line length). Add `pyproject.toml` `[tool.ruff]` to customize.
+- **No typechecking** — install `django-stubs` if type checking is desired.
