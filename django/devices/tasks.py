@@ -157,6 +157,23 @@ def refresh_device_streams(self, device_id):
             device.id, profiles_tokens, list(stream_uris.values())
         )
 
+        if profiles_tokens:
+            import json as _json
+
+            clean_uri = stream_uris[profiles_tokens[0]].split("&unicast=true")[0]
+            r.publish(
+                "deepstream:commands",
+                _json.dumps(
+                    {
+                        "action": "start_preview",
+                        "device_id": device_id,
+                        "camera_id": str(device_id),
+                        "rtsp_uri": clean_uri,
+                        "camera_name": device.name,
+                    }
+                ),
+            )
+
         logger.info(
             "Stream URIs refreshed for device %s: %d profiles",
             device_id,

@@ -620,14 +620,14 @@ main (int argc, char *argv[])
   if (!redis_bridge.start()) {
     g_printerr("RedisBridge start failed\n");
   } else {
-    GstPad* analytics_src_pad = gst_element_get_static_pad(appctx.nvanalytics, "src");
+    GstPad* analytics_src_pad = gst_element_get_static_pad(appctx.nvdslogger, "src");
     if (analytics_src_pad) {
       gst_pad_add_probe(analytics_src_pad, GST_PAD_PROBE_TYPE_BUFFER,
                         RedisBridge::analytics_pad_probe, &redis_bridge, NULL);
-      g_print("[Main] Analytics pad probe added on nvanalytics src\n");
+      g_print("[Main] Analytics pad probe added on nvdslogger src\n");
       gst_object_unref(analytics_src_pad);
     } else {
-      g_printerr("[Main] Could not get nvanalytics src pad for probe\n");
+      g_printerr("[Main] Could not get nvdslogger src pad for probe\n");
     }
   }
 
