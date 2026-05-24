@@ -17,6 +17,7 @@ from onvif_utils.drivers import get_driver
 from onvif_utils.drivers.base import DriverError
 from onvif_utils.media import MediaService
 from onvif_utils.mediamtx_api import MediaMTXAPI
+from onvif_utils.ptz import PTZService
 from onvif_utils.snapshot import capture_frame_rtsp
 
 logger = logging.getLogger(__name__)
