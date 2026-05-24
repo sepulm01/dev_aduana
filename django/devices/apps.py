@@ -34,14 +34,12 @@ class DevicesConfig(AppConfig):
                 device.save(update_fields=["is_online", "failure_count"])
 
             mtx = MediaMTXAPI()
-            for attempt in range(10):
+            for attempt in range(20):
                 try:
                     mtx.list_paths()
                     break
                 except Exception:
-                    if attempt == 9:
-                        return
-                    time.sleep(2**attempt)
+                    time.sleep(3)
 
             for device in Device.objects.filter(is_online=True):
                 if not device.stream_uris:
