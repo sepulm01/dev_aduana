@@ -295,8 +295,14 @@ void RedisBridge::handle_command(const std::string& json_str)
         snprintf(url, sizeof(url), "http://127.0.0.1:%d/api/v1/analytics/reload-config",
                  rest_port_);
 
-        g_print("[RedisBridge] Reloading analytics config\n");
-        post_rest_endpoint(url, "{}");
+        std::string config_path = root.get("config_file", "/opt/deepstream-app/config/config_nvdsanalytics.txt").asString();
+
+        std::ostringstream config_body;
+        config_body << "{\"stream\":{\"config_file_path\":\""
+                     << config_path << "\"}}";
+
+        g_print("[RedisBridge] Reloading analytics config: %s\n", config_path.c_str());
+        post_rest_endpoint(url, config_body.str().c_str());
     }
 }
 

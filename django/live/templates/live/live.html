@@ -33,6 +33,10 @@
                     <dd id="ivsEventBadge">
                         <span class="badge bg-secondary">Sin eventos</span>
                     </dd>
+                    <dt>Analytics</dt>
+                    <dd id="analyticsBadge">
+                        <span class="badge bg-secondary"><i class="ti ti-chart-dots-off me-1"></i>Analytics: Off</span>
+                    </dd>
                 </dl>
                 <div class="mb-2">
                     <label class="form-label small text-muted">Perfil</label>
@@ -153,16 +157,35 @@ function loadPresets() {
 document.getElementById('presetSelect').addEventListener('change', function() {
     const token = this.value;
     if (!token || !currentProfileToken) return;
-    fetch(PRESET_URL, {
+    ptzCtrl.lastManualMove = false;
+    fetch('/api/devices/' + DEVICE_ID + '/analytics/goto-apply/', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-            action: 'goto',
-            profile_token: currentProfileToken,
             preset_token: token,
+            profile_token: currentProfileToken,
         }),
-    }).catch(e => console.error('Preset goto error:', e));
+    }).then(r => r.json()).then(data => {
+        if (data.ok) {
+            updateAnalyticsBadge('Activo', data.preset);
+        }
+    }).catch(e => console.error('Analytics goto-apply error:', e));
     this.value = '';
+});
+
+function updateAnalyticsBadge(status, presetName) {
+    const badge = document.getElementById('analyticsBadge');
+    if (!badge) return;
+    if (status === 'Off') {
+        badge.innerHTML = '<span class="badge bg-secondary"><i class="ti ti-chart-dots-off me-1"></i>Analytics: Off</span>';
+    } else {
+        badge.innerHTML = `<span class="badge bg-success"><i class="ti ti-chart-dots me-1"></i>Analytics: ${status}${presetName ? ' (' + presetName + ')' : ''}</span>`;
+    }
+}
+
+document.addEventListener('ptz-manual-move', function() {
+    fetch('/api/devices/' + DEVICE_ID + '/analytics/disable/', {method: 'POST'}).catch(() => {});
+    updateAnalyticsBadge('Off');
 });
 
 initVideoPlayer('');

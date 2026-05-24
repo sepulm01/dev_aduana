@@ -62,6 +62,7 @@ services:
       - DEEPSTREAM_ANALYTICS_CONFIG=/opt/deepstream-app/config/config_nvdsanalytics.txt
     volumes:
       - ./deepstream-service/app/config:/opt/deepstream-app/config:rw
+      - ./computer_vision/config:/opt/deepstream-app/config:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -184,6 +185,7 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /var/www/dev_security/videos:/opt/videos:ro
       - /dev/dri:/dev/dri:rw
+      - ./computer_vision/config:/opt/deepstream-app/config:rw
 
   nginx:
     image: nginx:alpine

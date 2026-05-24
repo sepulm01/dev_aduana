@@ -941,7 +941,7 @@ def analytics_apply(request, device_id):
             db=parsed.path.lstrip("/") if parsed.path else 0,
             password=parsed.password or None,
         )
-        r.publish("deepstream:commands", json.dumps({"action": "reload_analytics"}))
+        r.publish("deepstream:commands", json.dumps({"action": "reload_analytics", "config_file": ANALYTICS_CONFIG_PATH}))
     except Exception as e:
         logger.warning("Failed to publish reload_analytics: %s", e)
 
@@ -949,6 +949,98 @@ def analytics_apply(request, device_id):
         {
             "ok": True,
             "active_preset": active_preset.preset_name or active_preset.preset_token,
+            "shapes_count": len(shapes),
+        }
+    )
+
+
+@csrf_exempt
+def analytics_disable(request, device_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    device = get_object_or_404(Device, id=device_id)
+    if not device.deepstream_enabled:
+        return JsonResponse({"error": "DS not enabled"}, status=400)
+
+    config_content = _serialize_nvdsanalytics({})
+
+    try:
+        with open(ANALYTICS_CONFIG_PATH, "w") as f:
+            f.write(config_content)
+    except IOError as e:
+        return JsonResponse({"error": f"Failed to write config: {e}"}, status=500)
+
+    _publish_deepstream_command(
+        {
+            "action": "reload_analytics",
+            "config_file": ANALYTICS_CONFIG_PATH,
+        }
+    )
+
+    return JsonResponse({"ok": True})
+
+
+@csrf_exempt
+def analytics_goto_and_apply(request, device_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    device = get_object_or_404(Device, id=device_id)
+    if not device.deepstream_enabled:
+        return JsonResponse({"error": "DS not enabled"}, status=400)
+
+    data = json.loads(request.body or "{}")
+    preset_token = data.get("preset_token") or request.GET.get("preset_token", "")
+
+    if not preset_token:
+        return JsonResponse({"error": "preset_token required"}, status=400)
+
+    active_preset = device.analytics_presets.filter(
+        preset_token=preset_token
+    ).first()
+    if not active_preset:
+        return JsonResponse(
+            {"error": f"Preset '{preset_token}' not found"}, status=404
+        )
+
+    specs = device.camera_specs or {}
+    if specs.get("ptz_caps"):
+        profile_token = data.get("profile_token") or device.default_profile_token
+        if profile_token:
+            try:
+                client = OnvifClient(
+                    device.host, device.port, device.username, device.password
+                )
+                ptz = PTZService(client)
+                ptz.goto_preset(profile_token, preset_token)
+                ptz.wait_until_idle(profile_token, timeout=30, interval=0.5)
+            except Exception as e:
+                logger.warning(
+                    "PTZ goto/wait failed for device %s: %s", device_id, e
+                )
+
+    shapes = active_preset.shapes or []
+    sections = _shapes_to_nvdsanalytics(shapes, stream_idx=0)
+    config_content = _serialize_nvdsanalytics(sections)
+
+    try:
+        with open(ANALYTICS_CONFIG_PATH, "w") as f:
+            f.write(config_content)
+    except IOError as e:
+        return JsonResponse({"error": f"Failed to write config: {e}"}, status=500)
+
+    _publish_deepstream_command(
+        {
+            "action": "reload_analytics",
+            "config_file": ANALYTICS_CONFIG_PATH,
+        }
+    )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "preset": active_preset.preset_name or active_preset.preset_token,
             "shapes_count": len(shapes),
         }
     )

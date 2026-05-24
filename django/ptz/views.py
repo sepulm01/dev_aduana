@@ -61,7 +61,7 @@ def status(request, device_id):
         status_data = svc.get_status(profile_token)
         presets_data = svc.get_presets(profile_token)
 
-        result = {"ptz_supported": True, "status": {}, "presets": []}
+        result = {"ptz_supported": True, "status": {}, "move_status": {}, "presets": []}
 
         if status_data and hasattr(status_data, "Position") and status_data.Position:
             pos = status_data.Position
@@ -69,6 +69,13 @@ def status(request, device_id):
                 "pan": pos.PanTilt.x if hasattr(pos, "PanTilt") and pos.PanTilt else 0,
                 "tilt": pos.PanTilt.y if hasattr(pos, "PanTilt") and pos.PanTilt else 0,
                 "zoom": pos.Zoom.x if hasattr(pos, "Zoom") and pos.Zoom else 0,
+            }
+
+        if status_data and hasattr(status_data, "MoveStatus"):
+            ms = status_data.MoveStatus
+            result["move_status"] = {
+                "pan_tilt": getattr(ms, "PanTilt", "IDLE"),
+                "zoom": getattr(ms, "Zoom", "IDLE"),
             }
 
         result["presets"] = [
@@ -136,6 +143,19 @@ def preset(request, device_id):
                 return JsonResponse({"error": "name required for set"}, status=400)
             token = svc.set_preset(profile_token, name)
 
+            current_pos = {}
+            try:
+                status_data = svc.get_status(profile_token)
+                if status_data and hasattr(status_data, "Position") and status_data.Position:
+                    pos = status_data.Position
+                    if hasattr(pos, "PanTilt") and pos.PanTilt:
+                        current_pos["pan"] = pos.PanTilt.x
+                        current_pos["tilt"] = pos.PanTilt.y
+                    if hasattr(pos, "Zoom") and pos.Zoom:
+                        current_pos["zoom"] = pos.Zoom.x
+            except Exception:
+                pass
+
             stream_uri = device.stream_uris.get(profile_token, "")
             if stream_uri:
                 try:
@@ -144,7 +164,11 @@ def preset(request, device_id):
                     AnalyticsPreset.objects.update_or_create(
                         device=device,
                         preset_token=token,
-                        defaults={"preset_name": name, "snapshot": snapshot_b64},
+                        defaults={
+                            "preset_name": name,
+                            "snapshot": snapshot_b64,
+                            "ptz_position": current_pos,
+                        },
                     )
                 except Exception as snap_e:
                     print(

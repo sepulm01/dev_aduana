@@ -1,3 +1,6 @@
+import time
+
+
 class PTZService:
     """Wraps the ONVIF PTZ SOAP service for movement, presets, and status."""
 
@@ -98,3 +101,23 @@ class PTZService:
         return self.client.ptz.RemovePreset(
             {"ProfileToken": profile_token, "PresetToken": preset_token}
         )
+
+    def is_moving(self, profile_token):
+        """Return True if PTZ pan/tilt is currently in motion."""
+        try:
+            status = self.client.ptz.GetStatus({"ProfileToken": profile_token})
+            move_status = getattr(status, "MoveStatus", None)
+            if move_status:
+                return getattr(move_status, "PanTilt", "IDLE") == "MOVING"
+        except Exception:
+            pass
+        return False
+
+    def wait_until_idle(self, profile_token, timeout=30, interval=0.5):
+        """Poll MoveStatus until PTZ stops, or timeout expires."""
+        start = time.time()
+        while time.time() - start < timeout:
+            if not self.is_moving(profile_token):
+                return True
+            time.sleep(interval)
+        return False

@@ -80,6 +80,6 @@ primary-gie:
 
 analytics:
   # Enable analytics
-  enable: 0
+  enable: 1
   # Set the config file path
   config-file: config_nvdsanalytics.txt

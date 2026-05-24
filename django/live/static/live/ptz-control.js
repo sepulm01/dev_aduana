@@ -24,6 +24,7 @@ class PTZControl {
     this.ptzSupported = config.ptzSupported === true;
     this.ptzModeEnabled = false;
     this.zoomTimeout = null;
+    this.lastManualMove = false;
 
     this._boundClick = this._onClick.bind(this);
     this._boundWheel = this._onWheel.bind(this);
@@ -127,6 +128,11 @@ class PTZControl {
         zoom: this.ptzZoom,
       }),
     }).catch(e => console.error("PTZ error:", e));
+
+    this.lastManualMove = true;
+    document.dispatchEvent(new CustomEvent("ptz-manual-move", {
+      detail: { pan: newPan, tilt: newTilt, zoom: this.ptzZoom },
+    }));
   }
 
   _onWheel(e) {
@@ -148,6 +154,11 @@ class PTZControl {
           zoom: this.ptzZoom,
         }),
       }).catch(e => console.error("PTZ zoom error:", e));
+
+      this.lastManualMove = true;
+      document.dispatchEvent(new CustomEvent("ptz-manual-move", {
+        detail: { pan: this.ptzPan, tilt: this.ptzTilt, zoom: this.ptzZoom },
+      }));
     }, 150);
   }
 

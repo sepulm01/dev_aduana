@@ -92,6 +92,7 @@ class AnalyticsPreset(models.Model):
     preset_token = models.CharField(max_length=120)
     preset_name = models.CharField(max_length=120, blank=True, default="")
     shapes = models.JSONField(blank=True, default=list)
+    ptz_position = models.JSONField(blank=True, default=dict)
     snapshot = models.TextField(blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
 

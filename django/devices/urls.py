@@ -76,6 +76,16 @@ urlpatterns = [
         name="analytics_apply",
     ),
     path(
+        "api/devices/<int:device_id>/analytics/goto-apply/",
+        views.analytics_goto_and_apply,
+        name="analytics_goto_and_apply",
+    ),
+    path(
+        "api/devices/<int:device_id>/analytics/disable/",
+        views.analytics_disable,
+        name="analytics_disable",
+    ),
+    path(
         "api/devices/<int:device_id>/deepstream/preview/start/",
         views.deepstream_preview_start,
         name="deepstream_preview_start",

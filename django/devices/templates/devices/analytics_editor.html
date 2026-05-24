@@ -113,7 +113,7 @@ const CANVAS_H = 480;
 const HAS_PTZ = {{ has_ptz|yesno:"true,false" }};
 const API_PRESETS = '/api/devices/' + DEVICE_ID + '/analytics/presets/?profile_token={{ default_profile }}';
 const API_SHAPES = '/api/devices/' + DEVICE_ID + '/analytics/';
-const API_APPLY = '/api/devices/' + DEVICE_ID + '/analytics/apply/';
+const API_GOTO_APPLY = '/api/devices/' + DEVICE_ID + '/analytics/goto-apply/';
 
 let shapes = [];
 let currentShape = null;
@@ -664,10 +664,17 @@ async function applyToDeepStream() {
             })
         });
 
-        const resp = await fetch(API_APPLY, {method: 'POST'});
+        const resp = await fetch(API_GOTO_APPLY, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                preset_token: currentPresetToken,
+                profile_token: '{{ default_profile }}',
+            })
+        });
         const data = await resp.json();
         if (data.ok) {
-            status.innerHTML = `<span class="text-success"><i class="ti ti-check me-1"></i>Aplicado (preset: ${data.active_preset}, ${data.shapes_count} shapes)</span>`;
+            status.innerHTML = `<span class="text-success"><i class="ti ti-check me-1"></i>Aplicado (preset: ${data.preset}, ${data.shapes_count} shapes)</span>`;
         } else {
             status.innerHTML = '<span class="text-danger">Error: ' + (data.error || 'desconocido') + '</span>';
         }
