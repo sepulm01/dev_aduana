@@ -187,6 +187,19 @@ def device_profiles(request, device_id):
             p["stream_uri"] = uri
         return JsonResponse(profiles, safe=False)
     except Exception as e:
+        if device.stream_uris:
+            profiles = []
+            for token, uri in device.stream_uris.items():
+                profiles.append({
+                    "token": token,
+                    "name": token,
+                    "stream_uri": uri,
+                    "ptz": bool(
+                        isinstance(device.camera_specs, dict)
+                        and device.camera_specs.get("ptz_caps")
+                    ),
+                })
+            return JsonResponse(profiles, safe=False)
         return JsonResponse({"error": str(e)}, status=500)
 
 

@@ -161,7 +161,12 @@ class MediaMTXAPI:
 
             if hw_name not in existing:
                 try:
-                    self.add_path(hw_name, source="publisher")
+                    self.add_path(
+                        hw_name,
+                        source="publisher",
+                        run_on_init=ffmpeg_cmd,
+                        run_on_init_restart=True,
+                    )
                     existing.add(hw_name)
                 except requests.RequestException as e:
                     print(f"Error adding path {hw_name}: {e}")
@@ -169,12 +174,22 @@ class MediaMTXAPI:
             if raw_name not in existing:
                 try:
                     encoded_source = self._encode_rtsp_url(stream_uri)
+                    ffmpeg_pull = (
+                        f"ffmpeg -rtsp_transport tcp -i {encoded_source} "
+                        f"-c copy -f rtsp rtsp://127.0.0.1:8554/{raw_name}"
+                    )
                     self.add_path(
                         raw_name,
-                        source=encoded_source,
-                        run_on_ready=ffmpeg_cmd,
-                        run_on_ready_restart=True,
+                        source="publisher",
+                        run_on_init=ffmpeg_pull,
+                        run_on_init_restart=True,
                     )
+                    existing.add(raw_name)
+                except requests.RequestException as e:
+                    print(f"Error adding path {raw_name}: {e}")
+                    existing.add(raw_name)
+                except requests.RequestException as e:
+                    print(f"Error adding path {raw_name}: {e}")
                     existing.add(raw_name)
                 except requests.RequestException as e:
                     print(f"Error adding path {raw_name}: {e}")

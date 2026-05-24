@@ -81,7 +81,7 @@ class DahuaDriver(CameraDriver):
         }
 
     def ping(self):
-        """Ping the camera using ONVIF GetDeviceInformation."""
+        """Ping the camera using ONVIF GetDeviceInformation, with TCP fallback."""
         try:
             client = OnvifClient(
                 self.device.host,
@@ -90,6 +90,17 @@ class DahuaDriver(CameraDriver):
                 self.device.password,
             )
             client.get_device_info()
+            return {"online": True, "last_seen": datetime.now(timezone.utc)}
+        except Exception:
+            pass
+
+        import socket
+
+        try:
+            sock = socket.create_connection(
+                (self.device.host, 554), timeout=5
+            )
+            sock.close()
             return {"online": True, "last_seen": datetime.now(timezone.utc)}
         except Exception:
             return {"online": False, "last_seen": None}

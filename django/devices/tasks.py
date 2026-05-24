@@ -104,3 +104,69 @@ def poll_camera_motion(self, device_id):
 def poll_all_cameras():
     for device in Device.objects.all():
         poll_camera_motion.delay(device.id)
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=10)
+def refresh_device_streams(self, device_id):
+    import os
+
+    import redis
+
+    r = redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+    lock_key = f"device:stream_refresh:{device_id}"
+    if not r.set(lock_key, "1", nx=True, ex=30):
+        return
+
+    try:
+        try:
+            device = Device.objects.get(id=device_id)
+        except Device.DoesNotExist:
+            return
+
+        if not device.username or not device.password:
+            return
+
+        from onvif_utils.client import OnvifClient
+        from onvif_utils.media import MediaService
+        from onvif_utils.mediamtx_api import MediaMTXAPI
+
+        client = OnvifClient(
+            device.host, device.port, device.username, device.password
+        )
+        svc = MediaService(client)
+        profiles = svc.get_profiles()
+
+        stream_uris = {}
+        profiles_tokens = []
+        for p in profiles:
+            uri = svc.get_stream_uri(
+                p["token"],
+                username=device.username,
+                password=device.password,
+            )
+            if uri:
+                profiles_tokens.append(p["token"])
+                stream_uris[p["token"]] = uri
+
+        device._skip_stream_refresh = True
+        device.stream_uris = stream_uris
+        device.save(update_fields=["stream_uris"])
+
+        mtx = MediaMTXAPI()
+        mtx.ensure_camera_streams(
+            device.id, profiles_tokens, list(stream_uris.values())
+        )
+
+        logger.info(
+            "Stream URIs refreshed for device %s: %d profiles",
+            device_id,
+            len(profiles_tokens),
+        )
+    except Exception as e:
+        logger.warning(
+            "Stream refresh failed for device %s: %s", device_id, e
+        )
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=e)
+    finally:
+        r.delete(lock_key)

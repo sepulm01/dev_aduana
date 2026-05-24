@@ -9,6 +9,8 @@ class DevicesConfig(AppConfig):
     name = "devices"
 
     def ready(self):
+        import devices.signals  # noqa: F401
+
         from devices.models import Device
         from onvif_utils.client import OnvifClient
         from onvif_utils.mediamtx_api import MediaMTXAPI

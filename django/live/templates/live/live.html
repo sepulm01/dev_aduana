@@ -173,6 +173,20 @@ if (currentProfileToken) {
     loadPresets();
 }
 
+const DS_KEEPALIVE_URL = '/api/devices/' + DEVICE_ID + '/deepstream/preview/keepalive/';
+const DS_STOP_URL = '/api/devices/' + DEVICE_ID + '/deepstream/preview/stop/';
+
+function keepalive() {
+    fetch(DS_KEEPALIVE_URL, {method: 'POST'}).catch(() => {});
+}
+
+keepalive();
+const dsHeartbeat = setInterval(keepalive, 15000);
+window.addEventListener('beforeunload', function() {
+    clearInterval(dsHeartbeat);
+    fetch(DS_STOP_URL, {method: 'POST', keepalive: true}).catch(() => {});
+});
+
 const wsScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const ws = new WebSocket(wsScheme + '//' + window.location.host + '/ws/device/' + DEVICE_ID + '/');
 ws.onopen = function() {
