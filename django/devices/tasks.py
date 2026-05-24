@@ -106,6 +106,35 @@ def poll_all_cameras():
         poll_camera_motion.delay(device.id)
 
 
+@shared_task
+def heartbeat_deepstream_streams():
+    import json
+    import os
+
+    import redis
+
+    r = redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+    for device in Device.objects.filter(is_online=True, deepstream_enabled=True):
+        if not device.stream_uris or not device.default_profile_token:
+            continue
+        uri = device.stream_uris.get(device.default_profile_token)
+        if not uri:
+            continue
+        clean = uri.split("&unicast=true")[0]
+        r.publish(
+            "deepstream:commands",
+            json.dumps(
+                {
+                    "action": "start_preview",
+                    "device_id": device.id,
+                    "camera_id": str(device.id),
+                    "rtsp_uri": clean,
+                    "camera_name": device.name,
+                }
+            ),
+        )
+
+
 @shared_task(bind=True, max_retries=2, default_retry_delay=10)
 def refresh_device_streams(self, device_id):
     import os

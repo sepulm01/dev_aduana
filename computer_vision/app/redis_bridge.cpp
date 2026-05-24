@@ -220,6 +220,20 @@ void RedisBridge::handle_command(const std::string& json_str)
         std::string sid = camera_id.empty() ? std::to_string(device_id) : camera_id;
         std::string name = camera_name.empty() ? sid : camera_name;
 
+        char remove_url[256];
+        snprintf(remove_url, sizeof(remove_url), "http://127.0.0.1:%d/api/v1/stream/remove", rest_port_);
+
+        std::ostringstream remove_body;
+        remove_body << "{\"key\":\"redis-add-" << device_id << "\","
+                    << "\"value\":{"
+                    << "\"camera_id\":\"" << sid << "\","
+                    << "\"camera_url\":\"" << rtsp_uri << "\","
+                    << "\"change\":\"camera_remove\"}}";
+
+        g_print("[RedisBridge] Removing existing stream before add: device=%d\n", device_id);
+        post_rest_endpoint(remove_url, remove_body.str().c_str());
+        g_usleep(500000);
+
         char url[256];
         snprintf(url, sizeof(url), "http://127.0.0.1:%d/api/v1/stream/add", rest_port_);
 
