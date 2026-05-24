@@ -996,14 +996,6 @@ def analytics_goto_and_apply(request, device_id):
     if not preset_token:
         return JsonResponse({"error": "preset_token required"}, status=400)
 
-    active_preset = device.analytics_presets.filter(
-        preset_token=preset_token
-    ).first()
-    if not active_preset:
-        return JsonResponse(
-            {"error": f"Preset '{preset_token}' not found"}, status=404
-        )
-
     specs = device.camera_specs or {}
     if specs.get("ptz_caps"):
         profile_token = data.get("profile_token") or device.default_profile_token
@@ -1019,6 +1011,13 @@ def analytics_goto_and_apply(request, device_id):
                 logger.warning(
                     "PTZ goto/wait failed for device %s: %s", device_id, e
                 )
+
+    active_preset = device.analytics_presets.filter(
+        preset_token=preset_token
+    ).first()
+
+    if not active_preset:
+        return JsonResponse({"ok": True, "preset": preset_token, "shapes_count": 0})
 
     shapes = active_preset.shapes or []
     sections = _shapes_to_nvdsanalytics(shapes, stream_idx=0)
