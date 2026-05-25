@@ -70,7 +70,7 @@ class DevicesConfig(AppConfig):
 
             try:
                 requests.post(
-                    f"http://computer-vision:9000/api/v1/stream/add",
+                    "http://computer-vision:9000/api/v1/stream/add",
                     json={
                         "key": "daemon-primer",
                         "value": {

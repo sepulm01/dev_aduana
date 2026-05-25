@@ -39,9 +39,8 @@ multiurisrcbin:
   #To simulate nvvideoconvert specific REST APIs change disable-passthrough: 1
   disable-passthrough: 0
   drop-pipeline-eos: 1
-  #Enable rtsp reconnections properties for rtsp source(s).
   #rtsp-reconnect-interval: 5
-  #rtsp-reconnect-attempts: 3
+  #rtsp-reconnect-attempts: -1
   #To demonstrate the new nvstreammux config-file usage
   config-file-path: streammux.txt
 

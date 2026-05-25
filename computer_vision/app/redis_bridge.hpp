@@ -44,6 +44,14 @@ private:
     void publish_detection_json(const std::string& json_str);
     std::string make_detection_json(int device_id, int source_id, guint64 frame_num,
                                      const std::vector<DetectionObject>& objects);
+    void redis_hset(const std::string& key, const std::string& field,
+                    const std::string& value);
+    void redis_hdel(const std::string& key, const std::string& field);
+    void publish_source_mapping(int device_id, int source_id,
+                                const std::string& camera_id,
+                                const std::string& rtsp_uri);
+    void remove_source_from_redis(int source_id);
+    void publish_fps_health();
 
     std::string redis_url_;
     void* appctx_;
@@ -54,7 +62,10 @@ private:
     gboolean running_;
     std::map<int, std::string> labels_;
     std::map<int, int> source_to_device_;
+    std::map<int, int> device_to_source_;
+    std::map<int, guint64> frame_counts_;
     guint64 last_flush_time_;
+    guint64 last_health_time_;
     int rest_port_;
 };
 

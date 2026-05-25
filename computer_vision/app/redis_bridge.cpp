@@ -22,6 +22,7 @@ RedisBridge::RedisBridge(const std::string& redis_url, void* appctx)
       subscriber_thread_(nullptr),
       running_(FALSE),
       last_flush_time_(0),
+      last_health_time_(0),
       rest_port_(9000)
 {
     g_mutex_init(&lock_);
@@ -192,6 +193,89 @@ static void post_rest_endpoint(const char* url, const char* json_body)
     curl_easy_cleanup(curl);
 }
 
+void RedisBridge::redis_hset(const std::string& key, const std::string& field,
+                             const std::string& value)
+{
+    g_mutex_lock(&lock_);
+    if (pub_ctx_) {
+        redisReply* reply = (redisReply*)redisCommand(
+            pub_ctx_, "HSET %s %s %s", key.c_str(), field.c_str(), value.c_str());
+        if (reply) freeReplyObject(reply);
+    }
+    g_mutex_unlock(&lock_);
+}
+
+void RedisBridge::redis_hdel(const std::string& key, const std::string& field)
+{
+    g_mutex_lock(&lock_);
+    if (pub_ctx_) {
+        redisReply* reply = (redisReply*)redisCommand(
+            pub_ctx_, "HDEL %s %s", key.c_str(), field.c_str());
+        if (reply) freeReplyObject(reply);
+    }
+    g_mutex_unlock(&lock_);
+}
+
+void RedisBridge::publish_source_mapping(int device_id, int source_id,
+                                         const std::string& camera_id,
+                                         const std::string& rtsp_uri)
+{
+    std::string src_str = std::to_string(source_id);
+    std::string dev_str = std::to_string(device_id);
+    redis_hset("deepstream:sources", src_str, dev_str);
+    redis_hset("deepstream:sources", src_str + ":camera_id", camera_id);
+    redis_hset("deepstream:sources", src_str + ":url", rtsp_uri);
+    g_print("[RedisBridge] Published mapping: source_id=%d -> device_id=%d camera_id=%s\n",
+            source_id, device_id, camera_id.c_str());
+}
+
+void RedisBridge::remove_source_from_redis(int source_id)
+{
+    std::string src_str = std::to_string(source_id);
+    redis_hdel("deepstream:sources", src_str);
+    redis_hdel("deepstream:sources", src_str + ":camera_id");
+    redis_hdel("deepstream:sources", src_str + ":url");
+    redis_hdel("deepstream:sources", src_str + ":fps");
+    g_print("[RedisBridge] Removed source_id=%d from Redis mapping\n", source_id);
+}
+
+void RedisBridge::publish_fps_health()
+{
+    g_mutex_lock(&lock_);
+    if (!pub_ctx_) {
+        g_mutex_unlock(&lock_);
+        return;
+    }
+
+    guint64 now = g_get_monotonic_time();
+    if (last_health_time_ == 0) {
+        last_health_time_ = now;
+        g_mutex_unlock(&lock_);
+        return;
+    }
+
+    gdouble elapsed = (gdouble)(now - last_health_time_) / 1000000.0;
+    if (elapsed < 1.0) {
+        g_mutex_unlock(&lock_);
+        return;
+    }
+
+    for (auto& kv : frame_counts_) {
+        int source_id = kv.first;
+        guint64& count = kv.second;
+        gdouble fps = count / elapsed;
+        std::string fps_str = std::to_string((int)(fps + 0.5));
+        redisReply* reply = (redisReply*)redisCommand(
+            pub_ctx_, "HSET deepstream:sources %s:fps %s",
+            std::to_string(source_id).c_str(), fps_str.c_str());
+        if (reply) freeReplyObject(reply);
+        count = 0;
+    }
+
+    last_health_time_ = now;
+    g_mutex_unlock(&lock_);
+}
+
 void RedisBridge::handle_command(const std::string& json_str)
 {
     Json::Value root;
@@ -265,6 +349,7 @@ void RedisBridge::handle_command(const std::string& json_str)
                 if (existing_src_id >= 0) {
                     g_mutex_lock(&lock_);
                     source_to_device_[existing_src_id] = device_id;
+                    device_to_source_[device_id] = existing_src_id;
                     g_mutex_unlock(&lock_);
                 }
                 return;
@@ -310,7 +395,9 @@ void RedisBridge::handle_command(const std::string& json_str)
                             int src_id = s.get("source_id", 0).asInt();
                             g_mutex_lock(&lock_);
                             source_to_device_[src_id] = device_id;
+                            device_to_source_[device_id] = src_id;
                             g_mutex_unlock(&lock_);
+                            publish_source_mapping(device_id, src_id, sid, rtsp_uri);
                             g_print("[RedisBridge] Mapped source_id=%d -> device_id=%d\n",
                                     src_id, device_id);
                         }
@@ -323,19 +410,35 @@ void RedisBridge::handle_command(const std::string& json_str)
     else if (action == "stop_preview") {
         std::string sid = camera_id.empty() ? std::to_string(device_id) : camera_id;
 
+        int src_id = -1;
+        g_mutex_lock(&lock_);
+        auto dit = device_to_source_.find(device_id);
+        if (dit != device_to_source_.end()) {
+            src_id = dit->second;
+            device_to_source_.erase(dit);
+            source_to_device_.erase(src_id);
+        }
+        g_mutex_unlock(&lock_);
+
         char url[256];
         snprintf(url, sizeof(url), "http://127.0.0.1:%d/api/v1/stream/remove", rest_port_);
 
+        std::string remove_uri = rtsp_uri.empty() ? "" : rtsp_uri;
         std::ostringstream body;
         body << "{\"key\":\"redis-remove-" << device_id << "\","
              << "\"value\":{"
              << "\"camera_id\":\"" << sid << "\","
              << "\"camera_name\":\"\","
-             << "\"camera_url\":\"\","
+             << "\"camera_url\":\"" << remove_uri << "\","
              << "\"change\":\"camera_remove\"}}";
 
-        g_print("[RedisBridge] Removing stream: device=%d\n", device_id);
+        g_print("[RedisBridge] Removing stream: device=%d source_id=%d\n",
+                device_id, src_id);
         post_rest_endpoint(url, body.str().c_str());
+
+        if (src_id >= 0) {
+            remove_source_from_redis(src_id);
+        }
     }
     else if (action == "reload_analytics") {
         char url[256];
@@ -419,6 +522,10 @@ GstPadProbeReturn RedisBridge::analytics_pad_probe(GstPad* pad, GstPadProbeInfo*
         NvDsFrameMeta* frame_meta = (NvDsFrameMeta*)l_frame->data;
         int source_id = frame_meta->source_id;
 
+        g_mutex_lock(&bridge->lock_);
+        bridge->frame_counts_[source_id]++;
+        g_mutex_unlock(&bridge->lock_);
+
         int device_id = source_id;
         g_mutex_lock(&bridge->lock_);
         auto it = bridge->source_to_device_.find(source_id);
@@ -487,6 +594,8 @@ GstPadProbeReturn RedisBridge::analytics_pad_probe(GstPad* pad, GstPadProbeInfo*
         }
         bridge->last_flush_time_ = current_time;
     }
+
+    bridge->publish_fps_health();
 
     return GST_PAD_PROBE_OK;
 }
