@@ -125,11 +125,22 @@ def heartbeat_deepstream_streams():
             "deepstream:commands",
             json.dumps(
                 {
+                    "action": "stop_preview",
+                    "device_id": device.id,
+                    "camera_id": str(device.id),
+                }
+            ),
+        )
+        r.publish(
+            "deepstream:commands",
+            json.dumps(
+                {
                     "action": "start_preview",
                     "device_id": device.id,
                     "camera_id": str(device.id),
                     "rtsp_uri": clean,
                     "camera_name": device.name,
+                    "force": True,
                 }
             ),
         )

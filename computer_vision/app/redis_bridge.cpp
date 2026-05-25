@@ -209,6 +209,7 @@ void RedisBridge::handle_command(const std::string& json_str)
     std::string rtsp_uri = root.get("rtsp_uri", "").asString();
     std::string camera_name = root.get("camera_name", "").asString();
     std::string camera_id = root.get("camera_id", "").asString();
+    bool force = root.get("force", false).asBool();
 
     g_print("[RedisBridge] action=%s device_id=%d\n", action.c_str(), device_id);
 
@@ -220,19 +221,55 @@ void RedisBridge::handle_command(const std::string& json_str)
         std::string sid = camera_id.empty() ? std::to_string(device_id) : camera_id;
         std::string name = camera_name.empty() ? sid : camera_name;
 
-        char remove_url[256];
-        snprintf(remove_url, sizeof(remove_url), "http://127.0.0.1:%d/api/v1/stream/remove", rest_port_);
+        char info_url[256];
+        snprintf(info_url, sizeof(info_url),
+                 "http://127.0.0.1:%d/api/v1/stream/get-stream-info", rest_port_);
 
-        std::ostringstream remove_body;
-        remove_body << "{\"key\":\"redis-add-" << device_id << "\","
-                    << "\"value\":{"
-                    << "\"camera_id\":\"" << sid << "\","
-                    << "\"camera_url\":\"" << rtsp_uri << "\","
-                    << "\"change\":\"camera_remove\"}}";
+        std::string info_response;
+        CURL* curl_i;
 
-        g_print("[RedisBridge] Removing existing stream before add: device=%d\n", device_id);
-        post_rest_endpoint(remove_url, remove_body.str().c_str());
-        g_usleep(500000);
+        if (!force) {
+            bool already_exists = false;
+            int existing_src_id = -1;
+            curl_i = curl_easy_init();
+            if (curl_i) {
+                curl_easy_setopt(curl_i, CURLOPT_URL, info_url);
+                curl_easy_setopt(curl_i, CURLOPT_WRITEFUNCTION, curl_capture_cb);
+                curl_easy_setopt(curl_i, CURLOPT_WRITEDATA, &info_response);
+                curl_easy_setopt(curl_i, CURLOPT_TIMEOUT, 5L);
+                curl_easy_setopt(curl_i, CURLOPT_NOSIGNAL, 1L);
+                CURLcode res_i = curl_easy_perform(curl_i);
+                if (res_i == CURLE_OK) {
+                    Json::Value info_root;
+                    Json::CharReaderBuilder reader;
+                    std::string parse_errors;
+                    std::istringstream info_stream(info_response);
+                    if (Json::parseFromStream(reader, info_stream, &info_root, &parse_errors)) {
+                        const Json::Value& streams =
+                            info_root["stream-info"]["stream-info"];
+                        for (const auto& s : streams) {
+                            if (s.get("camera_id", "").asString() == sid) {
+                                already_exists = true;
+                                existing_src_id = s.get("source_id", 0).asInt();
+                                break;
+                            }
+                        }
+                    }
+                }
+                curl_easy_cleanup(curl_i);
+            }
+
+            if (already_exists) {
+                g_print("[RedisBridge] Stream already exists for camera_id=%s (source_id=%d), skipping add\n",
+                        sid.c_str(), existing_src_id);
+                if (existing_src_id >= 0) {
+                    g_mutex_lock(&lock_);
+                    source_to_device_[existing_src_id] = device_id;
+                    g_mutex_unlock(&lock_);
+                }
+                return;
+            }
+        }
 
         char url[256];
         snprintf(url, sizeof(url), "http://127.0.0.1:%d/api/v1/stream/add", rest_port_);
@@ -251,12 +288,8 @@ void RedisBridge::handle_command(const std::string& json_str)
 
         g_usleep(500000);
 
-        char info_url[256];
-        snprintf(info_url, sizeof(info_url),
-                 "http://127.0.0.1:%d/api/v1/stream/get-stream-info", rest_port_);
-
-        std::string info_response;
-        CURL* curl_i = curl_easy_init();
+        info_response.clear();
+        curl_i = curl_easy_init();
         if (curl_i) {
             curl_easy_setopt(curl_i, CURLOPT_URL, info_url);
             curl_easy_setopt(curl_i, CURLOPT_WRITEFUNCTION, curl_capture_cb);
