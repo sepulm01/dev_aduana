@@ -89,8 +89,7 @@ tiler_src_pad_buffer_probe (GstPad * pad, GstPadProbeInfo * info,
     }
 //Enable below #if to see frame count and object information
 #if 0
-    g_print ("Frame Number = %d Number of objects = %d "
-        "Vehicle Count = %d Person Count = %d\n",
+    g_printerr ("[TilerProbe] Frame=%d objects=%d vehicles=%d people=%d\n",
         frame_meta->frame_num, num_rects, vehicle_count, person_count);
 #endif
 
@@ -570,6 +569,7 @@ main (int argc, char *argv[])
     } else {
       if (!gst_element_link_many (appctx.multiuribin, appctx.queue1,
                                   appctx.preprocess, appctx.pgie, appctx.queue2,
+                                  nvtracker, queue_t,
                                   appctx.nvanalytics, appctx.queue6,
                                   appctx.nvdslogger, appctx.tiler, appctx.queue3,
                                   appctx.nvvidconv, appctx.queue4, appctx.nvosd,
@@ -620,14 +620,14 @@ main (int argc, char *argv[])
   if (!redis_bridge.start()) {
     g_printerr("RedisBridge start failed\n");
   } else {
-    GstPad* analytics_src_pad = gst_element_get_static_pad(appctx.nvdslogger, "src");
-    if (analytics_src_pad) {
-      gst_pad_add_probe(analytics_src_pad, GST_PAD_PROBE_TYPE_BUFFER,
+    GstPad* analytics_target_pad = gst_element_get_static_pad(appctx.tiler, "src");
+    if (analytics_target_pad) {
+      gulong probe_id = gst_pad_add_probe(analytics_target_pad, GST_PAD_PROBE_TYPE_BUFFER,
                         RedisBridge::analytics_pad_probe, &redis_bridge, NULL);
-      g_print("[Main] Analytics pad probe added on nvdslogger src\n");
-      gst_object_unref(analytics_src_pad);
+      g_printerr("[Main] Analytics probe id=%lu on tiler src\n", probe_id);
+      gst_object_unref(analytics_target_pad);
     } else {
-      g_printerr("[Main] Could not get nvdslogger src pad for probe\n");
+      g_printerr("[Main] Could not get tiler src pad for probe\n");
     }
   }
 

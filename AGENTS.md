@@ -113,10 +113,19 @@ MediaMTX: stream naming `cam_{device_id}_{profile_token}`, `_hw` suffix for tran
 
 ### Pipeline
 ```
-PGIE only:       nvmultiurisrcbin → streammux → identity → nvinfer → tiler → nvosd → sink
-PGIE+SGIE0+SGIE1: ... → identity → nvinfer(pgie) → nvinfer(sgie0) → nvinfer(sgie1) → tiler → nvosd → sink
+nvmultiurisrcbin → queue1 → identity → nvinfer(pgie) → queue2 → nvtracker → queue_t → nvdsanalytics → queue6 → nvdslogger → tiler → nvvidconv → nvosd → queue5 → sink
 ```
-`nvdspreprocess` broken in DS 8.0 → use `identity` as passthrough. `gst_pad_link()` only (not `_full`), unref pads after linking, check `!= GST_PAD_LINK_OK`. SGIE bins conditional on `secondary-gie0`/`secondary-gie1` YAML keys.
+`nvdspreprocess` works in DS 8.0 — the config file must exist at the model-specific path (e.g. `models/peoplenet/config_preprocess.txt`). PGIE `process-mode: 1` means "expects preprocessed tensors from nvdspreprocess". If `nvdspreprocess` is removed, PGIE still expects tensors and will produce zero detections. `gst_pad_link()` only (not `_full`), unref pads after linking, check `!= GST_PAD_LINK_OK`. SGIE bins conditional on `secondary-gie0`/`secondary-gie1` YAML keys.
+
+**Important**: the `else` (non-REST-server, `within_multiurisrcbin: 1`) path must include `nvtracker, queue_t` in the `gst_element_link_many` chain — same as the REST-server path. Both paths use the same pipeline elements.
+
+### Stream-to-Device Mapping
+- DS REST API accepts `camera_id` (string, e.g. `str(device.id)`) as persistent identifier → stored as DS `sensorId`
+- `source_id` is an auto-incremented integer that changes on stream reconnect — **never** used for device mapping
+- `RedisBridge::handle_command("start_preview")` maps `camera_id` → `source_id` → `device_id` via stream info query
+- Redis `deepstream:sources` hash: `{source_id} → {device_id}` used as fallback in the analytics probe
+- Each stream maps to exactly one `Device.id` — no cross-mapping
+- On disconnect/reconnect: `stop_preview` cleans Redis mapping, `start_preview` re-adds with same `camera_id`, DS assigns new `source_id`, mapping updated
 
 ### TensorRT 10.9
 - **`.tlt`/`.etlt` models INCOMPATIBLE** — UFF parser removed. Only use `_decrypted`/`_onnx` models from NGC.

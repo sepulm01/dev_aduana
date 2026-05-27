@@ -338,21 +338,21 @@ void RedisBridge::handle_command(const std::string& json_str)
                                 break;
                             }
                         }
+                        if (already_exists) {
+                            g_print("[RedisBridge] Stream already exists for camera_id=%s (source_id=%d), skipping add\n",
+                                    sid.c_str(), existing_src_id);
+                            if (existing_src_id >= 0) {
+                                g_mutex_lock(&lock_);
+                                source_to_device_[existing_src_id] = device_id;
+                                device_to_source_[device_id] = existing_src_id;
+                                g_mutex_unlock(&lock_);
+                            }
+                            curl_easy_cleanup(curl_i);
+                            return;
+                        }
                     }
                 }
                 curl_easy_cleanup(curl_i);
-            }
-
-            if (already_exists) {
-                g_print("[RedisBridge] Stream already exists for camera_id=%s (source_id=%d), skipping add\n",
-                        sid.c_str(), existing_src_id);
-                if (existing_src_id >= 0) {
-                    g_mutex_lock(&lock_);
-                    source_to_device_[existing_src_id] = device_id;
-                    device_to_source_[device_id] = existing_src_id;
-                    g_mutex_unlock(&lock_);
-                }
-                return;
             }
         }
 
@@ -405,7 +405,7 @@ void RedisBridge::handle_command(const std::string& json_str)
                 }
             }
             curl_easy_cleanup(curl_i);
-        }
+            }
     }
     else if (action == "stop_preview") {
         std::string sid = camera_id.empty() ? std::to_string(device_id) : camera_id;
@@ -529,7 +529,16 @@ GstPadProbeReturn RedisBridge::analytics_pad_probe(GstPad* pad, GstPadProbeInfo*
         int device_id = source_id;
         g_mutex_lock(&bridge->lock_);
         auto it = bridge->source_to_device_.find(source_id);
-        if (it != bridge->source_to_device_.end()) device_id = it->second;
+        if (it != bridge->source_to_device_.end()) {
+            device_id = it->second;
+        } else if (bridge->pub_ctx_) {
+            redisReply* reply = (redisReply*)redisCommand(
+                bridge->pub_ctx_, "HGET deepstream:sources %d", source_id);
+            if (reply && reply->type == REDIS_REPLY_STRING) {
+                device_id = atoi(reply->str);
+            }
+            if (reply) freeReplyObject(reply);
+        }
         g_mutex_unlock(&bridge->lock_);
 
         float frame_w = (float)frame_meta->source_frame_width;
