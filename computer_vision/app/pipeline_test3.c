@@ -30,6 +30,17 @@
 #define MAX_SOURCES 128
 #define FLUSH_INTERVAL_US 1000000
 
+#define NVDS_ANALYTICS_OBJ_META "NVIDIA.NVDSANALYTICS.OBJ.USER_META"
+#define MAX_ROI_STATUS 8
+#define MAX_LC_STATUS 8
+
+typedef struct {
+    gchar roiStatus[MAX_ROI_STATUS][64];
+    guint roiStatus_size;
+    gchar lcStatus[MAX_LC_STATUS][64];
+    guint lcStatus_size;
+} AnalyticsObjInfoC;
+
 #define RETURN_ON_PARSER_ERROR(parse_expr) \
     if (NVDS_YAML_PARSER_SUCCESS != parse_expr) { \
         g_printerr("Error in parsing configuration file.\n"); \
@@ -145,13 +156,50 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                     "\"bbox\":{\"left\":%.4f,\"top\":%.4f,"
                     "\"width\":%.4f,\"height\":%.4f},"
                     "\"%s\":%lu,"
-                    "\"Rect\":[%d,%d,%d,%d]}",
+                    "\"Rect\":[%d,%d,%d,%d]",
                     obj_count > 0 ? "," : "",
                     om->object_id, om->class_id,
                     label, om->confidence,
                     left / fw, top / fh, width / fw, height / fh,
                     id_field, om->object_id,
                     rx1, ry1, rx2, ry2);
+
+                gchar roi_list[512] = "";
+                gchar lc_list[512] = "";
+                static guint64 analytics_meta_type = 0;
+                if (analytics_meta_type == 0)
+                    analytics_meta_type = nvds_get_user_meta_type(
+                        NVDS_ANALYTICS_OBJ_META);
+
+                for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
+                    NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
+                    if (um->base_meta.meta_type == analytics_meta_type) {
+                        AnalyticsObjInfoC* aoi = (AnalyticsObjInfoC*)um->user_meta_data;
+                        if (aoi) {
+                            for (guint r = 0; r < aoi->roiStatus_size && r < MAX_ROI_STATUS; r++) {
+                                if (aoi->roiStatus[r][0]) {
+                                    if (roi_list[0]) g_strlcat(roi_list, ",", sizeof(roi_list));
+                                    g_strlcat(roi_list, aoi->roiStatus[r], sizeof(roi_list));
+                                }
+                            }
+                            for (guint l = 0; l < aoi->lcStatus_size && l < MAX_LC_STATUS; l++) {
+                                if (aoi->lcStatus[l][0]) {
+                                    if (lc_list[0]) g_strlcat(lc_list, ",", sizeof(lc_list));
+                                    g_strlcat(lc_list, aoi->lcStatus[l], sizeof(lc_list));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (roi_list[0] || lc_list[0]) {
+                    off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                        ",\"analytics\":{\"roi\":[%s],\"lc\":[%s]}",
+                        roi_list, lc_list);
+                }
+
+                off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "}");
+
                 obj_count++;
             }
             off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "]}}");
@@ -281,9 +329,10 @@ int main(int argc, char* argv[])
 {
     GMainLoop* loop = NULL;
     GstElement *pipeline = NULL, *streammux = NULL, *sink = NULL, *pgie = NULL,
-              *queue1, *queue2, *queue3, *queue4, *queue5,
-              *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL, *nvdslogger = NULL,
-              *nvds_analytics = NULL;
+               *nvtracker = NULL,
+               *queue1, *queue2, *queue_t, *queue3, *queue4, *queue5,
+               *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL, *nvdslogger = NULL,
+               *nvds_analytics = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
     guint i, num_sources = 0;
@@ -364,6 +413,8 @@ int main(int argc, char* argv[])
 
     queue1 = gst_element_factory_make("queue", "queue1");
     queue2 = gst_element_factory_make("queue", "queue2");
+    queue_t = gst_element_factory_make("queue", "queue_t");
+    nvtracker = gst_element_factory_make("nvtracker", "nvtracker");
     nvdslogger = gst_element_factory_make("nvdslogger", "nvdslogger");
     nvds_analytics = gst_element_factory_make("nvdsanalytics", "nvdsanalytics");
 
@@ -382,7 +433,7 @@ int main(int argc, char* argv[])
         sink = gst_element_factory_make("fakesink", "fake-sink");
     }
 
-    if (!pgie || !nvdslogger || !nvds_analytics || !sink) return -1;
+    if (!pgie || !nvtracker || !nvdslogger || !nvds_analytics || !sink) return -1;
     if (show_display && (!tiler || !nvvidconv || !nvosd)) return -1;
 
     if (yaml_config) {
@@ -391,9 +442,12 @@ int main(int argc, char* argv[])
         g_object_get(G_OBJECT(pgie), "batch-size", &pgie_batch_size, NULL);
         if (pgie_batch_size != num_sources && num_sources > 0)
             g_object_set(G_OBJECT(pgie), "batch-size", num_sources, NULL);
-        g_object_set(G_OBJECT(nvds_analytics),
-                     "enable", TRUE,
-                     "config-file", "config_nvdsanalytics.txt",
+        g_object_set(G_OBJECT(nvtracker),
+                     "tracker-width", 640,
+                     "tracker-height", 384,
+                     "ll-lib-file",
+                     "/opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so",
+                     "ll-config-file", "config_tracker_IOU.yml",
                      NULL);
         g_object_set(G_OBJECT(nvds_analytics),
                      "enable", TRUE,
@@ -416,20 +470,24 @@ int main(int argc, char* argv[])
     gst_object_unref(bus);
 
     if (show_display) {
-        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger,
+        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
+                         queue_t, nvdslogger,
                          nvds_analytics, tiler,
                          queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL);
-        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger,
+        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
+                                    queue_t, nvdslogger,
                                     nvds_analytics, tiler,
                                     queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
         }
     } else {
-        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger,
+        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
+                         queue_t, nvdslogger,
                          nvds_analytics, sink, NULL);
         g_object_set(G_OBJECT(sink), "sync", FALSE, NULL);
-        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger,
+        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
+                                    queue_t, nvdslogger,
                                     nvds_analytics, sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
