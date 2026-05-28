@@ -51,7 +51,7 @@ class RedisEventBridge:
 
     def _filter_ivs_event(self, device_id, event_data):
         active_token = self._preset_cache.get(device_id)
-        if active_token is None:
+        if active_token is None or active_token == "__fixed__":
             return event_data
 
         data = event_data.get("data", {})

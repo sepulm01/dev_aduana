@@ -150,6 +150,8 @@ def orchestrate_cameras():
                 r.setex(f"device:{cid}:active_preset", 120, token)
             except Exception:
                 r.setex(f"device:{cid}:active_preset", 120, "")
+        else:
+            r.setex(f"device:{cid}:active_preset", 120, "__fixed__")
 
     if need_restart:
         regenerate_config_and_restart()
