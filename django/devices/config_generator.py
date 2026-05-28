@@ -19,7 +19,7 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0, prefix=""):
                     f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
                     for p in pts
                 )
-                key = f"roi-{name}" if not prefix else f"{prefix}_roi-{name}"
+                key = f"roi-{name}" if not prefix else f"roi-{prefix}_{name}"
                 section = f"roi-filtering-stream-{stream_idx}"
                 if section not in sections:
                     sections[section] = {"enable": "1", "class-id": "-1"}
@@ -32,7 +32,7 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0, prefix=""):
                     f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
                     for p in pts
                 )
-                key = f"roi-{name}" if not prefix else f"{prefix}_roi-{name}"
+                key = f"roi-{name}" if not prefix else f"roi-{prefix}_{name}"
                 section = f"overcrowding-stream-{stream_idx}"
                 if section not in sections:
                     sections[section] = {
@@ -45,7 +45,7 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0, prefix=""):
             y1 = round(shape["y1"] * FRAME_HEIGHT)
             x2 = round(shape["x2"] * FRAME_WIDTH)
             y2 = round(shape["y2"] * FRAME_HEIGHT)
-            key = f"line-crossing-{name}" if not prefix else f"{prefix}_line-crossing-{name}"
+            key = f"line-crossing-{name}" if not prefix else f"line-crossing-{prefix}_{name}"
             section = f"line-crossing-stream-{stream_idx}"
             if section not in sections:
                 sections[section] = {"enable": "1", "class-id": "0", "mode": "loose"}
@@ -56,7 +56,7 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0, prefix=""):
             y1 = round(shape["y1"] * FRAME_HEIGHT)
             x2 = round(shape["x2"] * FRAME_WIDTH)
             y2 = round(shape["y2"] * FRAME_HEIGHT)
-            key = f"direction-{name}" if not prefix else f"{prefix}_direction-{name}"
+            key = f"direction-{name}" if not prefix else f"direction-{prefix}_{name}"
             section = f"direction-detection-stream-{stream_idx}"
             if section not in sections:
                 sections[section] = {"enable": "1", "class-id": "0"}
