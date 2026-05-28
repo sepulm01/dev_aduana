@@ -153,10 +153,8 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 "\"frame_num\":0,\"Object\":[",
                 (long long)(time(NULL) * 1000LL), dev_id, sid);
 
-            float fw = (float)fm->source_frame_width;
-            float fh = (float)fm->source_frame_height;
-            if (fw <= 0) fw = 1920;
-            if (fh <= 0) fh = 1080;
+            float fw = (float)MUXER_OUTPUT_WIDTH;
+            float fh = (float)MUXER_OUTPUT_HEIGHT;
 
             int obj_count = 0;
 
