@@ -11,18 +11,18 @@ NVDS_VERSION:=8.0
 
 LIB_INSTALL_DIR?=/opt/nvidia/deepstream/deepstream-$(NVDS_VERSION)/lib/
 
-SRCS:= pipeline_test3.c
+SRCS:= pipeline_test3.cpp
 
-OBJS:= $(SRCS:.c=.o)
+OBJS:= $(SRCS:.cpp=.o)
 
 PKGS:= gstreamer-1.0
 
 NVDS_SOURCES?=/opt/nvidia/deepstream/deepstream/sources
 
-CFLAGS+= -I$(NVDS_SOURCES)/includes \
+CXXFLAGS+= -I$(NVDS_SOURCES)/includes \
 	 -I/usr/local/cuda-$(CUDA_VER)/include
 
-CFLAGS+= $(shell pkg-config --cflags $(PKGS))
+CXXFLAGS+= $(shell pkg-config --cflags $(PKGS))
 
 LIBS:= $(shell pkg-config --libs $(PKGS))
 
@@ -33,11 +33,11 @@ LIBS+= -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart -lnvdsgst_helper -lm \
 
 all: $(APP)
 
-%.o: %.c Makefile
-	$(CC) -c -o $@ $(CFLAGS) $<
+%.o: %.cpp Makefile
+	$(CXX) -c -o $@ $(CXXFLAGS) $<
 
 $(APP): $(OBJS) Makefile
-	$(CC) -o $(APP) $(OBJS) $(LIBS)
+	$(CXX) -o $(APP) $(OBJS) $(LIBS)
 
 clean:
 	rm -rf $(OBJS) $(APP)

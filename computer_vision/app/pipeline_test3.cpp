@@ -11,10 +11,13 @@
 #include <cuda_runtime_api.h>
 #include <hiredis/hiredis.h>
 #include <time.h>
+#include <string>
+#include <sstream>
 
 #include "gstnvdsmeta.h"
 #include "nvds_yml_parser.h"
 #include "gst-nvmessage.h"
+#include "nvds_analytics_meta.h"
 
 #define MAX_DISPLAY_LEN 64
 #define PGIE_CLASS_ID_VEHICLE 0
@@ -30,17 +33,6 @@
 #define MAX_SOURCES 128
 #define FLUSH_INTERVAL_US 1000000
 
-#define NVDS_ANALYTICS_OBJ_META "NVIDIA.NVDSANALYTICS.OBJ.USER_META"
-#define MAX_ROI_STATUS 8
-#define MAX_LC_STATUS 8
-
-typedef struct {
-    gchar roiStatus[MAX_ROI_STATUS][64];
-    guint roiStatus_size;
-    gchar lcStatus[MAX_LC_STATUS][64];
-    guint lcStatus_size;
-} AnalyticsObjInfoC;
-
 #define RETURN_ON_PARSER_ERROR(parse_expr) \
     if (NVDS_YAML_PARSER_SUCCESS != parse_expr) { \
         g_printerr("Error in parsing configuration file.\n"); \
@@ -54,6 +46,39 @@ static redisContext* pub_ctx = NULL;
 static int source_to_device[MAX_SOURCES];
 static guint64 frame_counts[MAX_SOURCES];
 static const char* g_labels[] = {"person", "bag", "face"};
+
+static std::string parse_analytics_frame_meta(NvDsFrameMeta* fm)
+{
+    std::stringstream out;
+    bool first = true;
+
+    for (NvDsMetaList* l_user = fm->frame_user_meta_list; l_user; l_user = l_user->next) {
+        NvDsUserMeta* um = (NvDsUserMeta*)l_user->data;
+        if (um->base_meta.meta_type != NVDS_USER_FRAME_META_NVDSANALYTICS)
+            continue;
+
+        NvDsAnalyticsFrameMeta* meta = (NvDsAnalyticsFrameMeta*)um->user_meta_data;
+        if (!meta) continue;
+
+        for (std::pair<std::string, uint32_t> status : meta->objInROIcnt) {
+            if (!first) out << ",";
+            out << "\"" << status.first << "_in_ROI\": " << status.second;
+            first = false;
+        }
+        for (std::pair<std::string, uint32_t> status : meta->objLCCurrCnt) {
+            if (status.second == 0) continue;
+            if (!first) out << ",";
+            out << "\"" << status.first << "_LC\": " << status.second;
+            first = false;
+        }
+        for (std::pair<std::string, bool> status : meta->ocStatus) {
+            if (!first) out << ",";
+            out << "\"" << status.first << "_OC\": " << (status.second ? "true" : "false");
+            first = false;
+        }
+    }
+    return out.str();
+}
 
 static void redis_hset(const char* k, const char* f, const char* v)
 {
@@ -164,45 +189,58 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                     id_field, om->object_id,
                     rx1, ry1, rx2, ry2);
 
-                gchar roi_list[512] = "";
-                gchar lc_list[512] = "";
-                static guint64 analytics_meta_type = 0;
-                if (analytics_meta_type == 0)
-                    analytics_meta_type = nvds_get_user_meta_type(
-                        NVDS_ANALYTICS_OBJ_META);
-
+                NvDsAnalyticsObjInfo* aoi = nullptr;
                 for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
                     NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
-                    if (um->base_meta.meta_type == analytics_meta_type) {
-                        AnalyticsObjInfoC* aoi = (AnalyticsObjInfoC*)um->user_meta_data;
-                        if (aoi) {
-                            for (guint r = 0; r < aoi->roiStatus_size && r < MAX_ROI_STATUS; r++) {
-                                if (aoi->roiStatus[r][0]) {
-                                    if (roi_list[0]) g_strlcat(roi_list, ",", sizeof(roi_list));
-                                    g_strlcat(roi_list, aoi->roiStatus[r], sizeof(roi_list));
-                                }
-                            }
-                            for (guint l = 0; l < aoi->lcStatus_size && l < MAX_LC_STATUS; l++) {
-                                if (aoi->lcStatus[l][0]) {
-                                    if (lc_list[0]) g_strlcat(lc_list, ",", sizeof(lc_list));
-                                    g_strlcat(lc_list, aoi->lcStatus[l], sizeof(lc_list));
-                                }
-                            }
-                        }
+                    if (um->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
+                        aoi = (NvDsAnalyticsObjInfo*)um->user_meta_data;
+                        break;
                     }
                 }
 
-                if (roi_list[0] || lc_list[0]) {
-                    off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
-                        ",\"analytics\":{\"roi\":[%s],\"lc\":[%s]}",
-                        roi_list, lc_list);
+                if (aoi) {
+                    if (!aoi->roiStatus.empty()) {
+                        om->rect_params.border_color.red = 0.0;
+                        om->rect_params.border_color.green = 1.0;
+                        om->rect_params.border_color.blue = 0.0;
+                        om->rect_params.border_color.alpha = 1.0;
+
+                        off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                            ",\"roi\":[");
+                        for (size_t r = 0; r < aoi->roiStatus.size(); r++) {
+                            off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                                "%s\"%s\"", r > 0 ? "," : "", aoi->roiStatus[r].c_str());
+                        }
+                        off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "]");
+                    }
+                    if (!aoi->lcStatus.empty()) {
+                        off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                            ",\"lc\":[");
+                        for (size_t l = 0; l < aoi->lcStatus.size(); l++) {
+                            off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                                "%s\"%s\"", l > 0 ? "," : "", aoi->lcStatus[l].c_str());
+                        }
+                        off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "]");
+                    }
+                    if (!aoi->dirStatus.empty()) {
+                        off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                            ",\"direction\":\"%s\"", aoi->dirStatus.c_str());
+                    }
                 }
 
                 off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "}");
 
                 obj_count++;
             }
-            off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "]}}");
+            off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "]");
+
+            std::string afm = parse_analytics_frame_meta(fm);
+            if (!afm.empty()) {
+                off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                    ",\"analytics\":{%s}", afm.c_str());
+            }
+
+            off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "}}");
 
             if (obj_count > 0) {
                 g_mutex_lock(&redis_mutex);
@@ -471,24 +509,28 @@ int main(int argc, char* argv[])
 
     if (show_display) {
         gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
+                         nvds_analytics,
                          queue_t, nvdslogger,
-                         nvds_analytics, tiler,
+                         tiler,
                          queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL);
         if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
+                                    nvds_analytics,
                                     queue_t, nvdslogger,
-                                    nvds_analytics, tiler,
+                                    tiler,
                                     queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
         }
     } else {
         gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
+                         nvds_analytics,
                          queue_t, nvdslogger,
-                         nvds_analytics, sink, NULL);
+                         sink, NULL);
         g_object_set(G_OBJECT(sink), "sync", FALSE, NULL);
         if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
+                                    nvds_analytics,
                                     queue_t, nvdslogger,
-                                    nvds_analytics, sink, NULL)) {
+                                    sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
         }
