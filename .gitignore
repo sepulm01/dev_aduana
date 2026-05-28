@@ -36,6 +36,9 @@ mediamtx/mediamtx
 # Playwright session files
 .playwright-mcp/
 
+# Core dumps
+computer_vision/config/core
+
 # DeepStream models (large binary files)
 *.pt
 *.onnx
