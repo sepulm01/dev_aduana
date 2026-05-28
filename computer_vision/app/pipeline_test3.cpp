@@ -213,7 +213,26 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                         }
                         off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "]");
                     }
+                    if (!aoi->ocStatus.empty()) {
+                        om->rect_params.border_color.red = 1.0;
+                        om->rect_params.border_color.green = 0.0;
+                        om->rect_params.border_color.blue = 1.0;
+                        om->rect_params.border_color.alpha = 1.0;
+
+                        off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                            ",\"oc\":[");
+                        for (size_t o = 0; o < aoi->ocStatus.size(); o++) {
+                            off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                                "%s\"%s\"", o > 0 ? "," : "", aoi->ocStatus[o].c_str());
+                        }
+                        off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "]");
+                    }
                     if (!aoi->lcStatus.empty()) {
+                        om->rect_params.border_color.red = 0.0;
+                        om->rect_params.border_color.green = 1.0;
+                        om->rect_params.border_color.blue = 1.0;
+                        om->rect_params.border_color.alpha = 1.0;
+
                         off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
                             ",\"lc\":[");
                         for (size_t l = 0; l < aoi->lcStatus.size(); l++) {
@@ -223,6 +242,11 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                         off += g_snprintf(json_buf + off, sizeof(json_buf) - off, "]");
                     }
                     if (!aoi->dirStatus.empty()) {
+                        om->rect_params.border_color.red = 1.0;
+                        om->rect_params.border_color.green = 1.0;
+                        om->rect_params.border_color.blue = 0.0;
+                        om->rect_params.border_color.alpha = 1.0;
+
                         off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
                             ",\"direction\":\"%s\"", aoi->dirStatus.c_str());
                     }
@@ -368,8 +392,8 @@ int main(int argc, char* argv[])
     GMainLoop* loop = NULL;
     GstElement *pipeline = NULL, *streammux = NULL, *sink = NULL, *pgie = NULL,
                *nvtracker = NULL,
-               *queue1, *queue2, *queue_t, *queue3, *queue4, *queue5,
-               *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL, *nvdslogger = NULL,
+               *queue1, *queue2, *queue3, *queue4, *queue5,
+               *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL,
                *nvds_analytics = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
@@ -451,9 +475,7 @@ int main(int argc, char* argv[])
 
     queue1 = gst_element_factory_make("queue", "queue1");
     queue2 = gst_element_factory_make("queue", "queue2");
-    queue_t = gst_element_factory_make("queue", "queue_t");
     nvtracker = gst_element_factory_make("nvtracker", "nvtracker");
-    nvdslogger = gst_element_factory_make("nvdslogger", "nvdslogger");
     nvds_analytics = gst_element_factory_make("nvdsanalytics", "nvdsanalytics");
 
     if (show_display) {
@@ -471,7 +493,7 @@ int main(int argc, char* argv[])
         sink = gst_element_factory_make("fakesink", "fake-sink");
     }
 
-    if (!pgie || !nvtracker || !nvdslogger || !nvds_analytics || !sink) return -1;
+    if (!pgie || !nvtracker || !nvds_analytics || !sink) return -1;
     if (show_display && (!tiler || !nvvidconv || !nvosd)) return -1;
 
     if (yaml_config) {
@@ -510,12 +532,10 @@ int main(int argc, char* argv[])
     if (show_display) {
         gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
                          nvds_analytics,
-                         queue_t, nvdslogger,
                          tiler,
                          queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL);
         if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
                                     nvds_analytics,
-                                    queue_t, nvdslogger,
                                     tiler,
                                     queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
@@ -524,23 +544,21 @@ int main(int argc, char* argv[])
     } else {
         gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
                          nvds_analytics,
-                         queue_t, nvdslogger,
                          sink, NULL);
         g_object_set(G_OBJECT(sink), "sync", FALSE, NULL);
         if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
                                     nvds_analytics,
-                                    queue_t, nvdslogger,
                                     sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
         }
     }
 
-    GstPad* probe_pad = gst_element_get_static_pad(nvdslogger, "src");
+    GstPad* probe_pad = gst_element_get_static_pad(nvds_analytics, "src");
     if (probe_pad) {
         gst_pad_add_probe(probe_pad, GST_PAD_PROBE_TYPE_BUFFER,
                           analytics_pad_probe, NULL, NULL);
-        g_print("[Pipeline] Analytics probe added on nvdslogger src\n");
+        g_print("[Pipeline] Analytics probe added on nvdsanalytics src\n");
         gst_object_unref(probe_pad);
     }
 
