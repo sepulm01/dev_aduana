@@ -693,15 +693,6 @@ def analytics_shapes(request, device_id, preset_token):
     return JsonResponse({"error": "GET or POST required"}, status=405)
 
 
-ANALYTICS_CONFIG_PATH = os.environ.get(
-    "DEEPSTREAM_ANALYTICS_CONFIG", "/opt/deepstream-app/config/config_nvdsanalytics.txt"
-)
-CANVAS_WIDTH = 854
-CANVAS_HEIGHT = 480
-FRAME_WIDTH = 1280
-FRAME_HEIGHT = 720
-
-
 def _get_active_preset_for_device(device):
     specs = device.camera_specs or {}
     has_ptz = bool(specs.get("ptz_caps"))
@@ -763,92 +754,6 @@ def _get_active_preset_for_device(device):
             "Error determining active preset for device %s: %s", device.id, e
         )
         return None
-
-
-def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
-    sections = {}
-
-    for shape in shapes:
-        obj_type = shape.get("object", "")
-        name = shape.get("name", "unnamed")
-        shape_type = shape.get("type", "")
-
-        if obj_type == "polygon" and shape_type == "RF":
-            pts = shape.get("points", [])
-            if len(pts) >= 4:
-                coords = ";".join(
-                    f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
-                    for p in pts
-                )
-                key = f"roi-{name}"
-                if "roi-filtering-stream-0" not in sections:
-                    sections["roi-filtering-stream-0"] = {
-                        "enable": "1",
-                        "class-id": "-1",
-                    }
-                sections["roi-filtering-stream-0"][key] = coords
-
-        elif obj_type == "polygon" and shape_type == "OC":
-            pts = shape.get("points", [])
-            if len(pts) >= 4:
-                coords = ";".join(
-                    f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
-                    for p in pts
-                )
-                key = f"roi-{name}"
-                if "overcrowding-stream-0" not in sections:
-                    sections["overcrowding-stream-0"] = {
-                        "enable": "1",
-                        "class-id": "-1",
-                        "object-threshold": "3",
-                    }
-                sections["overcrowding-stream-0"][key] = coords
-
-        elif obj_type == "line" and shape_type == "cross":
-            x1 = round(shape["x1"] * FRAME_WIDTH)
-            y1 = round(shape["y1"] * FRAME_HEIGHT)
-            x2 = round(shape["x2"] * FRAME_WIDTH)
-            y2 = round(shape["y2"] * FRAME_HEIGHT)
-            key = f"line-crossing-{name}"
-            if "line-crossing-stream-0" not in sections:
-                sections["line-crossing-stream-0"] = {
-                    "enable": "1",
-                    "class-id": "0",
-                    "mode": "loose",
-                }
-            sections["line-crossing-stream-0"][key] = f"{x1};{y1};{x2};{y2}"
-
-        elif obj_type == "line" and shape_type == "direction":
-            x1 = round(shape["x1"] * FRAME_WIDTH)
-            y1 = round(shape["y1"] * FRAME_HEIGHT)
-            x2 = round(shape["x2"] * FRAME_WIDTH)
-            y2 = round(shape["y2"] * FRAME_HEIGHT)
-            key = f"direction-{name}"
-            if "direction-detection-stream-0" not in sections:
-                sections["direction-detection-stream-0"] = {
-                    "enable": "1",
-                    "class-id": "0",
-                }
-            sections["direction-detection-stream-0"][key] = f"{x1};{y1};{x2};{y2}"
-
-    return sections
-
-
-def _serialize_nvdsanalytics(sections):
-    lines = [
-        "[property]",
-        "enable=1",
-        "config-width=1280",
-        "config-height=720",
-        "osd-mode=0",
-        "",
-    ]
-    for section, props in sections.items():
-        lines.append(f"[{section}]")
-        for key, val in props.items():
-            lines.append(f"{key}={val}")
-        lines.append("")
-    return "\n".join(lines)
 
 
 @csrf_exempt
@@ -928,6 +833,26 @@ def analytics_goto_and_apply(request, device_id):
                 ptz = PTZService(client)
                 ptz.goto_preset(profile_token, preset_token)
                 ptz.wait_until_idle(profile_token, timeout=30, interval=0.5)
+
+                try:
+                    from onvif_utils.snapshot import capture_frame_rtsp
+
+                    uri = device.stream_uris.get(device.default_profile_token, "")
+                    if uri:
+                        import base64
+
+                        frame_bytes = capture_frame_rtsp(uri, timeout=10)
+                        snapshot_b64 = base64.b64encode(frame_bytes).decode()
+                        AnalyticsPreset.objects.update_or_create(
+                            device=device,
+                            preset_token=preset_token,
+                            defaults={"snapshot": snapshot_b64},
+                        )
+                except Exception as se:
+                    logger.warning(
+                        "PTZ snapshot failed for device %s preset %s: %s",
+                        device_id, preset_token, se,
+                    )
             except Exception as e:
                 logger.warning(
                     "PTZ goto/wait failed for device %s: %s", device_id, e
