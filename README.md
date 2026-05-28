@@ -1,86 +1,220 @@
 # MediaMTX Manager
 
-Sistema web para gestionar cámaras IP ONVIF y visualizarlas en el browser vía WebRTC. Descubre dispositivos en la red, configura streams RTSP, los transcodifica a H.264, y provee control PTZ, detección de movimiento, y eventos en tiempo real vía WebSocket.
+Sistema web para gestionar cámaras IP ONVIF con visualización WebRTC, control PTZ, y video analítica con NVIDIA DeepStream. Descubre dispositivos en la red, configura streams RTSP, los procesa con GPU y publica eventos de análisis en tiempo real vía WebSocket.
 
 ---
 
 ## Arquitectura — Contenedores
 
 ### nginx (`nginx:alpine`, puerto 80)
-Reverse proxy que enruta cada tipo de tráfico al backend correcto:
+Reverse proxy:
 - `/` → `django-http:8000` (UI + REST API)
 - `/ws/` → `django-asgi:8001` (WebSockets)
 - `/stream/` → `mediamtx:8889` (WebRTC player)
 - `/cam_` → `mediamtx:8889` (WHEP signaling)
 
 ### django-http (`gunicorn`, puerto interno 8000)
-Sirve la interfaz web (Django templates) y las APIs REST:
+Interfaz web (Django templates) y APIs REST:
 - CRUD de dispositivos (`/api/devices/`)
 - Descubrimiento ONVIF en red local (`/api/discover/`)
 - Perfiles de video y streams RTSP (`/api/devices/{id}/profiles/`)
 - Control PTZ (`/api/ptz/{id}/move/`, `/preset/`, `/status/`)
-- Configuración de detección de movimiento (`/api/devices/{id}/motion-config/`)
-- Sincronización de hora de las cámaras (`/api/devices/{id}/sync-time/`)
+- Configuración de analítica: ROI, overcrowding, line-crossing, direction (`/api/devices/{id}/analytics/`)
+- Sincronización de hora (`/api/devices/{id}/sync-time/`)
 
 ### django-asgi (`daphne`, puerto interno 8001)
-Maneja conexiones WebSocket persistentes (`/ws/device/{id}/`). Los clients reciben notificaciones en tiempo real de eventos de movimiento y cambios de estado del dispositivo. Usa Django Channels + channel layer (Redis).
+WebSockets persistentes (`/ws/device/{id}/`). Recibe eventos de analítica desde el Redis event bridge y los forwardea al frontend en tiempo real (detecciones, eventos de ROI/LC/OC/direction, estado del dispositivo).
 
 ### celery-worker
-Ejecuta tareas asíncronas. La tarea principal es `poll_camera_motion`, que consulta el estado de detección de movimiento de cada cámara vía el driver correspondiente y notifica cambios a los clients WebSocket.
+Ejecuta `orchestrate_cameras` (disparado por celery-beat). También `refresh_device_streams` para inicializar/refrescar streams de un dispositivo.
 
 ### celery-beat
-Scheduler que dispara la tarea `poll_all_cameras` cada 5 segundos (configurable en `CELERY_BEAT_SCHEDULE` de `settings.py`).
+Dispara `orchestrate_cameras` cada 5 segundos (único schedule en `CELERY_BEAT_SCHEDULE`). Usa `DatabaseScheduler`.
 
 ### mediamtx (`bluenviron/mediamtx:latest-ffmpeg`)
-Servidor de media streaming. Sus funciones:
-- **RTSP pull**: recibe el stream RTSP de cada cámara (camino `cam_{id}_{token}`)
-- **Transcodificación ffmpeg**: en cuanto el stream raw está listo, ejecuta ffmpeg para convertir a H.264 (`cam_{id}_{token}_hw`)
-- **WebRTC/WHEP**: sirve el stream transcodificado al browser mediante WHEP (WebRTC HTML5 Player)
-- **API REST** (puerto 9997): endpoints para crear/eliminar/listar paths de stream
+Servidor de media streaming:
+- **RTSP pull**: jala el stream RTSP de cada cámara (path `cam_{id}_{token}_hw`)
+- **Transcodificación on-demand**: cuando se conecta un viewer WebRTC (WHEP), ejecuta ffmpeg con `libx264` (`preset ultrafast`, `tune zerolatency`) para transcodificar H.265 → H.264
+- **WebRTC/WHEP**: sirve el stream al browser
+- Solo existen paths `_hw` con `runOnDemand` — sin paths raw ni `runOnReady`
 
-### discovery-service (`./discovery`, puerto 8765)
-Microservicio de descubrimiento ONVIF que corre con `network_mode: host` para acceder a la red local. Combina dos técnicas en paralelo:
+### discovery-service (`./discovery`, puerto 8765, `network_mode: host`)
+Microservicio Flask para descubrimiento ONVIF:
+- **WS-Discovery**: multicast UDP para cámaras ONVIF (rápido, ~10s)
+- **Nmap**: escaneo de subred en puertos 80, 8080, 443, 554 con verificación HTTP del endpoint ONVIF
+- Endpoints: `GET /discover`, `GET /probe`, `GET /health`
 
-- **WS-Discovery**: broadcast multicast UDP para encontrar cámaras que respondan al estándar ONVIF (rápido, ~10s)
-- **Nmap**: escaneo de subred (`-T4 --open`) en puertos típicos ONVIF (80, 8080, 443, 554) para encontrar dispositivos que no responden al multicast. Cada host con puertos abiertos se verifica mediante HTTP probe al endpoint ONVIF.
+### event-stream-service
+Servicio Python que mantiene conexiones HTTP streaming a eventos de cámara (Dahua) y publica eventos en Redis.
 
-Ambos resultados se fusionan y deduplican por IP. WS-Discovery tiene prioridad (aporta nombre, hardware, perfiles); Nmap complementa los que no se anuncian.
+### redis-event-bridge
+Daemon Django que subscribe Redis `device:*:events` y forwardea mensajes a Channels WebSocket groups.
 
-Usa Flask, `wsdiscovery` y `python-nmap`.
+### face-receiver (TCP :12348)
+Servidor TCP que recibe crops JPEG + embeddings 512-d desde DeepStream, crea registros `Detection` con pgvector, y hace face matching con cosine-distance.
 
-Endpoint `GET /discover?timeout=10` — devuelve JSON con todos los dispositivos encontrados.
-Endpoint `GET /probe?host=X&port=Y` — prueba un IP específico.
-Endpoint `GET /health` — health check.
+### computer-vision (`runtime: nvidia`)
+Pipeline de video analítica NVIDIA DeepStream 8.0 (C++, `pipeline_test3`):
+- **Modelo**: `peoplenet` (detector de personas)
+- **Pipeline**: `rtspsrc → nvv4l2decoder → streammux → nvinfer(pgie) → nvtracker → nvdsanalytics → tiler → nvosd → sink`
+- **Configuración**: `config.yml` + `config_nvdsanalytics.txt` generados por Django, montados en `/opt/computer_vision/config/`
+- **Analítica**: ROI filtering, overcrowding, line-crossing, direction detection
+- **Display**: controlado por `ENABLE_DISPLAY` (1 = X11 con bounding boxes, 0 = fakesink para producción)
+- Publica FPS, detecciones, y eventos de analítica a Redis (`device:{id}:events`)
+- Disponible también con modelos: `yolo-v9`, `people-facerec`, `trafficcamnet-lpd-lpr`
 
-### postgres (`postgres:16-alpine`)
-Base de datos primaria. Almacena dispositivos, configuraciones de cámaras, perfiles, schedules de Celery Beat, etc.
+### postgres (`pgvector/pgvector:pg16`)
+Base de datos primaria con soporte pgvector para embeddings de reconocimiento facial.
 
 ### redis (`redis:7-alpine`)
-Dos roles:
-- **Broker Celery**: encola tareas entre beat → worker
-- **Channel layer de Django Channels**: distribuye mensajes WebSocket entre instancias de django-asgi
+- **Broker Celery**: encola tareas beat → worker
+- **Channel layer Django Channels**: distribuye mensajes WebSocket
+- **Cache DeepStream**: `deepstream:sources` (source_id → device_id, fps, url), `device:*:events` (pub/sub de analítica)
 
 ---
 
 ## Flujo de datos
 
+### Stream de video
+
 ```
 Cámara IP (ONVIF RTSP)
     │
-    ▼  discovery + credenciales + profile token
-django-http  ──  MediaMTXAPI.ensure_camera_streams()
+    ▼  discovery + ONVIF credentials (Device.username/password)
+get_stream_uri(token, username, password)
     │
-    ▼  POST /v3/config/paths/add/{cam_N_token}
-mediamtx — path raw (source = RTSP de la cámara)
+    ▼  rtsp://user:pass@host:554/path?params&unicast=true&proto=Onvif
+Device.stream_uris[default_profile_token]  ← almacenado verbatim, nunca modificado
     │
-    ▼  runOnReady → ffmpeg -i rtsp://.../cam_N_token -c:v libx264 ...
-mediamtx — path _hw (source = publisher)
+    ├──→ config.yml → DeepStream GPU (rtspsrc, nvv4l2decoder)
+    │      └──→ Redis: device:{id}:events (FPS, detecciones, ROI/LC/OC/direction)
+    │             └──→ redis-event-bridge → Channels → Browser (WebSocket)
     │
-    ▼  WHEP endpoint
-Browser (vídeo iframe vía WebRTC)
+    └──→ MediaMTX path _hw (runOnDemand)
+           └──→ ffmpeg libx264 → WebRTC/WHEP → Browser (<iframe>)
 ```
 
-Las flechas punteadas representan configuración inicial; una vez configurado, el flujo de video es directo cámara → mediamtx → browser.
+### Analítica
+
+```
+DeepStream pipeline
+    │  nvdsanalytics (config_nvdsanalytics.txt)
+    ├──→ ROI: bounding box verde si objInROIcnt > 0 a nivel frame
+    ├──→ Overcrowding: alerta magenta si objLCCurrCnt > object-threshold
+    ├──→ Line-crossing: bounding box cyan si ocStatus != ""
+    └──→ Direction: bounding box amarillo si dirStatus != ""
+    │
+    ▼  probe en nvdsanalytics::src
+Redis device:{id}:events (JSON con objetos + analytics frame)
+    ▼
+redis-event-bridge → Channels WebSocket group device_{id}
+    ▼
+Browser: actualiza canvas en tiempo real
+```
+
+---
+
+## Estándar de credenciales ONVIF
+
+`Device.username` / `Device.password` son la **única fuente de verdad** para autenticación ONVIF y RTSP. Son las credenciales descubiertas o ingresadas durante el setup del dispositivo.
+
+### RTSP URL — uso verbatim
+
+La URL en `Device.stream_uris[profile_token]` es la salida exacta de `MediaService.get_stream_uri()` y **nunca se modifica**. Incluye credenciales embebidas y `&proto=Onvif`.
+
+Transformaciones permitidas:
+1. `onvif_utils/media.py:get_stream_uri()` — inyecta `username:password` en el netloc
+2. `onvif_utils/mediamtx_api.py:_encode_rtsp_url()` — percent-encode de caracteres especiales (`+` → `%2B`) antes de pasarlo a ffmpeg
+
+Transformaciones prohibidas: `split()`, `replace()`, `strip()`, reordenar parámetros, reconstruir manualmente la URL.
+
+### Perfil usado
+
+Solo `Device.default_profile_token` se usa para DeepStream y MediaMTX. Los demás perfiles se almacenan en `stream_uris` como referencia.
+
+---
+
+## Orquestador unificado
+
+`orchestrate_cameras` (celery-beat, cada 5s) es el único orquestador del sistema:
+
+1. **ONVIF ping**: `driver.ping()` (GetDeviceInformation) a cada cámara con credenciales
+   - `online=True` → `failure_count=0`, `is_online=True`, `last_seen=now`, broadcast WebSocket si cambió estado
+   - `online=False` → `failure_count++`, si ≥3 → `is_online=False`, broadcast WebSocket
+2. **FPS check** (Redis): para dispositivos online con source_id en DeepStream
+   - `FPS=0` × 12 ciclos (~60s) → restart
+   - `FPS<6` × 18 ciclos (~90s) → restart
+   - `offline > 120s` → restart
+3. **Recuperación**: `regenerate_config_and_restart()` repara paths MediaMTX, regenera `config.yml` y `config_nvdsanalytics.txt`, actualiza Redis `deepstream:sources`, y reinicia el contenedor `computer-vision` vía Docker socket (~10s downtime)
+
+---
+
+## Pipeline estático (cold-start)
+
+DeepStream arranca con todas las cámaras definidas en `config.yml`. No hay add/remove dinámico. Al agregar, quitar, o modificar cámaras o configuraciones de analítica, se regeneran los archivos de configuración y se reinicia el contenedor.
+
+### Archivos de configuración
+
+| Archivo | Generado por | Descripción |
+|---|---|---|
+| `config.yml` | `config_generator.generate_config()` | Source list, streammux (batch=1920×1080), pgie (peoplenet), analytics, osd, tiler (1280×720), sink |
+| `config_nvdsanalytics.txt` | `config_generator.generate_nvdsanalytics_config()` | ROI-filtering, overcrowding, line-crossing, direction-detection por stream |
+| `config_tracker_IOU.yml` | Estático en `computer_vision/config/` | Configuración del tracker IOU |
+
+### Mapping source_id → device_id
+
+Redis hash `deepstream:sources`: `{source_id} → device_id`, más sub-keys `{source_id}:camera_id`, `{source_id}:fps`, `{source_id}:url`. El source_id es el índice en el source-list de `config.yml`.
+
+---
+
+## Analítica (nvdsanalytics)
+
+La configuración de analítica se deriva de `AnalyticsPreset.shapes` y se convierte a formato nvdsanalytics:
+
+| Forma | Tipo | Resultado |
+|---|---|---|
+| Polygon | RF (ROI Filtering) | Bounding box verde en objetos dentro del ROI |
+| Polygon | OC (Overcrowding) | Alerta cuando objLCCurrCnt > `object-threshold` (default: 3) |
+| Line | cross (Line-crossing) | Bounding box cyan cuando ocStatus != "" |
+| Line | direction (Direction) | Bounding box amarillo cuando dirStatus != "" |
+
+El preset de analítica se identifica con `preset_token="__fixed__"`. La interfaz permite dibujar shapes sobre un snapshot de la cámara y aplicarlos con el botón "Aplicar a IA".
+
+---
+
+## Reconocimiento facial
+
+Disponible con el modelo `people-facerec`:
+- PGIE: `det_10g` (detección de rostros) con parser `libnvds_retinaface_parser.so`
+- SGIE0: `2d106det.onnx` (106 landmarks, 3×192×192)
+- SGIE1: `w600k_r50.onnx` (ArcFace embedding 512-d, 3×112×112)
+- Face receiver (TCP :12348): recibe crops + embeddings, guarda en DB con pgvector `VectorField(dimensions=512)`, matching por cosine-distance
+- Face buffer: mejor crop por `(device_id, object_id)` durante 10s
+- Cooldown: 30s entre matches de la misma persona
+
+---
+
+## Recuperación y alta disponibilidad
+
+| Mecanismo | Trigger | Acción |
+|---|---|---|
+| Startup daemon | `apps.py` al arrancar Django | ONVIF refresh de todos los perfiles + URIs, sync MediaMTX, regeneración de config, restart del pipeline |
+| Orchestrator | FPS=0 × 60s / FPS<6 × 90s / offline > 120s | `regenerate_config_and_restart()` |
+| Aplicar IA | Usuario guarda shapes de analítica | `regenerate_config_and_restart()` |
+| refresh_device_streams | Llamado en startup y manualmente | ONVIF refresh + snapshot + `regenerate_config_and_restart()` |
+
+---
+
+## Modelos disponibles
+
+Controlados por variable de entorno `MODEL` en docker-compose:
+
+| Modelo | Propósito |
+|---|---|
+| `peoplenet` | Detección de personas + nvdsanalytics (ROI/LC/OC/direction) |
+| `yolo-v9` | Detección general YOLO v9 |
+| `people-facerec` | Detección de personas + reconocimiento facial |
+| `trafficcamnet-lpd-lpr` | Detección vehicular + patentes |
 
 ---
 
@@ -93,9 +227,10 @@ Ver `.env.example`:
 | `SECRET_KEY` | Clave secreta de Django |
 | `DEBUG` | Modo debug (`True`/`False`) |
 | `ALLOWED_HOSTS` | Hosts permitidos |
+| `ENABLE_DISPLAY` | Controla renderizado X11 en DeepStream (1=dev con bounding boxes, 0=prod fakesink) |
 | `POSTGRES_DB/USER/PASSWORD/HOST` | Conexión a PostgreSQL |
-| `REDIS_URL` | Conexión a Redis |
-| `MEDIAMTX_API_KEY` | Clave API para autenticarse en la API REST de MediaMTX |
+| `REDIS_URL` | Conexión a Redis (`redis://redis:6379/0`) |
+| `MEDIAMTX_API_KEY` | Autenticación API REST de MediaMTX |
 
 ---
 
@@ -109,93 +244,29 @@ docker-compose up -d --build
 
 Abrir `http://localhost/`.
 
+---
 
-## BORRADOR
+## Comandos de gestión
 
+```bash
+# Shell Django
+docker-compose exec django-http python manage.py <cmd>
 
-### Cámaras on line
+# Sincronizar paths MediaMTX para cámaras con credenciales
+docker-compose exec django-http python manage.py sync_mediamtx
 
-El sistema tiene 3 mecanismos principales para determinar si una cámara está activa:
-1. is_online — ONVIF en startup (devices/apps.py:11-52)
-- Cuando Django arranca, un daemon thread en AppConfig.ready() itera todas las cámaras con credenciales y hace client.get_device_info() (ONVIF SOAP)
-- Si responde → is_online=True, si falla → is_online=False
-- Solo se actualiza en startup, no durante la vida de la app
-2. motion_active — Celery Beat cada 5s (devices/tasks.py:15-57)
-- poll_all_cameras dispatchea poll_camera_motion para cada dispositivo
-- El task llama driver.poll_motion() — en Dahua es un CGI call a eventManager.cgi?action=getCurrentEvents
-- Si la respuesta contiene "VideoMotion" → motion_active=True
-- Esto no actualiza is_online — solo el campo motion_active
-3. event_listener_enabled flag (devices/views.py:402-417)
-- Es un switch de control (no de estado real) — indica si el event-stream-service externo debería conectarse a la cámara
-- El servicio externo mantiene una conexión HTTP streaming persistente (eventManager.cgi?action=attach&codes=[All]&heartbeat=30) con backoff de reconnect
-- No actualiza is_online — solo publica eventos a Redis y los guarda en DeviceEvent
-Observación notable
-El campo last_seen en el modelo nunca se actualiza en ningún lugar del código — existe pero está inactivo.
-Lo que NO hay
-- No hay un mecanismo de heartbeat periódico que actualice is_online durante runtime
-- device_status en el consumer de Channels está definido pero nunca se dispara activamente
-- Si una cámara cae después del startup, is_online seguiría True hasta el próximo reinicio de Django
+# Asegurar entrada única de Celery Beat
+docker-compose exec django-http python manage.py ensure_heartbeat
 
-Cambios realizados
-1. CameraDriver.ping() en base.py
-def ping(self):
-    return {"online": False, "last_seen": None}
-Método genérico en el ABC — cualquier driver lo implementa.
-2. DahuaDriver.ping() en dahua.py
-def ping(self):
-    client = OnvifClient(host, port, username, password)
-    client.get_device_info()
-    return {"online": True, "last_seen": datetime.now(timezone.utc)}
-Usa ONVIF GetDeviceInformation (estándar, funciona con cualquier marca).
-3. Nuevo campo failure_count en Device (models.py:20)
-failure_count = models.IntegerField(default=0)
-+ migración 0007_device_failure_count.py aplicada.
-4. poll_camera_motion modificado (tasks.py)
-- Éxito del ping: failure_count=0, is_online=True, last_seen=ahora
-- Fallo del ping: failure_count++, si >= 3 → is_online=False
-- Broadcast: cuando is_online cambia, envía device_status al canal Channels (device_{id})
-Flujo completo
-poll_all_cameras (cada 5s)
-  └── poll_camera_motion(device_id)
-        ├── driver.ping()  → GetDeviceInformation ONVIF
-        │     online=True  → last_seen=now, failure_count=0, is_online=True (si cambió)
-        │     online=False → failure_count+=1, si >=3 → is_online=False, broadcast
-        └── driver.poll_motion()  → motion_active (sin cambio de is_online)
+# Tests
+docker-compose exec django-http python manage.py test
 
+# Lint
+ruff check . && ruff format .
 
-## Flujos de video 
-
-El recorrido del video
-Cámara (RTSP H.265/H.264)
-  → ONVIF get_stream_uri() obtiene la URL RTSP
-  → MediaMTX crea path: cam_{id}_{profile}
-  → runOnReady ejecuta FFmpeg que suscribe internamente al raw stream
-  → FFmpeg transcodifica H.265→H.264 en CPU (libx264, preset ultrafast)
-  → Output a path: cam_{id}_{profile}_hw
-  → nginx Proxy → WebRTC → Browser
-Perfiles: ¿1 stream o varios?
-Cada perfil activo = 1 conexión RTSP separada desde MediaMTX hacia la cámara.
-Si tenés 3 perfiles (profile0, profile1, profile2):
-- MediaMTX abre 3 conexiones RTSP simultáneas hacia la cámara
-- Cada una con su propio stream (diferente resolución/bitrate típicamente)
-- FFmpeg corre 3 procesos separados (uno por perfil)
-- En el browser solo se ve 1 a la vez (la que seleccionás en el dropdown)
-
-Recursos
-Recurso	Uso
-CPU transcoding	FFmpeg libx264 ultrafast — bajo consumo pero multiplicado por perfiles
-RTSP conexiones	Una por perfil activo — si hay 10 cámaras con 3 perfiles = 30 conexiones RTSP
-Ancho de banda	Cada stream RTSP consume bandwidth de la cámara al servidor
-Memoria	Cada proceso FFmpeg (~50-100MB估算)
-Lo que NO existe
-- Sin monitoreo de recursos — no hay tracking de CPU/bandwidth/capacidad
-- Sin auto-scaling — si la carga excede, no hay fallback
-- Sin métricas — MediaMTX tiene endpoint /metrics pero no se usa
-
-
-# Video Analítica
-
-Implementado: C++ DeepStream server app (`computer-vision/`) con pipeline `nvmultiurisrcbin → nvdspreprocess → nvinfer(pgie) → nvtracker → nvdsanalytics → nvdslogger → tiler → nvosd → sink`. Las inferencias se publican a Redis `device:{id}:events` y se forwardean vía `redis-event-bridge` a Channels WebSocket. Los streams se agregan/quitan dinámicamente vía REST API del `nvmultiurisrcbin` (puerto 9000).
-
-- **Mapping de streams**: se usa `camera_id` (string, `str(device.id)`) como identificador persistente, no el `source_id` entero que cambia al reconectar
-- **Reconección**: `stop_preview` + `start_preview` vía Redis `deepstream:commands`, con fallback al hash `deepstream:sources` para el mapeo `source_id → device_id` en el probe
+# Logs
+docker-compose logs -f computer-vision    # DeepStream
+docker-compose logs -f celery-beat        # Scheduler
+docker-compose logs -f celery-worker      # Tareas asíncronas
+docker-compose logs -f django-http        # API/UI
+```
