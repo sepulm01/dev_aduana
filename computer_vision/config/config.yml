@@ -11,6 +11,10 @@ primary-gie:
   plugin-type: 0
   config-file-path: ../models/peoplenet/pgie_config.yml
 
+analytics:
+  enable: 1
+  config-file: config_nvdsanalytics.txt
+
 osd:
   process-mode: 0
   display-text: 1

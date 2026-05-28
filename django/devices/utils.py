@@ -38,7 +38,7 @@ def restart_computer_vision():
 
 
 def regenerate_config_and_restart():
-    from devices.config_generator import generate_config
+    from devices.config_generator import generate_config, generate_nvdsanalytics_config
     from onvif_utils.mediamtx_api import MediaMTXAPI
 
     Device = apps.get_model("devices", "Device")
@@ -65,6 +65,9 @@ def regenerate_config_and_restart():
                 pass
 
     uris = generate_config(online_devices, CONFIG_YML_PATH)
+
+    config_dir = os.path.dirname(CONFIG_YML_PATH)
+    generate_nvdsanalytics_config(online_devices, config_dir)
 
     r = _get_redis()
     for i, device in enumerate(online_devices):

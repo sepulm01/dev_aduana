@@ -282,7 +282,8 @@ int main(int argc, char* argv[])
     GMainLoop* loop = NULL;
     GstElement *pipeline = NULL, *streammux = NULL, *sink = NULL, *pgie = NULL,
               *queue1, *queue2, *queue3, *queue4, *queue5,
-              *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL, *nvdslogger = NULL;
+              *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL, *nvdslogger = NULL,
+              *nvds_analytics = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
     guint i, num_sources = 0;
@@ -364,6 +365,7 @@ int main(int argc, char* argv[])
     queue1 = gst_element_factory_make("queue", "queue1");
     queue2 = gst_element_factory_make("queue", "queue2");
     nvdslogger = gst_element_factory_make("nvdslogger", "nvdslogger");
+    nvds_analytics = gst_element_factory_make("nvdsanalytics", "nvdsanalytics");
 
     if (show_display) {
         queue3 = gst_element_factory_make("queue", "queue3");
@@ -380,7 +382,7 @@ int main(int argc, char* argv[])
         sink = gst_element_factory_make("fakesink", "fake-sink");
     }
 
-    if (!pgie || !nvdslogger || !sink) return -1;
+    if (!pgie || !nvdslogger || !nvds_analytics || !sink) return -1;
     if (show_display && (!tiler || !nvvidconv || !nvosd)) return -1;
 
     if (yaml_config) {
@@ -389,6 +391,14 @@ int main(int argc, char* argv[])
         g_object_get(G_OBJECT(pgie), "batch-size", &pgie_batch_size, NULL);
         if (pgie_batch_size != num_sources && num_sources > 0)
             g_object_set(G_OBJECT(pgie), "batch-size", num_sources, NULL);
+        g_object_set(G_OBJECT(nvds_analytics),
+                     "enable", TRUE,
+                     "config-file", "config_nvdsanalytics.txt",
+                     NULL);
+        g_object_set(G_OBJECT(nvds_analytics),
+                     "enable", TRUE,
+                     "config-file", "config_nvdsanalytics.txt",
+                     NULL);
         if (show_display) {
             RETURN_ON_PARSER_ERROR(nvds_parse_osd(nvosd, argv[1], "osd"));
             if (num_sources > 0) {
@@ -406,17 +416,21 @@ int main(int argc, char* argv[])
     gst_object_unref(bus);
 
     if (show_display) {
-        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger, tiler,
+        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger,
+                         nvds_analytics, tiler,
                          queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL);
-        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger, tiler,
+        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger,
+                                    nvds_analytics, tiler,
                                     queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
         }
     } else {
-        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger, sink, NULL);
+        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger,
+                         nvds_analytics, sink, NULL);
         g_object_set(G_OBJECT(sink), "sync", FALSE, NULL);
-        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger, sink, NULL)) {
+        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger,
+                                    nvds_analytics, sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
         }

@@ -64,7 +64,7 @@
 
         <div class="card mb-3" id="analyticsCard">
             <div class="card-header">
-                <h3 class="card-title"><i class="ti ti-chart-dots me-2"></i>Analytics DeepStream</h3>
+                <h3 class="card-title"><i class="ti ti-chart-dots me-2"></i>Analytics IA</h3>
             </div>
             <div class="card-body">
                 <a href="{% url 'analytics_editor' device.id %}" class="btn btn-outline-info">
@@ -72,12 +72,12 @@
                 </a>
                 {% if not device.deepstream_enabled %}
                 <div class="alert alert-warning mt-2 mb-0 py-2 px-3 small">
-                    <i class="ti ti-alert-triangle me-1"></i>DeepStream no está habilitado para esta cámara.
+                    <i class="ti ti-alert-triangle me-1"></i>IA no está habilitada para esta cámara.
                 </div>
                 {% else %}
                 <div id="dsPreviewCard" class="mt-2">
                     <div class="d-flex align-items-center justify-content-between small text-muted mb-1">
-                        <span><i class="ti ti-eye me-1"></i>Vista DeepStream</span>
+                        <span><i class="ti ti-eye me-1"></i>Vista IA</span>
                         <span id="dsPreviewStatus" class="badge bg-secondary">Inactivo</span>
                     </div>
                     <div id="dsVideoContainer" style="position:relative;width:100%;aspect-ratio:16/9;background:#000;">
@@ -1046,7 +1046,7 @@ async function toggleEventListener() {
             document.getElementById('dsPreviewStatus').className = 'badge bg-success';
             document.getElementById('dsPreviewFrame').style.display = 'block';
         } catch (e) {
-            console.error('Failed to start DeepStream preview:', e);
+            console.error('Failed to start IA preview:', e);
         }
     }
 

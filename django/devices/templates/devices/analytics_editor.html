@@ -64,8 +64,8 @@
                 <button class="btn btn-sm btn-outline-success w-100 mb-2" id="btnSavePreset" onclick="saveCurrentPreset()">
                     <i class="ti ti-check me-1"></i>Guardar preset
                 </button>
-                <button class="btn btn-sm btn-outline-info w-100" id="btnApplyDeepStream" onclick="applyToDeepStream()">
-                    <i class="ti ti-rocket me-1"></i>Aplicar a DeepStream
+                <button class="btn btn-sm btn-outline-info w-100" id="btnApplyIA" onclick="applyToIA()">
+                    <i class="ti ti-rocket me-1"></i>Aplicar a IA
                 </button>
                 <div id="saveStatus" class="mt-2 small" style="display:none;"></div>
             </div>
@@ -417,7 +417,7 @@ function keyPressed() {
 function setDrawingEnabled(enabled) {
     drawingEnabled = enabled;
     const btnSave = document.getElementById('btnSavePreset');
-    const btnApply = document.getElementById('btnApplyDeepStream');
+    const btnApply = document.getElementById('btnApplyIA');
     const footer = document.getElementById('controlsFooter');
     if (btnSave) btnSave.disabled = !enabled;
     if (btnApply) btnApply.disabled = !enabled;
@@ -647,8 +647,15 @@ async function saveCurrentPreset() {
     setTimeout(() => { status.style.display = 'none'; }, 3000);
 }
 
-async function applyToDeepStream() {
+async function applyToIA() {
     if (!currentPresetToken) return;
+
+    if (!confirm(
+        "Al aplicar las reglas de analytics, se reiniciarán las detecciones " +
+        "durante aproximadamente 10 segundos. ¿Desea continuar?"
+    )) {
+        return;
+    }
 
     const status = document.getElementById('saveStatus');
     status.style.display = 'block';

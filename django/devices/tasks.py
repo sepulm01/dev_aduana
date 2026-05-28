@@ -217,4 +217,24 @@ def refresh_device_streams(device_id):
         )
         return
 
+    try:
+        from devices.models import AnalyticsPreset
+        from onvif_utils.snapshot import capture_frame_rtsp
+
+        default_uri = stream_uris.get(device.default_profile_token, "")
+        if default_uri:
+            frame_bytes = capture_frame_rtsp(default_uri, timeout=10)
+            import base64
+
+            snapshot_b64 = base64.b64encode(frame_bytes).decode()
+            AnalyticsPreset.objects.update_or_create(
+                device=device,
+                preset_token="__fixed__",
+                defaults={"snapshot": snapshot_b64},
+            )
+    except Exception as e:
+        logger.warning(
+            "refresh_device_streams(%s) snapshot capture failed: %s", device_id, e
+        )
+
     regenerate_config_and_restart()
