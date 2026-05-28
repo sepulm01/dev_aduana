@@ -159,6 +159,19 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
             if (fh <= 0) fh = 1080;
 
             int obj_count = 0;
+
+            bool has_obj_in_any_roi = false;
+            for (NvDsMetaList* lfu = fm->frame_user_meta_list; lfu; lfu = lfu->next) {
+                NvDsUserMeta* fum = (NvDsUserMeta*)lfu->data;
+                if (fum->base_meta.meta_type == NVDS_USER_FRAME_META_NVDSANALYTICS) {
+                    NvDsAnalyticsFrameMeta* afm =
+                        (NvDsAnalyticsFrameMeta*)fum->user_meta_data;
+                    if (afm && !afm->objInROIcnt.empty()) {
+                        has_obj_in_any_roi = true;
+                    }
+                }
+            }
+
             for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
                 NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
                 float left = om->detector_bbox_info.org_bbox_coords.left;
@@ -196,6 +209,13 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                         aoi = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                         break;
                     }
+                }
+
+                if (has_obj_in_any_roi) {
+                    om->rect_params.border_color.red = 0.0;
+                    om->rect_params.border_color.green = 1.0;
+                    om->rect_params.border_color.blue = 0.0;
+                    om->rect_params.border_color.alpha = 1.0;
                 }
 
                 if (aoi) {
