@@ -155,8 +155,11 @@ Device.username/password (ONVIF)
 
 ### Pipeline
 ```
-nvmultiurisrcbin → queue1 → identity → nvinfer(pgie) → queue2 → nvtracker → queue_t → nvdsanalytics → queue6 → nvdslogger → tiler → nvvidconv → nvosd → queue5 → sink
+ENABLE_DISPLAY=1 → streammux → ... → nvdslogger → tiler → nvvidconv → nvosd → nveglglessink
+ENABLE_DISPLAY=0 → streammux → ... → nvdslogger → fakesink
 ```
+Analytics probe on `nvdslogger src` works in both modes. Display mode (X11 window with bounding boxes) is controlled by the `ENABLE_DISPLAY` env var (default: `1`). Set to `0` for production where no X server is available.
+- `ENABLE_DISPLAY=0` uses `fakesink`, no X11 dependencies, no `nvvideo-renderer` buffer drops.
 `nvdspreprocess` works in DS 8.0 — the config file must exist at the model-specific path (e.g. `models/peoplenet/config_preprocess.txt`). PGIE `process-mode: 1` means "expects preprocessed tensors from nvdspreprocess". If `nvdspreprocess` is removed, PGIE still expects tensors and will produce zero detections. `gst_pad_link()` only (not `_full`), unref pads after linking, check `!= GST_PAD_LINK_OK`. SGIE bins conditional on `secondary-gie0`/`secondary-gie1` YAML keys.
 
 **Important**: the `else` (non-REST-server, `within_multiurisrcbin: 1`) path must include `nvtracker, queue_t` in the `gst_element_link_many` chain — same as the REST-server path. Both paths use the same pipeline elements.

@@ -296,6 +296,9 @@ int main(int argc, char* argv[])
     struct cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, current_device);
 
+    const char* enable_display_env = getenv("ENABLE_DISPLAY");
+    int show_display = enable_display_env ? atoi(enable_display_env) : 1;
+
     if (argc < 2) {
         g_printerr("Usage: %s <yml file>\n", argv[0]);
         return -1;
@@ -360,17 +363,25 @@ int main(int argc, char* argv[])
 
     queue1 = gst_element_factory_make("queue", "queue1");
     queue2 = gst_element_factory_make("queue", "queue2");
-    queue3 = gst_element_factory_make("queue", "queue3");
-    queue4 = gst_element_factory_make("queue", "queue4");
-    queue5 = gst_element_factory_make("queue", "queue5");
     nvdslogger = gst_element_factory_make("nvdslogger", "nvdslogger");
-    tiler = gst_element_factory_make("nvmultistreamtiler", "nvtiler");
-    nvvidconv = gst_element_factory_make("nvvideoconvert", "nvvideo-converter");
-    nvosd = gst_element_factory_make("nvdsosd", "nv-onscreendisplay");
 
-    sink = gst_element_factory_make("nveglglessink", "nvvideo-renderer");
+    if (show_display) {
+        queue3 = gst_element_factory_make("queue", "queue3");
+        queue4 = gst_element_factory_make("queue", "queue4");
+        queue5 = gst_element_factory_make("queue", "queue5");
+        tiler = gst_element_factory_make("nvmultistreamtiler", "nvtiler");
+        nvvidconv = gst_element_factory_make("nvvideoconvert", "nvvideo-converter");
+        nvosd = gst_element_factory_make("nvdsosd", "nv-onscreendisplay");
+        sink = gst_element_factory_make("nveglglessink", "nvvideo-renderer");
+    } else {
+        queue3 = NULL;
+        queue4 = NULL;
+        queue5 = NULL;
+        sink = gst_element_factory_make("fakesink", "fake-sink");
+    }
 
-    if (!pgie || !nvdslogger || !tiler || !nvvidconv || !nvosd || !sink) return -1;
+    if (!pgie || !nvdslogger || !sink) return -1;
+    if (show_display && (!tiler || !nvvidconv || !nvosd)) return -1;
 
     if (yaml_config) {
         RETURN_ON_PARSER_ERROR(nvds_parse_streammux(streammux, argv[1], "streammux"));
@@ -378,27 +389,37 @@ int main(int argc, char* argv[])
         g_object_get(G_OBJECT(pgie), "batch-size", &pgie_batch_size, NULL);
         if (pgie_batch_size != num_sources && num_sources > 0)
             g_object_set(G_OBJECT(pgie), "batch-size", num_sources, NULL);
-        RETURN_ON_PARSER_ERROR(nvds_parse_osd(nvosd, argv[1], "osd"));
-        if (num_sources > 0) {
-            tiler_rows = (guint)sqrt(num_sources);
-            tiler_columns = (guint)ceil(1.0 * num_sources / tiler_rows);
-            g_object_set(G_OBJECT(tiler), "rows", tiler_rows, "columns", tiler_columns, NULL);
+        if (show_display) {
+            RETURN_ON_PARSER_ERROR(nvds_parse_osd(nvosd, argv[1], "osd"));
+            if (num_sources > 0) {
+                tiler_rows = (guint)sqrt(num_sources);
+                tiler_columns = (guint)ceil(1.0 * num_sources / tiler_rows);
+                g_object_set(G_OBJECT(tiler), "rows", tiler_rows, "columns", tiler_columns, NULL);
+            }
+            RETURN_ON_PARSER_ERROR(nvds_parse_tiler(tiler, argv[1], "tiler"));
+            RETURN_ON_PARSER_ERROR(nvds_parse_egl_sink(sink, argv[1], "sink"));
         }
-        RETURN_ON_PARSER_ERROR(nvds_parse_tiler(tiler, argv[1], "tiler"));
-        RETURN_ON_PARSER_ERROR(nvds_parse_egl_sink(sink, argv[1], "sink"));
     }
 
     bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
     bus_watch_id = gst_bus_add_watch(bus, bus_call, loop);
     gst_object_unref(bus);
 
-    gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger, tiler,
-                     queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL);
-
-    if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger, tiler,
-                                queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
-        g_printerr("Elements could not be linked.\n");
-        return -1;
+    if (show_display) {
+        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger, tiler,
+                         queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL);
+        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger, tiler,
+                                    queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
+            g_printerr("Elements could not be linked.\n");
+            return -1;
+        }
+    } else {
+        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvdslogger, sink, NULL);
+        g_object_set(G_OBJECT(sink), "sync", FALSE, NULL);
+        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvdslogger, sink, NULL)) {
+            g_printerr("Elements could not be linked.\n");
+            return -1;
+        }
     }
 
     GstPad* probe_pad = gst_element_get_static_pad(nvdslogger, "src");
