@@ -22,9 +22,64 @@ class RedisEventBridge:
         self.redis_url = redis_url
         self._running = False
         self._thread = None
+        self._preset_cache = {}
+        self._preset_thread = None
+
+    def _refresh_presets(self):
+        try:
+            r = redis.from_url(self.redis_url, decode_responses=True)
+            keys = r.keys("device:*:active_preset")
+            cache = {}
+            for k in keys:
+                try:
+                    dev_id = int(k.split(":")[1])
+                except (IndexError, ValueError):
+                    continue
+                val = r.get(k)
+                if val:
+                    cache[dev_id] = val
+            self._preset_cache = cache
+        except redis_exceptions.ConnectionError:
+            pass
+        except Exception as e:
+            logger.warning("Preset refresh error: %s", e)
+
+    def _preset_refresh_loop(self):
+        while self._running:
+            self._refresh_presets()
+            time.sleep(5)
+
+    def _filter_ivs_event(self, device_id, event_data):
+        active_token = self._preset_cache.get(device_id)
+        if active_token is None:
+            return event_data
+
+        data = event_data.get("data", {})
+        objects = data.get("Object", [])
+        if objects:
+            for obj in objects:
+                for key in ("roi", "lc", "oc"):
+                    vals = obj.get(key, []) or []
+                    obj[key] = [v for v in vals if v.startswith(f"{active_token}_")]
+                direction = obj.get("direction", "")
+                if direction and not direction.startswith(f"{active_token}_"):
+                    obj["direction"] = ""
+
+        analytics = data.get("analytics", {})
+        if analytics:
+            filtered = {}
+            for k, v in analytics.items():
+                if k.startswith(f"{active_token}_"):
+                    filtered[k] = v
+            data["analytics"] = filtered
+
+        return event_data
 
     def _send_to_channel(self, device_id, event_data):
         try:
+            filtered = self._filter_ivs_event(device_id, event_data)
+            if filtered is None:
+                return
             channel_layer = get_channel_layer()
             if channel_layer is None:
                 logger.warning("Channel layer not available")
@@ -35,7 +90,7 @@ class RedisEventBridge:
                 {
                     "type": "ivs_event",
                     "device_id": device_id,
-                    **event_data,
+                    **filtered,
                 },
             )
         except Exception as e:
@@ -77,11 +132,15 @@ class RedisEventBridge:
         self._running = True
         self._thread = threading.Thread(target=self._run_sync, daemon=True)
         self._thread.start()
+        self._preset_thread = threading.Thread(target=self._preset_refresh_loop, daemon=True)
+        self._preset_thread.start()
 
     def stop(self):
         self._running = False
         if self._thread:
             self._thread.join(timeout=2)
+        if self._preset_thread:
+            self._preset_thread.join(timeout=2)
 
 
 class Command(BaseCommand):

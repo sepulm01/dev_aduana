@@ -140,6 +140,17 @@ def orchestrate_cameras():
                         r.setex(f"device:{cid}:pending_restart", 3600, "1")
                         need_restart = True
 
+        specs = device.camera_specs or {}
+        if specs.get("ptz_caps"):
+            try:
+                from devices.utils import get_active_preset_for_device
+
+                active = get_active_preset_for_device(device)
+                token = active.preset_token if active else ""
+                r.setex(f"device:{cid}:active_preset", 120, token)
+            except Exception:
+                r.setex(f"device:{cid}:active_preset", 120, "")
+
     if need_restart:
         regenerate_config_and_restart()
         r = _get_redis()

@@ -5,7 +5,7 @@ FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
 
-def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
+def _shapes_to_nvdsanalytics(shapes, stream_idx=0, prefix=""):
     sections = {}
     for shape in shapes:
         obj_type = shape.get("object", "")
@@ -19,7 +19,7 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
                     f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
                     for p in pts
                 )
-                key = f"roi-{name}"
+                key = f"roi-{name}" if not prefix else f"{prefix}_roi-{name}"
                 section = f"roi-filtering-stream-{stream_idx}"
                 if section not in sections:
                     sections[section] = {"enable": "1", "class-id": "-1"}
@@ -32,7 +32,7 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
                     f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
                     for p in pts
                 )
-                key = f"roi-{name}"
+                key = f"roi-{name}" if not prefix else f"{prefix}_roi-{name}"
                 section = f"overcrowding-stream-{stream_idx}"
                 if section not in sections:
                     sections[section] = {
@@ -45,7 +45,7 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
             y1 = round(shape["y1"] * FRAME_HEIGHT)
             x2 = round(shape["x2"] * FRAME_WIDTH)
             y2 = round(shape["y2"] * FRAME_HEIGHT)
-            key = f"line-crossing-{name}"
+            key = f"line-crossing-{name}" if not prefix else f"{prefix}_line-crossing-{name}"
             section = f"line-crossing-stream-{stream_idx}"
             if section not in sections:
                 sections[section] = {"enable": "1", "class-id": "0", "mode": "loose"}
@@ -56,7 +56,7 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
             y1 = round(shape["y1"] * FRAME_HEIGHT)
             x2 = round(shape["x2"] * FRAME_WIDTH)
             y2 = round(shape["y2"] * FRAME_HEIGHT)
-            key = f"direction-{name}"
+            key = f"direction-{name}" if not prefix else f"{prefix}_direction-{name}"
             section = f"direction-detection-stream-{stream_idx}"
             if section not in sections:
                 sections[section] = {"enable": "1", "class-id": "0"}
@@ -90,20 +90,22 @@ def generate_nvdsanalytics_config(devices, config_dir):
     all_sections = {}
     stream_idx = 0
     for device in devices:
-        preset = AnalyticsPreset.objects.filter(
+        presets = AnalyticsPreset.objects.filter(
             device=device, shapes__isnull=False
-        ).exclude(shapes=[]).order_by("-updated_at").first()
-        if not preset:
+        ).exclude(shapes=[])
+        if not presets:
             stream_idx += 1
             continue
-        sections = _shapes_to_nvdsanalytics(preset.shapes, stream_idx)
-        for sec, props in sections.items():
-            if sec not in all_sections:
-                all_sections[sec] = dict(props)
-            else:
-                for k, v in props.items():
-                    if k not in ("enable", "class-id", "mode", "object-threshold"):
-                        all_sections[sec][k] = v
+        for preset in presets:
+            prefix = preset.preset_token if preset.preset_token != "__fixed__" else ""
+            sections = _shapes_to_nvdsanalytics(preset.shapes, stream_idx, prefix)
+            for sec, props in sections.items():
+                if sec not in all_sections:
+                    all_sections[sec] = dict(props)
+                else:
+                    for k, v in props.items():
+                        if k not in ("enable", "class-id", "mode", "object-threshold"):
+                            all_sections[sec][k] = v
         stream_idx += 1
 
     content = _serialize_nvdsanalytics(all_sections)

@@ -694,66 +694,9 @@ def analytics_shapes(request, device_id, preset_token):
 
 
 def _get_active_preset_for_device(device):
-    specs = device.camera_specs or {}
-    has_ptz = bool(specs.get("ptz_caps"))
+    from devices.utils import get_active_preset_for_device
 
-    if not has_ptz:
-        return device.analytics_presets.filter(preset_token="__fixed__").first()
-
-    profile_token = device.default_profile_token
-    if not profile_token:
-        return None
-
-    try:
-        from onvif_utils.client import OnvifClient
-        from onvif_utils.ptz import PTZService
-
-        client = OnvifClient(device.host, device.port, device.username, device.password)
-        ptz = PTZService(client)
-        status = ptz.get_status(profile_token)
-        presets = ptz.get_presets(profile_token)
-
-        def get_ptz_values(s):
-            if not s:
-                return 0, 0, 0
-            pos = getattr(s, "Position", None)
-            if not pos:
-                return 0, 0, 0
-            pan_tilt = getattr(pos, "PanTilt", None)
-            zoom = getattr(pos, "Zoom", None)
-            px = getattr(pan_tilt, "x", 0) if pan_tilt else 0
-            py = getattr(pan_tilt, "y", 0) if pan_tilt else 0
-            z = getattr(zoom, "x", 0) if zoom else 0
-            return px, py, z
-
-        current_pan, current_tilt, current_zoom = get_ptz_values(status)
-
-        best_match = None
-        best_dist = float("inf")
-        for p in presets:
-            ptoken = getattr(p, "token", "") or getattr(p, "_token", "")
-            preset_obj = device.analytics_presets.filter(preset_token=ptoken).first()
-            if not preset_obj:
-                continue
-            stored_pos = getattr(preset_obj, "ptz_position", None) or {}
-            pp = stored_pos.get("pan", current_pan)
-            pt_val = stored_pos.get("tilt", current_tilt)
-            pz = stored_pos.get("zoom", current_zoom)
-            dist = (
-                abs(pp - current_pan)
-                + abs(pt_val - current_tilt)
-                + abs(pz - current_zoom)
-            )
-            if dist < best_dist:
-                best_dist = dist
-                best_match = preset_obj
-
-        return best_match
-    except Exception as e:
-        logger.warning(
-            "Error determining active preset for device %s: %s", device.id, e
-        )
-        return None
+    return get_active_preset_for_device(device)
 
 
 @csrf_exempt
