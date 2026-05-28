@@ -33,6 +33,9 @@
             <div id="ptzOverlay{{ sfx }}"
                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; display: none;">
             </div>
+            <svg id="analyticsShapesOverlay{{ sfx }}" viewBox="0 0 1600 900" preserveAspectRatio="none"
+                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none;">
+            </svg>
             <div id="ivsOverlay{{ sfx }}"
                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none;">
             </div>
@@ -48,12 +51,28 @@
 <script>
 function toggleAnalytics(sfx) {
     var overlay = document.getElementById('ivsOverlay' + sfx);
+    var shapesSvg = document.getElementById('analyticsShapesOverlay' + sfx);
     var btn = document.getElementById('analyticsToggleBtn' + sfx);
     if (!overlay) return;
-    var isHidden = overlay.style.display === 'none' || overlay.style.display === '';
-    overlay.style.display = isHidden ? 'block' : 'none';
-    btn.classList.toggle('btn-outline-info', !isHidden);
-    btn.classList.toggle('btn-info', isHidden);
+    var isActive = typeof analyticsActive !== 'undefined' && analyticsActive;
+    if (isActive) {
+        analyticsActive = false;
+        overlay.style.display = 'none';
+        if (shapesSvg) { shapesSvg.style.display = 'none'; shapesSvg.innerHTML = ''; }
+        btn.classList.remove('btn-info');
+        btn.classList.add('btn-outline-info');
+        updateAnalyticsBadge('Off');
+    } else {
+        analyticsActive = true;
+        btn.classList.remove('btn-outline-info');
+        btn.classList.add('btn-info');
+        fetchShapesAndDraw();
+        if (Object.keys(activeEvents).length > 0) {
+            Object.values(activeEvents).forEach(function(ev) {
+                if (ev.data && ev.data.Object) drawIVSOverlay(ev.data.Object);
+            });
+        }
+    }
 }
 </script>
 {% endwith %}

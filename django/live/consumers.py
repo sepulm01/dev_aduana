@@ -60,6 +60,7 @@ class DeviceConsumer(AsyncWebsocketConsumer):
                     "action": event.get("action", ""),
                     "data": event.get("data", {}),
                     "timestamp": event.get("timestamp", ""),
+                    "active_preset": event.get("active_preset"),
                 }
             )
         )

@@ -84,12 +84,14 @@ class RedisEventBridge:
             if channel_layer is None:
                 logger.warning("Channel layer not available")
                 return
+            active_token = self._preset_cache.get(device_id) or None
             group_name = f"device_{device_id}"
             async_to_sync(channel_layer.group_send)(
                 group_name,
                 {
                     "type": "ivs_event",
                     "device_id": device_id,
+                    "active_preset": active_token,
                     **filtered,
                 },
             )
