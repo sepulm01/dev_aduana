@@ -1,18 +1,20 @@
 import logging
-from datetime import datetime, timezone
+import time
 
 from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from celery import shared_task
-from django.db import transaction
+from channels.layers import get_channel_layer
 
 from devices.models import Device
-from onvif_utils.drivers import get_driver
-from onvif_utils.drivers.base import DriverError
+from devices.utils import _get_redis, regenerate_config_and_restart
 
 logger = logging.getLogger(__name__)
 
 MAX_FAILURE_COUNT = 3
+FPS_MIN_THRESHOLD = 6
+FPS_ZERO_CYCLES = 12
+FPS_LOW_CYCLES = 18
+OFFLINE_RESTART_SECONDS = 120
 
 
 def _broadcast_device_status(device_id, online):
@@ -27,19 +29,29 @@ def _broadcast_device_status(device_id, online):
     )
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=5)
-def poll_camera_motion(self, device_id):
-    with transaction.atomic():
-        try:
-            device = Device.objects.select_for_update().get(id=device_id)
-        except Device.DoesNotExist:
-            logger.warning("Device %s not found, skipping motion poll", device_id)
-            return
+@shared_task
+def orchestrate_cameras():
+    r = _get_redis()
+    sources = r.hgetall("deepstream:sources")
 
-        driver = get_driver(device)
-        ping_result = driver.ping()
-        online = ping_result["online"]
-        last_seen = ping_result["last_seen"]
+    need_restart = False
+
+    for device in Device.objects.all():
+        cid = str(device.id)
+
+        if not device.username or not device.password:
+            continue
+
+        try:
+            from onvif_utils.drivers import get_driver
+
+            driver = get_driver(device)
+            ping_result = driver.ping()
+            online = ping_result["online"]
+            last_seen = ping_result["last_seen"]
+        except Exception:
+            online = False
+            last_seen = None
 
         status_changed = False
         if online:
@@ -48,279 +60,161 @@ def poll_camera_motion(self, device_id):
                 if not device.is_online:
                     device.is_online = True
                     status_changed = True
+                    _broadcast_device_status(device.id, True)
+                    r.delete(f"device:{cid}:offline_since")
+                Device.objects.filter(id=device.id).update(
+                    is_online=True, failure_count=0, last_seen=last_seen
+                )
+                if not status_changed:
+                    device.is_online = True
+                    device.failure_count = 0
             if last_seen:
                 device.last_seen = last_seen
-            device.save(update_fields=["is_online", "failure_count", "last_seen"])
-            if status_changed:
-                _broadcast_device_status(device_id, True)
+            if not status_changed:
+                device.save(
+                    update_fields=["is_online", "failure_count", "last_seen"]
+                )
+            r.delete(f"device:{cid}:offline_since")
         else:
             device.failure_count += 1
             if device.failure_count >= MAX_FAILURE_COUNT and device.is_online:
                 device.is_online = False
                 status_changed = True
+                _broadcast_device_status(device.id, False)
+                r.setex(f"device:{cid}:offline_since", 86400, str(int(time.time())))
             device.save(update_fields=["failure_count", "is_online"])
-            if status_changed:
-                _broadcast_device_status(device_id, False)
 
-        device.refresh_from_db()
-        current_motion_active = device.motion_active
-
-    try:
-        result = driver.poll_motion()
-    except DriverError as e:
-        logger.warning("Error polling motion for device %s: %s", device_id, e)
-        return
-    except Exception as e:
-        logger.warning(
-            "Unexpected error polling motion for device %s: %s", device_id, e
-        )
-        return
-
-    if result is None:
-        return
-
-    motion_active = result["motion"]
-    if motion_active != current_motion_active:
-        Device.objects.filter(id=device_id).update(motion_active=motion_active)
-
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f"device_{device_id}",
-            {
-                "type": "motion_event",
-                "device_id": str(device_id),
-                "timestamp": result.get(
-                    "timestamp", datetime.now(timezone.utc).isoformat()
-                ),
-                "metadata": {
-                    "motion": motion_active,
-                    **(result.get("metadata") or {}),
-                },
-            },
-        )
-
-
-@shared_task
-def poll_all_cameras():
-    for device in Device.objects.all():
-        poll_camera_motion.delay(device.id)
-
-
-@shared_task
-def heartbeat_deepstream_streams():
-    import json
-    import os
-
-    import redis
-    import requests
-
-    r = redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-    ds_info_url = "http://computer-vision:9000/api/v1/stream/get-stream-info"
-
-    try:
-        resp = requests.get(ds_info_url, timeout=5)
-        info = resp.json()
-        active_streams = info.get("stream-info", {}).get("stream-info", [])
-    except Exception:
-        logger.warning("Heartbeat: failed to query DS stream-info")
-        return
-
-    active_camera_ids = set()
-    source_to_camera = {}
-    for s in active_streams:
-        cid = s.get("camera_id", "")
-        sid = s.get("source_id", -1)
-        if cid:
-            active_camera_ids.add(cid)
-            source_to_camera[sid] = cid
-
-    if "_primer_" not in active_camera_ids:
-        try:
-            requests.post(
-                "http://computer-vision:9000/api/v1/stream/add",
-                json={
-                    "key": "heartbeat-primer",
-                    "value": {
-                        "camera_id": "_primer_",
-                        "camera_name": "primer",
-                        "camera_url": "file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4",
-                        "change": "camera_add",
-                    },
-                },
-                timeout=5,
-            )
-            logger.info("Heartbeat: re-added primer")
-        except Exception:
-            pass
-
-    devices = Device.objects.filter(is_online=True, deepstream_enabled=True)
-    for device in devices:
-        cid = str(device.id)
-        if cid not in active_camera_ids:
-            uri = device.stream_uris.get(device.default_profile_token, "")
-            if not uri:
+        source_id = None
+        for k, v in sources.items():
+            if isinstance(k, bytes):
+                k = k.decode()
+            if k.endswith(":camera_id") or k.endswith(":fps") or k.endswith(":url"):
                 continue
-            clean = uri.split("&unicast=true")[0]
-            logger.info("Heartbeat: device %s missing in DS, adding", device.id)
-            r.publish(
-                "deepstream:commands",
-                json.dumps(
-                    {
-                        "action": "start_preview",
-                        "device_id": device.id,
-                        "camera_id": cid,
-                        "rtsp_uri": clean,
-                        "camera_name": device.name,
-                        "force": True,
-                    }
-                ),
-            )
-            continue
+            if isinstance(v, bytes):
+                v = v.decode()
+            if v == cid:
+                source_id = int(k)
+                break
 
-        active_src = next(
-            (s["source_id"] for s in active_streams if s.get("camera_id") == cid),
-            None,
-        )
-        if active_src is not None:
-            fps_key = f"device:{device.id}:fps_zero_count"
-            fps_val = r.hget("deepstream:sources", f"{active_src}:fps")
-            current_fps = int(fps_val) if fps_val else 0
+        if device.is_online and source_id is not None:
+            fps = r.hget("deepstream:sources", f"{source_id}:fps")
+            current_fps = int(fps) if fps else 0
 
             if current_fps == 0:
-                count = r.incr(fps_key)
-                r.expire(fps_key, 120)
-                if count >= 2:
-                    r.delete(fps_key)
-                    uri = device.stream_uris.get(device.default_profile_token, "")
-                    if uri:
-                        clean = uri.split("&unicast=true")[0]
-                        logger.warning(
-                            "Heartbeat: device %s FPS=0 for 2 cycles, recovering",
-                            device.id,
-                        )
-                        r.publish(
-                            "deepstream:commands",
-                            json.dumps(
-                                {
-                                    "action": "stop_preview",
-                                    "device_id": device.id,
-                                    "camera_id": cid,
-                                    "rtsp_uri": clean,
-                                }
-                            ),
-                        )
-                        r.publish(
-                            "deepstream:commands",
-                            json.dumps(
-                                {
-                                    "action": "start_preview",
-                                    "device_id": device.id,
-                                    "camera_id": cid,
-                                    "rtsp_uri": clean,
-                                    "camera_name": device.name,
-                                    "force": True,
-                                }
-                            ),
-                        )
+                key = f"device:{cid}:fps_zero"
+                count = r.incr(key)
+                if count == 1:
+                    r.expire(key, 180)
+                if count >= FPS_ZERO_CYCLES:
+                    r.delete(key)
+                    r.setex(f"device:{cid}:pending_restart", 3600, "1")
+                    need_restart = True
+                    logger.warning(
+                        "Device %s FPS=0 for %d cycles, triggering restart",
+                        cid, FPS_ZERO_CYCLES,
+                    )
+            elif current_fps < FPS_MIN_THRESHOLD:
+                key = f"device:{cid}:fps_low"
+                count = r.incr(key)
+                if count == 1:
+                    r.expire(key, 180)
+                if count >= FPS_LOW_CYCLES:
+                    r.delete(key)
+                    r.setex(f"device:{cid}:pending_restart", 3600, "1")
+                    need_restart = True
+                    logger.warning(
+                        "Device %s FPS=%d < %d for %d cycles, triggering restart",
+                        cid, current_fps, FPS_MIN_THRESHOLD, FPS_LOW_CYCLES,
+                    )
             else:
-                r.delete(fps_key)
+                r.delete(f"device:{cid}:fps_zero")
+                r.delete(f"device:{cid}:fps_low")
+
+        elif not device.is_online:
+            offline_since = r.get(f"device:{cid}:offline_since")
+            if offline_since:
+                elapsed = time.time() - int(offline_since)
+                if elapsed > OFFLINE_RESTART_SECONDS:
+                    pending = r.get(f"device:{cid}:pending_restart")
+                    if not pending:
+                        r.setex(f"device:{cid}:pending_restart", 3600, "1")
+                        need_restart = True
+
+    if need_restart:
+        regenerate_config_and_restart()
+        r = _get_redis()
+        for device in Device.objects.all():
+            cid = str(device.id)
+            r.delete(f"device:{cid}:fps_zero")
+            r.delete(f"device:{cid}:fps_low")
+            r.delete(f"device:{cid}:pending_restart")
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=10)
-def refresh_device_streams(self, device_id):
-    import os
-
-    import redis
-
-    r = redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-    lock_key = f"device:stream_refresh:{device_id}"
-    if not r.set(lock_key, "1", nx=True, ex=30):
+@shared_task
+def refresh_device_streams(device_id):
+    try:
+        device = Device.objects.get(id=device_id)
+    except Device.DoesNotExist:
         return
 
+    if not device.username or not device.password:
+        return
+
+    from onvif_utils.client import OnvifClient
+    from onvif_utils.media import MediaService
+    from onvif_utils.mediamtx_api import MediaMTXAPI
+
     try:
-        try:
-            device = Device.objects.get(id=device_id)
-        except Device.DoesNotExist:
-            return
-
-        if not device.username or not device.password:
-            return
-
-        from onvif_utils.client import OnvifClient
-        from onvif_utils.media import MediaService
-        from onvif_utils.mediamtx_api import MediaMTXAPI
-
         client = OnvifClient(
             device.host, device.port, device.username, device.password
         )
         svc = MediaService(client)
         profiles = svc.get_profiles()
+    except Exception as e:
+        logger.warning("refresh_device_streams(%s) ONVIF failed: %s", device_id, e)
+        return
 
-        stream_uris = {}
-        profiles_tokens = []
-        for p in profiles:
+    stream_uris = {}
+    profiles_tokens = []
+    uris = []
+    for p in profiles:
+        try:
             uri = svc.get_stream_uri(
-                p["token"],
-                username=device.username,
-                password=device.password,
+                p["token"], username=device.username, password=device.password
             )
             if uri:
-                profiles_tokens.append(p["token"])
                 stream_uris[p["token"]] = uri
-
-        device._skip_stream_refresh = True
-        device.stream_uris = stream_uris
-        device.save(update_fields=["stream_uris"])
-
-        mtx = MediaMTXAPI()
-        mtx.ensure_camera_streams(
-            device.id, profiles_tokens, list(stream_uris.values())
-        )
-
-        if profiles_tokens:
-            import json as _json
-
-            old_uri = device.stream_uris.get(profiles_tokens[0], "") if device.stream_uris else ""
-            clean_old = old_uri.split("&unicast=true")[0] if old_uri else ""
-            clean_uri = stream_uris[profiles_tokens[0]].split("&unicast=true")[0]
-
-            if clean_old and clean_old != clean_uri:
-                r.publish(
-                    "deepstream:commands",
-                    _json.dumps(
-                        {
-                            "action": "stop_preview",
-                            "device_id": device_id,
-                            "camera_id": str(device_id),
-                            "rtsp_uri": clean_old,
-                        }
-                    ),
-                )
-
-            r.publish(
-                "deepstream:commands",
-                _json.dumps(
-                    {
-                        "action": "start_preview",
-                        "device_id": device_id,
-                        "camera_id": str(device_id),
-                        "rtsp_uri": clean_uri,
-                        "camera_name": device.name,
-                        "force": True,
-                    }
-                ),
+                profiles_tokens.append(p["token"])
+                uris.append(uri)
+        except Exception as e:
+            logger.warning(
+                "refresh_device_streams(%s) get_stream_uri(%s) failed: %s",
+                device_id, p["token"], e,
             )
 
-        logger.info(
-            "Stream URIs refreshed for device %s: %d profiles",
-            device_id,
-            len(profiles_tokens),
-        )
+    if not stream_uris:
+        logger.warning("refresh_device_streams(%s) no stream URIs obtained", device_id)
+        return
+
+    if not device.default_profile_token:
+        device.default_profile_token = profiles_tokens[0]
+
+    device._skip_stream_refresh = True
+    device.stream_uris = stream_uris
+    device.save(update_fields=["stream_uris", "default_profile_token"])
+    delattr(device, "_skip_stream_refresh")
+
+    try:
+        mtx = MediaMTXAPI()
+        default_uri = stream_uris.get(device.default_profile_token, "")
+        if default_uri:
+            mtx.ensure_camera_streams(
+                device.id, [device.default_profile_token], [default_uri]
+            )
     except Exception as e:
         logger.warning(
-            "Stream refresh failed for device %s: %s", device_id, e
+            "refresh_device_streams(%s) MediaMTX sync failed: %s", device_id, e
         )
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=e)
-    finally:
-        r.delete(lock_key)
+        return
+
+    regenerate_config_and_restart()

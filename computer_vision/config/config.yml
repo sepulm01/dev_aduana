@@ -1,0 +1,23 @@
+source-list:
+  list: "rtsp://sepulm01:Aeropuerto51@192.168.1.109:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif;rtsp://sepulm01:Aeropuerto51@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif;"
+
+streammux:
+  batch-size: 2
+  batched-push-timeout: 40000
+  width: 1920
+  height: 1080
+
+primary-gie:
+  plugin-type: 0
+  config-file-path: ../models/peoplenet/pgie_config.yml
+
+osd:
+  process-mode: 0
+  display-text: 1
+
+tiler:
+  width: 1280
+  height: 720
+
+sink:
+  qos: 0

@@ -1,4 +1,3 @@
-import base64
 import json
 import logging
 import os
@@ -18,7 +17,6 @@ from onvif_utils.drivers.base import DriverError
 from onvif_utils.media import MediaService
 from onvif_utils.mediamtx_api import MediaMTXAPI
 from onvif_utils.ptz import PTZService
-from onvif_utils.snapshot import capture_frame_rtsp
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +102,7 @@ def add_device(request):
                 status=400,
             )
 
-        device = Device.objects.create(
+        device = Device(
             name=data.get("name", host or ""),
             host=host,
             port=port,
@@ -120,45 +118,12 @@ def add_device(request):
             is_online=True,
             camera_specs=dict(DEFAULT_CAMERA_SPECS),
         )
+        device._skip_stream_refresh = True
+        device.save()
 
-        if username and password:
-            try:
-                svc = MediaService(client)
-                profiles = svc.get_profiles()
-                profiles_tokens = []
-                stream_uris = []
-                device.stream_uris = {}
-                for p in profiles:
-                    uri = svc.get_stream_uri(
-                        p["token"], username=device.username, password=device.password
-                    )
-                    if uri:
-                        profiles_tokens.append(p["token"])
-                        stream_uris.append(uri)
-                        device.stream_uris[p["token"]] = uri
+        from devices.tasks import refresh_device_streams
 
-                mtx = MediaMTXAPI()
-                mtx.ensure_camera_streams(device.id, profiles_tokens, stream_uris)
-
-                if profiles_tokens and stream_uris:
-                    try:
-                        frame_bytes = capture_frame_rtsp(stream_uris[0], timeout=10)
-                        snapshot_b64 = base64.b64encode(frame_bytes).decode()
-                        AnalyticsPreset.objects.update_or_create(
-                            device=device,
-                            preset_token="__fixed__",
-                            defaults={"snapshot": snapshot_b64},
-                        )
-                    except Exception as snap_e:
-                        logger.warning(
-                            "Snapshot capture failed for device %s: %s",
-                            device.id,
-                            snap_e,
-                        )
-            except Exception as e:
-                logger.warning(
-                    "Error setting up streams for device %s: %s", device.id, e
-                )
+        refresh_device_streams.delay(device.id)
 
         return JsonResponse({"ok": True, "id": device.id})
     return JsonResponse({"error": "POST required"}, status=405)

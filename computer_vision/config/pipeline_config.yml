@@ -1,0 +1,45 @@
+################################################################################
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
+################################################################################
+
+streammux:
+  live-source: 1
+  batch-size: 3
+  batched-push-timeout: 33333
+  width: 1920
+  height: 1080
+  gpu-id: 0
+
+primary-gie:
+  plugin-type: 0
+  config-file-path: ../models/peoplenet/pgie_config.yml
+
+tracker:
+  tracker-width: 640
+  tracker-height: 384
+  gpu-id: 0
+  ll-lib-file: /opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so
+  ll-config-file: config_tracker_IOU.yml
+
+analytics:
+  enable: 1
+  config-file: config_nvdsanalytics.txt
+
+osd:
+  process-mode: 1
+  display-text: 1
+
+tiler:
+  width: 1280
+  height: 720
+
+sink:
+  qos: 0

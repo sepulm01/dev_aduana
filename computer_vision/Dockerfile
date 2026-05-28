@@ -4,9 +4,7 @@ WORKDIR /opt/nvidia/deepstream/deepstream/
 RUN bash user_additional_install.sh
 
 RUN apt-get update && apt-get install -y \
-    libjsoncpp-dev \
     libhiredis-dev \
-    libcurl4-gnutls-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . /opt/computer_vision/
@@ -16,5 +14,6 @@ ENV CUDA_VER=12.8
 RUN make
 
 WORKDIR /opt/computer_vision/config
+ENV DISPLAY=${DISPLAY}
 ENTRYPOINT ["/opt/nvidia/deepstream/deepstream-8.0/entrypoint.sh"]
-CMD ["../app/deepstream-server-app", "./dsserver_config.yml"]
+CMD ["../app/pipeline-test3", "./config.yml"]

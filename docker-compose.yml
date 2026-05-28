@@ -44,6 +44,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./deepstream-service/app/config:/opt/deepstream-app/config:rw
       - ./django/media:/app/media
     depends_on:
@@ -76,6 +78,9 @@ services:
     environment:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./computer_vision/config:/opt/computer_vision/config:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,6 +94,9 @@ services:
     environment:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./computer_vision/config:/opt/computer_vision/config:rw
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,7 +181,7 @@ services:
     restart: unless-stopped
     runtime: nvidia
     environment:
-      - HEADLESS=1
+      - DISPLAY=${DISPLAY}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
       - GST_DEBUG=1
@@ -185,7 +193,7 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /var/www/dev_security/videos:/opt/videos:ro
       - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/deepstream-app/config:rw
+      - ./computer_vision/config:/opt/computer_vision/config:rw
 
   nginx:
     image: nginx:alpine

@@ -82,8 +82,8 @@ All services connect via Docker DNS `redis://redis:6379` — never hardcode `127
 | `redis` | Message broker + cache (redis:7-alpine) |
 | `django-http` | REST API + UI (gunicorn:8000) |
 | `django-asgi` | WebSockets (daphne:8001) |
-| `celery-worker` | Async tasks (poll motion) |
-| `celery-beat` | Scheduler (every 5s) |
+| `celery-worker` | Async tasks (camera orchestrator) |
+| `celery-beat` | Scheduler (orchestrate_cameras every 5s) |
 | `redis-event-bridge` | Redis `device:*:events` → Channels |
 | `face-receiver` | TCP :12348, face crops/embeddings → `Detection` records |
 | `mediamtx` | RTSP:8554, WebRTC:8889, API:9997 |
@@ -94,21 +94,63 @@ All services connect via Docker DNS `redis://redis:6379` — never hardcode `127
 
 MediaMTX: stream naming `cam_{device_id}_{profile_token}`, `_hw` suffix for transcoded. ffmpeg: `-c:v libx264 -preset ultrafast -tune zerolatency -c:a copy`. API auth: `admin:mediamtx_admin_pass`. RTSP URLs must percent-encode `+` → `%2B`.
 
+## Camera Stream Standard
+
+### Credentials
+`Device.username` / `Device.password` are the **single source of truth** for all camera access (ONVIF + RTSP). These are the ONVIF credentials discovered or entered during device setup.
+
+ONVIF `GetStreamUri(username, password)` returns an RTSP URL with credentials embedded and `&proto=Onvif` appended — this parameter tells the camera's RTSP server to authenticate using the ONVIF user. Both DeepStream and MediaMTX must use this URL **verbatim**.
+
+If a camera ever requires different RTSP credentials, add `rtsp_username` / `rtsp_password` fields to the `Device` model as a separate override.
+
+### RTSP URL — verbatim only
+The RTSP URL stored in `Device.stream_uris[profile_token]` is the exact output of `MediaService.get_stream_uri()`. It MUST NOT be modified, stripped, split, or reconstructed. This includes the full query string (`&unicast=true&proto=Onvif`) and embedded credentials.
+
+**Transformations allowed (and required):**
+- `onvif_utils/media.py:get_stream_uri()` — injects `username:password` into the netloc (ONVIF returns a credential-less URL)
+- `onvif_utils/mediamtx_api.py:_encode_rtsp_url()` — percent-encodes special chars in credentials (`+` → `%2B`) before passing to ffmpeg
+
+**Transformations forbidden:**
+- `split()` / `replace()` / `strip()` on the URL string
+- Removing or reordering query parameters
+- Manually reconstructing the URL
+
+### Profile selection
+Only the `Device.default_profile_token` profile is used for DeepStream and MediaMTX. All other ONVIF profiles are stored in `stream_uris` for reference but not streamed.
+
+### Stream flow
+```
+Device.username/password (ONVIF)
+  └─→ MediaService.get_stream_uri(token, user, pass)
+        └─→ "rtsp://user:pass@host:554/path?params&unicast=true&proto=Onvif"
+              └─→ Device.stream_uris[token]  (verbatim, never modified)
+                    ├─→ config.yml → DeepStream GPU (rtspsrc, nvv4l2decoder)
+                    └─→ MediaMTX _hw → ffmpeg CPU → WebRTC (runOnDemand)
+```
+
+### Recovery
+- **Orchestrator** (`orchestrate_cameras`, every 5s): ONVIF ping + Redis FPS check on all devices
+  - FPS=0 for 12 cycles (~60s) on online device → triggers `regenerate_config_and_restart()`
+  - FPS<6 for 18 cycles (~90s) on online device → triggers `regenerate_config_and_restart()`
+  - Device offline > 120s → triggers `regenerate_config_and_restart()`
+- **`regenerate_config_and_restart()`**: repairs MediaMTX paths via `ensure_camera_streams()`, regenerates `config.yml`, updates Redis `deepstream:sources` mapping, restarts `computer-vision` container via Docker socket
+- **Startup daemon** (`apps.py`): full ONVIF refresh (profiles + URIs) for all cameras, MediaMTX path sync, config regeneration, pipeline restart
+
 ## Management Commands
 
 | Command | App | Purpose |
 |---|---|---|
 | `sync_mediamtx` | devices | Recreates MediaMTX paths for cameras with credentials |
-| `deepstream_control` | devices | Sends `add`/`remove`/`status` to DeepStream via Redis pubsub |
+| `ensure_heartbeat` | devices | Ensures `orchestrate_cameras` periodic task in DB, cleans stale entries |
 | `redis_event_bridge` | live | Daemon: subscribes Redis `device:*:events` → Channels WebSocket groups |
 | `face_receiver` | live | TCP server (:12348): face `Detection` records, cosine-distance face matching, `FACE_MATCH_COOLDOWN_SECONDS` dedup |
 
 ## DeepStream
 
 ### Build & Model Selection
-- NVIDIA DeepStream 8.0, CUDA 12.8, binary `/opt/deepstream-app/bridge/deepstream-server-app`
+- NVIDIA DeepStream 8.0, CUDA 12.8, binary `/opt/computer_vision/app/pipeline-test3` (C, single file)
 - Model switch: `MODEL=<profile>` env var, `entrypoint-model.sh` symlinks `/opt/models/active/` to profile
-- **PERF_MODE=1** for benchmarking: `nvmultiurisrcbin → nvdslogger → fakesink` (no inference)
+- Container: `computer-vision` (runtime: nvidia), config at `/opt/computer_vision/config/config.yml`
 - `people-facerec` uses det_10g as PGIE with custom RetinaFace parser (`libnvds_retinaface_parser.so`): SGIE0=`2d106det.onnx` (106-pt landmarks, 3×192×192), SGIE1=`w600k_r50.onnx` (ArcFace 512-d, 3×112×112). Both classifier mode, operate on face bboxes (class_id=0). Redis output format: `Faces[object_id, quality_score, landmarks(212 floats), embedding(512 floats)]`. Quality gate: % of 106 landmark points within [0,1] normalized region.
 
 ### Pipeline
@@ -119,24 +161,30 @@ nvmultiurisrcbin → queue1 → identity → nvinfer(pgie) → queue2 → nvtrac
 
 **Important**: the `else` (non-REST-server, `within_multiurisrcbin: 1`) path must include `nvtracker, queue_t` in the `gst_element_link_many` chain — same as the REST-server path. Both paths use the same pipeline elements.
 
+### Static-source architecture
+- Django generates `config.yml` from `Device.objects` via `config_generator.py`
+- Pipeline starts cold with all cameras defined in `config.yml`
+- On camera changes: `regenerate_config_and_restart()` → new `config.yml` → `docker restart computer-vision` (~10s downtime)
+- No dynamic add/remove at runtime — cold-start static pipeline
+
 ### Stream-to-Device Mapping
-- DS REST API accepts `camera_id` (string, e.g. `str(device.id)`) as persistent identifier → stored as DS `sensorId`
-- `source_id` is an auto-incremented integer that changes on stream reconnect — **never** used for device mapping
-- `RedisBridge::handle_command("start_preview")` maps `camera_id` → `source_id` → `device_id` via stream info query
-- Redis `deepstream:sources` hash: `{source_id} → {device_id}` used as fallback in the analytics probe
+- `source_id` is an auto-incremented integer matching the position in `config.yml`'s `source-list`
+- Redis `deepstream:sources` hash: `{source_id} → {device_id}` mapped by Django after config gen
+- Analytics probe reads `source_id` from `nvdslogger` pad, maps to `device_id` via Redis
 - Each stream maps to exactly one `Device.id` — no cross-mapping
-- On disconnect/reconnect: `stop_preview` cleans Redis mapping, `start_preview` re-adds with same `camera_id`, DS assigns new `source_id`, mapping updated
 
 ### TensorRT 10.9
 - **`.tlt`/`.etlt` models INCOMPATIBLE** — UFF parser removed. Only use `_decrypted`/`_onnx` models from NGC.
 - `nvinfer` auto-converts ONNX → `.engine` (`onnx-file` config key). det_10g covers face detection.
-- REST API: 21 endpoints on port 8080. Key: `GET /health/get-dsready-state`, `POST /stream/add|remove`, `POST /app/quit`. Full list: `deepstream-service/bridge/README`.
+- Binary: `pipeline_test3.c`, compiled with `cc`, links `-lhiredis`. No REST server dependency.
 
 ## Celery, WebSocket, PTZ & Drivers
 
 ### Celery
-- `@shared_task` (not `@task`), `bind=True` + `max_retries=N`. Beat: `poll_all_cameras` every 5s.
+- `@shared_task` (not `@task`). Beat: `orchestrate_cameras` every 5s.
+- Single orchestrator (`devices/tasks.py:orchestrate_cameras`): ONVIF ping + Redis FPS check + recovery restart.
 - Broadcast via `channels.layers.get_channel_layer()` + `async_to_sync` to `device_{device_id}`.
+- DB schedule managed by `ensure_heartbeat` command — no duplicate entries permitted.
 
 ### WebSocket
 - `AsyncWebsocketConsumer`, events: `motion_event`, `device_status`. `receive()` handles `ping`→`pong`.
@@ -163,6 +211,7 @@ nvmultiurisrcbin → queue1 → identity → nvinfer(pgie) → queue2 → nvtrac
 - Do NOT hardcode Redis as `127.0.0.1` — use `redis://redis:6379`
 - Do NOT use `re_path`/`url` in URLconfs — `path()` only (except Channels WebSocket routing)
 - Do NOT use `gst_element_get_request_pad(tee, "sink_0")` — tee sink pad is static `"sink"`
+- Do NOT modify RTSP URLs from `stream_uris` — use verbatim. Only `get_stream_uri()` (credential injection) and `_encode_rtsp_url()` (percent-encoding) are allowed transformations.
 
 ## Detections / Face Recognition
 

@@ -81,8 +81,8 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BEAT_SCHEDULE = {
-    "poll-all-cameras-every-5s": {
-        "task": "devices.tasks.poll_all_cameras",
+    "orchestrate-cameras-every-5s": {
+        "task": "devices.tasks.orchestrate_cameras",
         "schedule": 5.0,
     },
 }

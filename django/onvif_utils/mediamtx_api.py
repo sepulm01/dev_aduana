@@ -18,13 +18,10 @@ class MediaMTXAPI:
         self.api_key = api_key or os.environ.get("MEDIAMTX_API_KEY", "")
 
     def _headers(self):
-        """Return Basic auth headers using admin/mediamtx_admin_pass."""
-        if self.api_key:
-            import base64
+        import base64
 
-            creds = base64.b64encode(b"admin:mediamtx_admin_pass").decode()
-            return {"Authorization": f"Basic {creds}"}
-        return {}
+        creds = base64.b64encode(b"admin:mediamtx_admin_pass").decode()
+        return {"Authorization": f"Basic {creds}"}
 
     def _post(self, path, **kwargs):
         """POST to path on MediaMTX API, return parsed JSON."""
@@ -64,6 +61,8 @@ class MediaMTXAPI:
         run_on_init_restart=False,
         run_on_ready=None,
         run_on_ready_restart=False,
+        run_on_demand=None,
+        run_on_demand_restart=False,
     ):
         """Register a new stream path in MediaMTX.
 
@@ -74,6 +73,8 @@ class MediaMTXAPI:
             run_on_init_restart: Restart command if it exits.
             run_on_ready: Command when source is ready (used for ffmpeg transcoding).
             run_on_ready_restart: Restart command if it exits.
+            run_on_demand: Command when at least one reader connects.
+            run_on_demand_restart: Restart command if it exits.
         """
         body = {}
         if source is not None:
@@ -84,6 +85,9 @@ class MediaMTXAPI:
         if run_on_ready is not None:
             body["runOnReady"] = run_on_ready
             body["runOnReadyRestart"] = run_on_ready_restart
+        if run_on_demand is not None:
+            body["runOnDemand"] = run_on_demand
+            body["runOnDemandRestart"] = run_on_demand_restart
         return self._post(f"/v3/config/paths/add/{name}", json=body)
 
     def delete_path(self, name):
@@ -137,59 +141,48 @@ class MediaMTXAPI:
         return uri
 
     def ensure_camera_streams(self, device_id, profiles, stream_uris):
-        """Create raw + transcoded H264 stream paths for a device.
+        """Create a single transcoded ``_hw`` path per device for WebRTC.
 
-        For each profile:
-          1. Create ``cam_{id}_{token}_hw`` as a ``source="publisher"`` path
-             (receives ffmpeg output).
-          2. Create ``cam_{id}_{token}`` pulling from the camera's RTSP URI,
-             with ``runOnReady`` that runs ffmpeg to transcode to the ``_hw`` path.
+        The DeepStream pipeline pulls RTSP directly from the camera, so no raw
+        MediaMTX path is needed.  The ``_hw`` path uses ``runOnDemand``:
+        ffmpeg transcodes only when a WebRTC viewer is connected.
 
-        Skips paths that already exist in MediaMTX.
+        Old raw paths (without ``_hw`` suffix) are cleaned up.
         """
-        existing = {p["name"] for p in self.list_paths()}
+        prefix = f"cam_{device_id}_"
+        all_paths = self.list_paths()
+        existing = {p["name"] for p in all_paths}
+
+        requested_hw = {f"cam_{device_id}_{t}_hw" for t in profiles}
+
+        for p in all_paths:
+            name = p["name"]
+            if name.startswith(prefix) and name not in requested_hw:
+                try:
+                    self.delete_path(name)
+                    existing.discard(name)
+                except requests.RequestException:
+                    pass
 
         for profile_token, stream_uri in zip(profiles, stream_uris):
-            raw_name = f"cam_{device_id}_{profile_token}"
-            hw_name = f"{raw_name}_hw"
+            hw_name = f"cam_{device_id}_{profile_token}_hw"
+            if hw_name in existing:
+                continue
 
+            encoded_source = self._encode_rtsp_url(stream_uri)
             ffmpeg_cmd = (
-                f'ffmpeg -rtsp_transport tcp -i "rtsp://127.0.0.1:8554/{raw_name}" '
+                f"ffmpeg -rtsp_transport tcp -i {encoded_source} "
                 f"-c:v libx264 -preset ultrafast -tune zerolatency -c:a copy "
                 f'-f rtsp "rtsp://127.0.0.1:8554/{hw_name}"'
             )
 
-            if hw_name not in existing:
-                try:
-                    self.add_path(
-                        hw_name,
-                        source="publisher",
-                        run_on_init=ffmpeg_cmd,
-                        run_on_init_restart=True,
-                    )
-                    existing.add(hw_name)
-                except requests.RequestException as e:
-                    print(f"Error adding path {hw_name}: {e}")
-
-            if raw_name not in existing:
-                try:
-                    encoded_source = self._encode_rtsp_url(stream_uri)
-                    ffmpeg_pull = (
-                        f"ffmpeg -rtsp_transport tcp -i {encoded_source} "
-                        f"-c copy -f rtsp rtsp://127.0.0.1:8554/{raw_name}"
-                    )
-                    self.add_path(
-                        raw_name,
-                        source="publisher",
-                        run_on_init=ffmpeg_pull,
-                        run_on_init_restart=True,
-                    )
-                    existing.add(raw_name)
-                except requests.RequestException as e:
-                    print(f"Error adding path {raw_name}: {e}")
-                    existing.add(raw_name)
-                except requests.RequestException as e:
-                    print(f"Error adding path {raw_name}: {e}")
-                    existing.add(raw_name)
-                except requests.RequestException as e:
-                    print(f"Error adding path {raw_name}: {e}")
+            try:
+                self.add_path(
+                    hw_name,
+                    source="publisher",
+                    run_on_demand=ffmpeg_cmd,
+                    run_on_demand_restart=True,
+                )
+                existing.add(hw_name)
+            except requests.RequestException as e:
+                print(f"Error adding path {hw_name}: {e}")
