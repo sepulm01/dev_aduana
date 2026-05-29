@@ -1,4 +1,7 @@
 import json
+import os
+
+import redis
 from urllib.parse import urlparse
 
 from django.shortcuts import render, get_object_or_404
@@ -41,4 +44,12 @@ def live_view(request, device_id):
     ctx = build_stream_context(device, profile_token, request.get_host())
     ctx["device"] = device
     ctx["profile_token"] = profile_token
+
+    try:
+        r = redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+        val = r.get(f"device:{device.id}:active_preset")
+        ctx["active_preset"] = val.decode() if val else ""
+    except Exception:
+        ctx["active_preset"] = ""
+
     return render(request, "live/live.html", ctx)

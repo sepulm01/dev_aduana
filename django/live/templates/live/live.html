@@ -204,7 +204,7 @@ ws.onerror = function(e) {
 let activeEvents = {};
 let eventLogItems = [];
 let analyticsActive = false;
-let currentActivePreset = null;
+let currentActivePreset = '{{ active_preset|default:"" }}';
 let analyticsShapes = null;
 const SHAPES_API = '/api/devices/' + DEVICE_ID + '/analytics/';
 
