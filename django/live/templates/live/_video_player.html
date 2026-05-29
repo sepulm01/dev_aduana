@@ -62,6 +62,7 @@ function toggleAnalytics(sfx) {
         btn.classList.remove('btn-info');
         btn.classList.add('btn-outline-info');
         updateAnalyticsBadge('Off');
+        updateActivePresetName('-');
     } else {
         analyticsActive = true;
         btn.classList.remove('btn-outline-info');

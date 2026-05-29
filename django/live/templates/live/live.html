@@ -27,6 +27,8 @@
                     <dd id="currentProfile">{{ profile_token|default:"-" }}</dd>
                     <dt>Stream</dt>
                     <dd id="streamName">{{ stream_name|default:"-" }}</dd>
+                    <dt>Preset activo</dt>
+                    <dd id="activePresetName">{{ active_preset_name|default:"-" }}</dd>
                     <dt>Estado PTZ</dt>
                     <dd id="ptzStatus">-</dd>
                     <dt>Eventos IVS</dt>
@@ -142,6 +144,11 @@ function updateAnalyticsBadge(status, presetName) {
     } else {
         badge.innerHTML = `<span class="badge bg-success"><i class="ti ti-chart-dots me-1"></i>Analytics: ${status}${presetName ? ' (' + presetName + ')' : ''}</span>`;
     }
+}
+
+function updateActivePresetName(name) {
+    const el = document.getElementById('activePresetName');
+    if (el) el.textContent = name || '-';
 }
 
 document.addEventListener('ptz-manual-move', function() {
@@ -308,6 +315,7 @@ function fetchShapesAndDraw() {
         .then(function(data) {
             analyticsShapes = data.shapes || [];
             drawAnalyticsShapes(analyticsShapes);
+            updateActivePresetName(data.preset_name || currentActivePreset);
             updateAnalyticsBadge(currentActivePreset, data.preset_name || currentActivePreset);
         })
         .catch(function(err) {

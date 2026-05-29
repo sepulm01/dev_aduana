@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from django.shortcuts import render, get_object_or_404
 from django.conf import settings
-from devices.models import Device
+from devices.models import Device, AnalyticsPreset
 
 DEFAULT_CAMERA_SPECS = {
     "h_fov_wide": 99.1,
@@ -48,8 +48,17 @@ def live_view(request, device_id):
     try:
         r = redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
         val = r.get(f"device:{device.id}:active_preset")
-        ctx["active_preset"] = val.decode() if val else ""
+        token = val.decode() if val else ""
+        ctx["active_preset"] = token
+        preset_name = ""
+        if token:
+            ap = AnalyticsPreset.objects.filter(
+                device=device, preset_token=token
+            ).first()
+            preset_name = ap.preset_name if ap else ""
+        ctx["active_preset_name"] = preset_name
     except Exception:
         ctx["active_preset"] = ""
+        ctx["active_preset_name"] = ""
 
     return render(request, "live/live.html", ctx)
