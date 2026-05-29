@@ -11,7 +11,7 @@
 
 <div class="row">
     <div class="col-md-8">
-        {% include "live/_video_player.html" with suffix="" ptz_supported=ptz_supported no_video_text="Selecciona un perfil y presiona Live" %}
+        {% include "live/_video_player.html" with suffix="" ptz_supported=ptz_supported no_video_text="No se pudo cargar el stream" %}
     </div>
 
     <div class="col-md-4">
@@ -38,17 +38,6 @@
                         <span class="badge bg-secondary"><i class="ti ti-chart-dots-off me-1"></i>Analytics: Off</span>
                     </dd>
                 </dl>
-                <div class="mb-2">
-                    <label class="form-label small text-muted">Perfil</label>
-                    <select id="profileSelect" class="form-select form-select-sm">
-                        <option value="">Seleccionar perfil...</option>
-                    </select>
-                </div>
-                <div class="mb-2">
-                    <a id="liveLink" href="#" class="btn btn-success d-none w-100">
-                        <i class="ti ti-player-play me-2"></i>Live
-                    </a>
-                </div>
                 <div id="presetDropdown" class="d-none">
                     <label class="form-label small text-muted">Presets</label>
                     <select id="presetSelect" class="form-select form-select-sm">
@@ -72,7 +61,6 @@ const MEDIAMTX_URL = '{{ webrtc_url }}';
 const PRESET_URL = '/api/ptz/{{ device.id }}/preset/';
 
 let currentProfileToken = '{{ profile_token|default:"" }}';
-let selectedProfileToken = '{{ profile_token|default:"" }}';
 
 window.ptzCtrl = new PTZControl({
     overlayEl: document.getElementById('ptzOverlay'),
@@ -91,43 +79,14 @@ async function loadProfiles() {
     try {
         const resp = await fetch(PROFILES_URL);
         const profiles = await resp.json();
-        const select = document.getElementById('profileSelect');
-
-        profiles.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.token;
-            const enc = p.video_encoder?.encoding || '';
-            const res = p.video_encoder?.resolution;
-            const resStr = (res?.width && res?.height) ? ` ${res.width}x${res.height}` : '';
-            opt.textContent = `${p.name}${(enc || resStr) ? ` (${enc}${resStr})` : ''}`;
-            if (p.ptz) opt.textContent += ' [PTZ]';
-            select.appendChild(opt);
-        });
 
         if (currentProfileToken) {
-            select.value = currentProfileToken;
-            onProfileChange();
+            ptzCtrl.setProfileToken(currentProfileToken);
         }
     } catch (e) {
         console.error('Error loading profiles:', e);
     }
 }
-
-function onProfileChange() {
-    const select = document.getElementById('profileSelect');
-    selectedProfileToken = select.value;
-    const link = document.getElementById('liveLink');
-
-    if (selectedProfileToken) {
-        link.href = `/live/${DEVICE_ID}/?profile=${selectedProfileToken}`;
-        link.classList.remove('d-none');
-    } else {
-        link.classList.add('d-none');
-    }
-    ptzCtrl.setProfileToken(selectedProfileToken);
-}
-
-document.getElementById('profileSelect').addEventListener('change', onProfileChange);
 
 let presetLoadTimeout = null;
 
@@ -167,7 +126,7 @@ document.getElementById('presetSelect').addEventListener('change', function() {
         }),
     }).then(r => r.json()).then(data => {
         if (data.ok) {
-            currentActivePreset = preset_token;
+            currentActivePreset = token;
             if (analyticsActive) fetchShapesAndDraw();
             updateAnalyticsBadge('Activo', data.preset);
         }

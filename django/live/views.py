@@ -37,7 +37,7 @@ def build_stream_context(device, profile_token, host_header=None):
 
 def live_view(request, device_id):
     device = get_object_or_404(Device, id=device_id)
-    profile_token = request.GET.get("profile")
+    profile_token = request.GET.get("profile") or device.default_profile_token or ""
     ctx = build_stream_context(device, profile_token, request.get_host())
     ctx["device"] = device
     ctx["profile_token"] = profile_token
