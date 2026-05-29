@@ -129,6 +129,7 @@ document.getElementById('presetSelect').addEventListener('change', function() {
     }).then(r => r.json()).then(data => {
         if (data.ok) {
             currentActivePreset = token;
+            updateActivePresetName(data.preset);
             if (analyticsActive) fetchShapesAndDraw();
             updateAnalyticsBadge('Activo', data.preset);
         }
