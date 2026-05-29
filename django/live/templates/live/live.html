@@ -342,16 +342,17 @@ function clearIVSOverlay() {
 }
 
 function fetchShapesAndDraw() {
-    var token = currentActivePreset || '__fixed__';
+    if (!currentActivePreset) return;
+    var token = currentActivePreset;
     fetch(SHAPES_API + token + '/shapes/')
         .then(function(r) { return r.json(); })
         .then(function(data) {
             analyticsShapes = data.shapes || [];
             drawAnalyticsShapes(analyticsShapes);
-            var status = currentActivePreset || 'Activo';
-            updateAnalyticsBadge(status, data.preset_name || currentActivePreset);
+            updateAnalyticsBadge(currentActivePreset, data.preset_name || currentActivePreset);
         })
-        .catch(function() {
+        .catch(function(err) {
+            console.error('fetchShapesAndDraw error:', err);
             analyticsShapes = null;
             clearAnalyticsShapes();
         });
@@ -361,7 +362,7 @@ function drawAnalyticsShapes(shapes) {
     const svg = document.getElementById('analyticsShapesOverlay');
     if (!svg) return;
     svg.innerHTML = '';
-    if (!shapes || !shapes.length) return;
+    if (!shapes || !shapes.length) { svg.style.display = 'none'; return; }
     svg.style.display = 'block';
 
     const FRAME_W = 1600, FRAME_H = 900;
@@ -370,19 +371,19 @@ function drawAnalyticsShapes(shapes) {
         if (shape.object === 'polygon' && shape.points && shape.points.length >= 3) {
             var color = (shape.type === 'OC') ? '#ff00ff' : '#00ff00';
             var points = shape.points.map(function(p) { return (p.x * FRAME_W) + ',' + (p.y * FRAME_H); }).join(' ');
-            svg.innerHTML += '<polygon points="' + points + '" fill="' + color + '" fill-opacity="0.15" stroke="' + color + '" stroke-width="2" stroke-dasharray="6,4"/>';
+            svg.insertAdjacentHTML('beforeend', '<polygon points="' + points + '" fill="' + color + '" fill-opacity="0.15" stroke="' + color + '" stroke-width="2" stroke-dasharray="6,4"/>');
         } else if (shape.object === 'line' && shape.x1 !== undefined) {
             var color = (shape.type === 'direction') ? '#ffff00' : '#00ffff';
             var x1 = shape.x1 * FRAME_W, y1 = shape.y1 * FRAME_H;
             var x2 = shape.x2 * FRAME_W, y2 = shape.y2 * FRAME_H;
-            svg.innerHTML += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + color + '" stroke-width="2" stroke-dasharray="8,4"/>';
+            svg.insertAdjacentHTML('beforeend', '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + color + '" stroke-width="2" stroke-dasharray="8,4"/>');
             var dx = x2 - x1, dy = y2 - y1;
             var len = Math.sqrt(dx * dx + dy * dy);
             if (len > 0) {
                 var midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
                 var nx = -dy / len * 6, ny = dx / len * 6;
                 var ax = dx / len * 10, ay = dy / len * 10;
-                svg.innerHTML += '<polygon points="' + (midX + ax) + ',' + (midY + ay) + ' ' + (midX + nx) + ',' + (midY + ny) + ' ' + (midX - nx) + ',' + (midY - ny) + '" fill="' + color + '"/>';
+                svg.insertAdjacentHTML('beforeend', '<polygon points="' + (midX + ax) + ',' + (midY + ay) + ' ' + (midX + nx) + ',' + (midY + ny) + ' ' + (midX - nx) + ',' + (midY - ny) + '" fill="' + color + '"/>');
             }
         }
     });
