@@ -71,7 +71,7 @@ def channel_delete(request, channel_id):
 
 @login_required
 def rule_list(request):
-    rules = NotificationRule.objects.select_related("channel", "device").all()
+    rules = NotificationRule.objects.select_related("channel", "incident_type").all()
     return render(request, "notifications/rule_list.html", {"rules": rules})
 
 
