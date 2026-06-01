@@ -4,6 +4,7 @@ import logging
 from django.shortcuts import render, get_object_or_404
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
 
 from notifications.models import NotificationChannel, NotificationRule
 from devices.models import Device
@@ -11,11 +12,13 @@ from devices.models import Device
 logger = logging.getLogger(__name__)
 
 
+@login_required
 def channel_list(request):
     channels = NotificationChannel.objects.all()
     return render(request, "notifications/channel_list.html", {"channels": channels})
 
 
+@login_required
 @csrf_exempt
 def channel_create(request):
     if request.method == "POST":
@@ -37,6 +40,7 @@ def channel_create(request):
     return render(request, "notifications/channel_form.html", {"channel": None})
 
 
+@login_required
 @csrf_exempt
 def channel_edit(request, channel_id):
     channel = get_object_or_404(NotificationChannel, id=channel_id)
@@ -54,6 +58,7 @@ def channel_edit(request, channel_id):
     return render(request, "notifications/channel_form.html", {"channel": channel})
 
 
+@login_required
 @csrf_exempt
 def channel_delete(request, channel_id):
     channel = get_object_or_404(NotificationChannel, id=channel_id)
@@ -63,11 +68,13 @@ def channel_delete(request, channel_id):
     return JsonResponse({"error": "POST required"}, status=405)
 
 
+@login_required
 def rule_list(request):
     rules = NotificationRule.objects.select_related("channel", "device").all()
     return render(request, "notifications/rule_list.html", {"rules": rules})
 
 
+@login_required
 @csrf_exempt
 def rule_create(request):
     channels = NotificationChannel.objects.filter(is_active=True)
@@ -107,6 +114,7 @@ def rule_create(request):
     })
 
 
+@login_required
 @csrf_exempt
 def rule_edit(request, rule_id):
     rule = get_object_or_404(NotificationRule, id=rule_id)
@@ -144,6 +152,7 @@ def rule_edit(request, rule_id):
     })
 
 
+@login_required
 @csrf_exempt
 def rule_delete(request, rule_id):
     rule = get_object_or_404(NotificationRule, id=rule_id)

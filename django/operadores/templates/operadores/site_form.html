@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}{% if site %}Editar{% else %}Nuevo{% endif %} Site{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="row align-items-center">
+        <div class="col">
+            <h2 class="page-title">{% if site %}Editar{% else %}Nuevo{% endif %} Site</h2>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'operador_site_list' %}" class="btn btn-ghost-secondary">
+                <i class="ti ti-arrow-left"></i> Volver
+            </a>
+        </div>
+    </div>
+</div>
+<div class="card">
+    <div class="card-body">
+        <form id="site-form" autocomplete="off">
+            <div class="mb-3">
+                <label class="form-label required">Nombre</label>
+                <input type="text" class="form-control" name="name" value="{{ site.name|default:"" }}" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Descripcion</label>
+                <textarea class="form-control" name="description" rows="2">{{ site.description|default:"" }}</textarea>
+            </div>
+            <div class="mb-3">
+                <label class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="is_active" {% if site.is_active or not site %}checked{% endif %}>
+                    <span class="form-check-label">Activo</span>
+                </label>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Canales del Site</label>
+                <div class="row">
+                    {% for ch in channels %}
+                    <div class="col-auto">
+                        <label class="form-check">
+                            <input class="form-check-input channel-check" type="checkbox" value="{{ ch.id }}"
+                                {% if site and ch in site.channels.all %}checked{% endif %}>
+                            <span class="form-check-label">{{ ch.name }} ({{ ch.get_channel_type_display }})</span>
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <h4 class="mt-4 mb-3">Niveles de Escalacion</h4>
+            <div id="levels-container">
+                {% if site %}
+                {% for lvl in site.escalation_levels.all %}
+                <div class="card card-sm mb-2 level-card">
+                    <div class="card-body">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-auto">
+                                <label class="form-label">Nivel</label>
+                                <input type="number" class="form-control level-num" value="{{ lvl.level }}" style="width:70px" min="1">
+                            </div>
+                            <div class="col">
+                                <label class="form-label">Timeout (segundos)</label>
+                                <input type="number" class="form-control level-timeout" value="{{ lvl.timeout_seconds }}">
+                            </div>
+                            <div class="col-auto mb-3">
+                                <label class="form-check form-switch">
+                                    <input class="form-check-input level-ack" type="checkbox" {% if lvl.requires_ack %}checked{% endif %}>
+                                    <span class="form-check-label">Requiere ack</span>
+                                </label>
+                            </div>
+                            <div class="col-auto">
+                                <button type="button" class="btn btn-sm btn-ghost-danger" onclick="removeLevel(this)">&times;</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-primary mb-3" onclick="addLevel()">
+                <i class="ti ti-plus"></i> Agregar Nivel
+            </button>
+
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">
+                    <i class="ti ti-device-floppy"></i> Guardar
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function addLevel() {
+    const container = document.getElementById("levels-container");
+    const idx = container.children.length + 1;
+    const html = `
+    <div class="card card-sm mb-2 level-card">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label">Nivel</label>
+                    <input type="number" class="form-control level-num" value="${idx}" style="width:70px" min="1">
+                </div>
+                <div class="col">
+                    <label class="form-label">Timeout (segundos)</label>
+                    <input type="number" class="form-control level-timeout" value="60">
+                </div>
+                <div class="col-auto mb-3">
+                    <label class="form-check form-switch">
+                        <input class="form-check-input level-ack" type="checkbox" checked>
+                        <span class="form-check-label">Requiere ack</span>
+                    </label>
+                </div>
+                <div class="col-auto">
+                    <button type="button" class="btn btn-sm btn-ghost-danger" onclick="removeLevel(this)">&times;</button>
+                </div>
+            </div>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML("beforeend", html);
+}
+
+function removeLevel(btn) { btn.closest(".level-card").remove(); }
+
+document.getElementById("site-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = fd.get("name").trim();
+    if (!name) return;
+
+    const channelIds = [];
+    document.querySelectorAll(".channel-check:checked").forEach(cb => channelIds.push(parseInt(cb.value)));
+
+    const levels = [];
+    document.querySelectorAll(".level-card").forEach(card => {
+        levels.push({
+            level: parseInt(card.querySelector(".level-num").value) || 1,
+            timeout_seconds: parseInt(card.querySelector(".level-timeout").value) || 60,
+            requires_ack: card.querySelector(".level-ack").checked,
+        });
+    });
+
+    const payload = {
+        name,
+        description: fd.get("description").trim(),
+        is_active: fd.get("is_active") === "on",
+        channels: channelIds,
+        levels,
+    };
+    {% if site %}
+    const url = "{% url 'operador_site_edit' site.id %}";
+    {% else %}
+    const url = "{% url 'operador_site_create' %}";
+    {% endif %}
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    });
+    if (resp.ok) {
+        window.location.href = "{% url 'operador_site_list' %}";
+    } else {
+        const data = await resp.json();
+        alert(data.error || "Error al guardar");
+    }
+});
+</script>
+{% endblock %}

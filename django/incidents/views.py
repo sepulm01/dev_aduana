@@ -4,6 +4,7 @@ import logging
 from django.shortcuts import render, get_object_or_404
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
 
 from incidents.models import IncidentType, EscalationLevel, Incident, IncidentLog
 from devices.models import Device
@@ -12,11 +13,13 @@ from notifications.models import NotificationChannel
 logger = logging.getLogger(__name__)
 
 
+@login_required
 def incident_type_list(request):
     types = IncidentType.objects.prefetch_related("levels__channel").all()
     return render(request, "incidents/incident_type_list.html", {"incident_types": types})
 
 
+@login_required
 @csrf_exempt
 def incident_type_create(request):
     channels = NotificationChannel.objects.filter(is_active=True)
@@ -52,6 +55,7 @@ def incident_type_create(request):
     })
 
 
+@login_required
 @csrf_exempt
 def incident_type_edit(request, type_id):
     itype = get_object_or_404(IncidentType, id=type_id)
@@ -86,6 +90,7 @@ def incident_type_edit(request, type_id):
     })
 
 
+@login_required
 @csrf_exempt
 def incident_type_delete(request, type_id):
     itype = get_object_or_404(IncidentType, id=type_id)
@@ -95,11 +100,13 @@ def incident_type_delete(request, type_id):
     return JsonResponse({"error": "POST required"}, status=405)
 
 
+@login_required
 def incident_list(request):
     incidents = Incident.objects.select_related("incident_type", "device").all()[:100]
     return render(request, "incidents/incident_list.html", {"incidents": incidents})
 
 
+@login_required
 @csrf_exempt
 def incident_ack(request, incident_id):
     incident = get_object_or_404(Incident, id=incident_id)

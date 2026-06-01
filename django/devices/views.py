@@ -8,6 +8,7 @@ import requests
 from django.shortcuts import render, get_object_or_404
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
 from devices.models import Device, IVSRule, AnalyticsPreset
 from live.views import DEFAULT_CAMERA_SPECS
 from onvif_utils.client import OnvifClient
@@ -21,11 +22,13 @@ from onvif_utils.ptz import PTZService
 logger = logging.getLogger(__name__)
 
 
+@login_required
 def dashboard(request):
     devices = Device.objects.all()
     return render(request, "devices/dashboard.html", {"devices": devices})
 
 
+@login_required
 def device_detail(request, device_id):
     device = get_object_or_404(Device, id=device_id)
     from live.views import build_stream_context
@@ -41,6 +44,7 @@ def device_detail(request, device_id):
 DISCOVERY_SERVICE_URL = os.environ.get("DISCOVERY_SERVICE_URL", "http://localhost:8765")
 
 
+@login_required
 @csrf_exempt
 def discover(request):
     if request.method == "POST":
@@ -55,6 +59,7 @@ def discover(request):
     return render(request, "devices/discover.html")
 
 
+@login_required
 @csrf_exempt
 def probe(request):
     if request.method == "POST":
@@ -73,6 +78,7 @@ def probe(request):
     return JsonResponse({"error": "POST required"}, status=405)
 
 
+@login_required
 @csrf_exempt
 def add_device(request):
     if request.method == "POST":
@@ -129,6 +135,7 @@ def add_device(request):
     return JsonResponse({"error": "POST required"}, status=405)
 
 
+@login_required
 @csrf_exempt
 def delete_device(request, device_id):
     if request.method == "POST":
@@ -140,6 +147,7 @@ def delete_device(request, device_id):
     return JsonResponse({"error": "POST required"}, status=405)
 
 
+@login_required
 def device_profiles(request, device_id):
     device = get_object_or_404(Device, id=device_id)
     try:
@@ -169,6 +177,7 @@ def device_profiles(request, device_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@login_required
 @csrf_exempt
 def scan_device(request, device_id):
     if request.method != "POST":
@@ -237,6 +246,7 @@ def scan_device(request, device_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@login_required
 @csrf_exempt
 def sync_time(request, device_id=None):
     if request.method != "POST":
@@ -271,6 +281,7 @@ def sync_time(request, device_id=None):
     return JsonResponse({"results": results})
 
 
+@login_required
 @csrf_exempt
 def set_default_profile(request, device_id):
     if request.method != "POST":
@@ -287,6 +298,7 @@ def set_default_profile(request, device_id):
     )
 
 
+@login_required
 @csrf_exempt
 def device_motion_config(request, device_id):
     device = get_object_or_404(Device, id=device_id)
@@ -313,6 +325,7 @@ def device_motion_config(request, device_id):
     return JsonResponse({"error": "GET or POST required"}, status=405)
 
 
+@login_required
 @csrf_exempt
 def device_ivs_config(request, device_id):
     device = get_object_or_404(Device, id=device_id)
@@ -371,6 +384,7 @@ def device_ivs_config(request, device_id):
     return JsonResponse({"error": "GET or POST required"}, status=405)
 
 
+@login_required
 @csrf_exempt
 def device_events(request, device_id):
     device = get_object_or_404(Device, id=device_id)
@@ -396,6 +410,7 @@ def device_events(request, device_id):
     )
 
 
+@login_required
 @csrf_exempt
 def device_event_listener_toggle(request, device_id):
     device = get_object_or_404(Device, id=device_id)
@@ -494,6 +509,7 @@ def _serialize_analytics_config(sections):
     return "\n".join(lines)
 
 
+@login_required
 @csrf_exempt
 def device_analytics_config(request, device_id):
     get_object_or_404(Device, id=device_id)
@@ -548,6 +564,7 @@ def device_analytics_config(request, device_id):
     return JsonResponse({"error": "GET or POST required"}, status=405)
 
 
+@login_required
 def analytics_editor(request, device_id):
     device = get_object_or_404(Device, id=device_id)
     specs = device.camera_specs or {}
@@ -564,6 +581,7 @@ def analytics_editor(request, device_id):
     )
 
 
+@login_required
 @csrf_exempt
 def analytics_snapshot(request, device_id):
     device = get_object_or_404(Device, id=device_id)
@@ -595,6 +613,7 @@ def analytics_snapshot(request, device_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@login_required
 @csrf_exempt
 def analytics_presets(request, device_id):
     device = get_object_or_404(Device, id=device_id)
@@ -653,6 +672,7 @@ def analytics_presets(request, device_id):
         )
 
 
+@login_required
 @csrf_exempt
 def analytics_shapes(request, device_id, preset_token):
     device = get_object_or_404(Device, id=device_id)
@@ -699,6 +719,7 @@ def _get_active_preset_for_device(device):
     return get_active_preset_for_device(device)
 
 
+@login_required
 @csrf_exempt
 def analytics_apply(request, device_id):
     if request.method != "POST":
@@ -738,6 +759,7 @@ def analytics_apply(request, device_id):
     )
 
 
+@login_required
 @csrf_exempt
 def analytics_disable(request, device_id):
     if request.method != "POST":
@@ -752,6 +774,7 @@ def analytics_disable(request, device_id):
     return JsonResponse({"ok": True})
 
 
+@login_required
 @csrf_exempt
 def analytics_goto_and_apply(request, device_id):
     if request.method != "POST":
@@ -843,6 +866,7 @@ def _publish_deepstream_command(payload):
         logger.warning("Failed to publish to deepstream: %s", e)
 
 
+@login_required
 @csrf_exempt
 def deepstream_preview_start(request, device_id):
     if request.method != "POST":
@@ -864,6 +888,7 @@ def deepstream_preview_start(request, device_id):
     return JsonResponse({"ok": True, "stream_uri": stream_uri})
 
 
+@login_required
 @csrf_exempt
 def deepstream_preview_stop(request, device_id):
     if request.method != "POST":
@@ -872,6 +897,7 @@ def deepstream_preview_stop(request, device_id):
     return JsonResponse({"ok": True})
 
 
+@login_required
 @csrf_exempt
 def deepstream_preview_keepalive(request, device_id):
     if request.method != "POST":

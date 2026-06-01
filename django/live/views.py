@@ -5,6 +5,7 @@ import redis
 from urllib.parse import urlparse
 
 from django.shortcuts import render, get_object_or_404
+from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from devices.models import Device, AnalyticsPreset
 
@@ -38,6 +39,7 @@ def build_stream_context(device, profile_token, host_header=None):
     }
 
 
+@login_required
 def live_view(request, device_id):
     device = get_object_or_404(Device, id=device_id)
     profile_token = request.GET.get("profile") or device.default_profile_token or ""

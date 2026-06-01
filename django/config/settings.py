@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "detections",
     "notifications.apps.NotificationsConfig",
     "incidents.apps.IncidentsConfig",
+    "operadores.apps.OperadoresConfig",
 ]
 
 MIDDLEWARE = [
@@ -116,5 +117,9 @@ STORAGES = {
 }
 
 MEDIAMTX_URL = os.environ.get("MEDIAMTX_URL", "http://mediamtx:8889")
+
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 FACE_MATCH_COOLDOWN_SECONDS = 30

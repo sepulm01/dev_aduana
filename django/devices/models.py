@@ -24,6 +24,13 @@ class Device(models.Model):
     motion_active = models.BooleanField(default=False)
     event_listener_enabled = models.BooleanField(default=False)
     deepstream_enabled = models.BooleanField(default=False)
+    site = models.ForeignKey(
+        "operadores.Site",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="devices",
+    )
 
     class Meta:
         ordering = ["-discovered_at"]

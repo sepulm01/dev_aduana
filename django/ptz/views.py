@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404
 from devices.models import Device, AnalyticsPreset
 from onvif_utils.client import OnvifClient
@@ -11,6 +12,7 @@ from onvif_utils.ptz import PTZService
 from onvif_utils.snapshot import capture_frame_rtsp
 
 
+@login_required
 @csrf_exempt
 def move(request, device_id):
     device = get_object_or_404(Device, id=device_id)
@@ -48,6 +50,7 @@ def move(request, device_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@login_required
 @csrf_exempt
 def status(request, device_id):
     device = get_object_or_404(Device, id=device_id)
@@ -91,6 +94,7 @@ def status(request, device_id):
         return JsonResponse({"ptz_supported": False, "error": str(e)})
 
 
+@login_required
 @csrf_exempt
 def preset(request, device_id):
     device = get_object_or_404(Device, id=device_id)

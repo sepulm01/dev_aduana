@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Mi Perfil{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2 class="page-title">Mi Perfil</h2>
+</div>
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="mb-3">{{ profile.user.username }}</h4>
+                <form id="profile-form" autocomplete="off">
+                    <div class="mb-3">
+                        <label class="form-label">Telefono</label>
+                        <input type="text" class="form-control" name="phone_number" value="{{ profile.phone_number }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cargo</label>
+                        <input type="text" class="form-control" name="cargo" value="{{ profile.cargo }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Nivel de Escalacion (1=primero, 2=supervisor, 3=gerente)</label>
+                        <select class="form-select" name="escalation_level">
+                            <option value="1" {% if profile.escalation_level == 1 %}selected{% endif %}>Nivel 1 - Primer Respondedor</option>
+                            <option value="2" {% if profile.escalation_level == 2 %}selected{% endif %}>Nivel 2 - Supervisor</option>
+                            <option value="3" {% if profile.escalation_level == 3 %}selected{% endif %}>Nivel 3 - Gerente</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="ti ti-device-floppy"></i> Guardar
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="mb-3">Canales Personales</h4>
+                <form id="channels-form" autocomplete="off">
+                    <div class="mb-3">
+                        {% for ch in channels %}
+                        <label class="form-check">
+                            <input class="form-check-input" type="checkbox" value="{{ ch.id }}"
+                                {% if ch in profile.personal_channels.all %}checked{% endif %}>
+                            <span class="form-check-label">{{ ch.name }} ({{ ch.get_channel_type_display }})</span>
+                        </label>
+                        {% empty %}
+                        <p class="text-muted">No hay canales disponibles. <a href="{% url 'notification_channel_list' %}">Crear canal</a></p>
+                        {% endfor %}
+                    </div>
+                    <button type="button" id="save-channels" class="btn btn-outline-primary">
+                        <i class="ti ti-device-floppy"></i> Guardar Canales
+                    </button>
+                </form>
+            </div>
+        </div>
+        <div class="card mt-3">
+            <div class="card-body">
+                <h4 class="mb-3">Mis Sites</h4>
+                <ul>
+                    {% for m in profile.user.site_memberships.all %}
+                    <li>{{ m.site.name }} (desde {{ m.joined_at|date:"d/m/Y" }})</li>
+                    {% empty %}
+                    <li class="text-muted">No estas asignado a ningun site</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById("profile-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+        phone_number: fd.get("phone_number").trim(),
+        cargo: fd.get("cargo").trim(),
+        escalation_level: parseInt(fd.get("escalation_level")) || 1,
+    };
+    const resp = await fetch("{% url 'operador_profile_edit' %}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    });
+    if (resp.ok) { alert("Perfil actualizado"); location.reload(); }
+    else { const d = await resp.json(); alert(d.error || "Error"); }
+});
+
+document.getElementById("save-channels").addEventListener("click", async () => {
+    const channelIds = [];
+    document.querySelectorAll("#channels-form .form-check-input:checked").forEach(cb => channelIds.push(parseInt(cb.value)));
+    const resp = await fetch("{% url 'operador_profile_edit' %}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({personal_channels: channelIds, phone_number: "{{ profile.phone_number }}", cargo: "{{ profile.cargo }}", escalation_level: {{ profile.escalation_level }} }),
+    });
+    if (resp.ok) { alert("Canales actualizados"); }
+    else { const d = await resp.json(); alert(d.error || "Error"); }
+});
+</script>
+{% endblock %}

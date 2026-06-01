@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Editar Operador: {{ profile.user.username }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="row align-items-center">
+        <div class="col">
+            <h2 class="page-title">Editar: {{ profile.user.username }}</h2>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'operador_list' %}" class="btn btn-ghost-secondary">
+                <i class="ti ti-arrow-left"></i> Volver
+            </a>
+        </div>
+    </div>
+</div>
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="mb-3">Perfil</h4>
+                <form id="profile-form" autocomplete="off">
+                    <div class="mb-3">
+                        <label class="form-label">Telefono</label>
+                        <input type="text" class="form-control" name="phone_number" value="{{ profile.phone_number }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cargo</label>
+                        <input type="text" class="form-control" name="cargo" value="{{ profile.cargo }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Nivel de Escalacion</label>
+                        <select class="form-select" name="escalation_level">
+                            <option value="1" {% if profile.escalation_level == 1 %}selected{% endif %}>Nivel 1</option>
+                            <option value="2" {% if profile.escalation_level == 2 %}selected{% endif %}>Nivel 2</option>
+                            <option value="3" {% if profile.escalation_level == 3 %}selected{% endif %}>Nivel 3</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="ti ti-device-floppy"></i> Guardar
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="mb-3">Canales Personales</h4>
+                <div id="channels-list">
+                    {% for ch in channels %}
+                    <label class="form-check">
+                        <input class="form-check-input ch-check" type="checkbox" value="{{ ch.id }}"
+                            {% if ch in profile.personal_channels.all %}checked{% endif %}>
+                        <span class="form-check-label">{{ ch.name }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="mb-3">Sites</h4>
+                <div id="sites-list">
+                    {% for s in all_sites %}
+                    <label class="form-check">
+                        <input class="form-check-input site-check" type="checkbox" value="{{ s.id }}"
+                            {% if s in profile.sites.all %}checked{% endif %}>
+                        <span class="form-check-label">{{ s.name }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById("profile-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const channelIds = [];
+    document.querySelectorAll(".ch-check:checked").forEach(cb => channelIds.push(parseInt(cb.value)));
+    const siteIds = [];
+    document.querySelectorAll(".site-check:checked").forEach(cb => siteIds.push(parseInt(cb.value)));
+
+    const payload = {
+        phone_number: fd.get("phone_number").trim(),
+        cargo: fd.get("cargo").trim(),
+        escalation_level: parseInt(fd.get("escalation_level")) || 1,
+        personal_channels: channelIds,
+        site_ids: siteIds,
+    };
+    const resp = await fetch("{% url 'operador_edit' profile.user_id %}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    });
+    if (resp.ok) {
+        alert("Guardado");
+        window.location.href = "{% url 'operador_list' %}";
+    } else {
+        const d = await resp.json();
+        alert(d.error || "Error");
+    }
+});
+</script>
+{% endblock %}

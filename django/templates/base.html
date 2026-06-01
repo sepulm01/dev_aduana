@@ -52,7 +52,35 @@
                                 <span class="nav-link-title">Incidentes</span>
                             </a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'operador_site_list' %}">
+                                <i class="ti ti-building nav-link-icon"></i>
+                                <span class="nav-link-title">Sites</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'operador_list' %}">
+                                <i class="ti ti-users nav-link-icon"></i>
+                                <span class="nav-link-title">Operadores</span>
+                            </a>
+                        </li>
                     </ul>
+                    {% if user.is_authenticated %}
+                    <div class="mt-auto pt-3 border-top border-dark">
+                        <div class="d-flex align-items-center px-2 py-2">
+                            <i class="ti ti-user-circle me-2" style="font-size:1.2rem;"></i>
+                            <div>
+                                <div class="text-white small fw-medium">{{ user.username }}</div>
+                                <a href="{% url 'operador_profile' %}" class="text-muted small">Mi Perfil</a>
+                                <span class="text-muted small mx-1">|</span>
+                                <form method="post" action="{% url 'logout' %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-link text-muted small p-0 border-0">Salir</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </aside>

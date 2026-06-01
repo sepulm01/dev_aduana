@@ -9,10 +9,10 @@ logger = logging.getLogger("incidents.tasks")
 @shared_task
 def incident_manager():
     try:
-        from incidents.models import Incident, IncidentLog, EscalationLevel
+        from incidents.models import Incident, IncidentLog
 
         active = Incident.objects.filter(status="active").select_related(
-            "incident_type", "device"
+            "incident_type", "device", "device__site"
         )
 
         for incident in active:
@@ -28,67 +28,130 @@ def incident_manager():
 
 
 def _process_incident(incident):
-    now = datetime.now(timezone.utc)
-    itype = incident.incident_type
+    site = getattr(incident.device, "site", None)
+    if site is None:
+        _expire_no_site(incident)
+        return
 
-    current_level_obj = itype.levels.filter(level=incident.current_level).first()
-    if current_level_obj is None:
+    escalation_configs = list(
+        site.escalation_levels.order_by("level")
+    )
+    if not escalation_configs:
+        _expire_no_site(incident)
+        return
+
+    now = datetime.now(timezone.utc)
+    current_config = next(
+        (c for c in escalation_configs if c.level == incident.current_level), None
+    )
+
+    if current_config is None:
+        next_config = next(
+            (c for c in escalation_configs if c.level > incident.current_level), None
+        )
+        if next_config:
+            _log_escalated(incident, incident.current_level, next_config.level)
+            incident.current_level = next_config.level
+            incident.level_started_at = now
+            incident.save(update_fields=["current_level", "level_started_at"])
+            _notify_level(incident, site, next_config)
+        else:
+            _expire(incident)
         return
 
     elapsed = (now - incident.level_started_at).total_seconds()
 
-    if elapsed < current_level_obj.timeout_seconds:
-        _send_level_notification_if_needed(incident, current_level_obj)
+    if elapsed < current_config.timeout_seconds:
+        _notify_level_if_needed(incident, site, current_config)
     else:
-        _escalate(incident, itype, current_level_obj)
+        next_config = next(
+            (c for c in escalation_configs if c.level > current_config.level), None
+        )
+        if next_config:
+            _log_escalated(incident, current_config.level, next_config.level)
+            incident.current_level = next_config.level
+            incident.level_started_at = now
+            incident.save(update_fields=["current_level", "level_started_at"])
+            _notify_level(incident, site, next_config)
+        else:
+            _expire(incident)
 
 
-def _send_level_notification_if_needed(incident, level_obj):
+def _notify_level_if_needed(incident, site, config):
     from incidents.models import IncidentLog
 
     already_notified = IncidentLog.objects.filter(
         incident=incident,
-        level=incident.current_level,
-        action="notified",
+        level=config.level,
+        action__in=["notified", "notified_user"],
     ).exists()
     if already_notified:
         return
 
-    success = _send_notification(incident, level_obj)
-    IncidentLog.objects.create(
-        incident=incident,
-        level=incident.current_level,
-        action="notified",
-        success=success,
-        detail={
-            "channel_type": level_obj.channel.channel_type,
-            "channel_name": level_obj.channel.name,
-        },
-    )
+    _notify_level(incident, site, config)
 
 
-def _send_notification(incident, level_obj):
+def _notify_level(incident, site, config):
+    from incidents.models import IncidentLog
+
+    notified = False
+
+    for channel in site.channels.filter(is_active=True):
+        if _send_to_channel(channel, incident, config):
+            notified = True
+            IncidentLog.objects.create(
+                incident=incident,
+                level=config.level,
+                action="notified",
+                success=True,
+                detail={"channel_type": channel.channel_type, "channel_name": channel.name},
+            )
+
+    from operadores.models import SiteMembership
+
+    memberships = SiteMembership.objects.filter(
+        site=site,
+        is_active=True,
+        user__profile__escalation_level=config.level,
+    ).select_related("user__profile")
+
+    for membership in memberships:
+        profile = membership.user.profile
+        for channel in profile.personal_channels.filter(is_active=True):
+            if _send_to_channel(channel, incident, config, user=membership.user):
+                notified = True
+                IncidentLog.objects.create(
+                    incident=incident,
+                    level=config.level,
+                    action="notified_user",
+                    success=True,
+                    detail={
+                        "channel_type": channel.channel_type,
+                        "channel_name": channel.name,
+                        "user": membership.user.username,
+                    },
+                )
+
+    if not notified:
+        IncidentLog.objects.create(
+            incident=incident,
+            level=config.level,
+            action="notified",
+            success=False,
+            detail={"reason": "no channels available"},
+        )
+
+
+def _send_to_channel(channel, incident, config, user=None):
     try:
         from notifications.backends import get_backend
 
-        backend = get_backend(level_obj.channel.channel_type)
+        backend = get_backend(channel.channel_type)
         device_name = incident.device.name if incident.device else "Unknown"
 
-        if level_obj.message_template:
-            context = {
-                "device_name": device_name,
-                "device_id": incident.device_id,
-                "incident_id": incident.id,
-                "incident_type": incident.incident_type.name,
-                "level": incident.current_level,
-                "code": incident.event_data.get("code", ""),
-                "action": incident.event_data.get("action", ""),
-            }
-            message = backend.format_message(level_obj.message_template, context)
-        else:
-            message = _build_escalation_message(incident, level_obj)
+        message = _build_escalation_message(incident, config, user)
 
-        if level_obj.requires_ack and level_obj.channel.channel_type == "telegram":
+        if config.requires_ack and channel.channel_type == "telegram":
             callback_data = f"incident_{incident.id}"
             reply_markup = {
                 "inline_keyboard": [
@@ -98,31 +161,35 @@ def _send_notification(incident, level_obj):
                     ]
                 ]
             }
-            message_id = backend.send_with_reply_markup(level_obj.channel, message, reply_markup)
+            message_id = backend.send_with_reply_markup(channel, message, reply_markup)
             if message_id:
                 from django.core.cache import cache
 
                 cache.set(
                     f"tg_msg:{message_id}",
                     incident.id,
-                    timeout=level_obj.timeout_seconds + 300,
+                    timeout=config.timeout_seconds + 300,
                 )
             return message_id is not None
         else:
-            return backend.send(level_obj.channel, message)
+            return backend.send(channel, message)
 
     except Exception as e:
-        logger.warning("Send notification error: %s", e)
+        logger.warning("Send notification error for channel %s: %s", channel.name, e)
         return False
 
 
-def _build_escalation_message(incident, level_obj):
+def _build_escalation_message(incident, config, user=None):
     device_name = incident.device.name if incident.device else "Unknown"
+    site_name = getattr(getattr(incident.device, "site", None), "name", "N/A")
     lines = [
-        f"Nivel {incident.current_level} - {incident.incident_type.name}",
+        f"Nivel {config.level} - {incident.incident_type.name}",
+        f"Site: {site_name}",
         f"Dispositivo: {device_name}",
         f"Incidente: #{incident.id}",
     ]
+    if user:
+        lines.append(f"Operador: {user.username}")
     code = incident.event_data.get("code", "")
     action = incident.event_data.get("action", "")
     if code:
@@ -136,40 +203,44 @@ def _build_escalation_message(incident, level_obj):
     return "\n".join(lines)
 
 
-def _escalate(incident, itype, current_level_obj):
+def _log_escalated(incident, from_level, to_level):
     from incidents.models import IncidentLog
 
-    next_level_obj = itype.levels.filter(level__gt=incident.current_level).order_by("level").first()
+    IncidentLog.objects.create(
+        incident=incident,
+        level=from_level,
+        action="escalated",
+        detail={"from_level": from_level, "to_level": to_level},
+    )
 
-    if next_level_obj is None:
-        incident.status = "expired"
-        incident.resolved_at = datetime.now(timezone.utc)
-        incident.save(update_fields=["status", "resolved_at"])
-        IncidentLog.objects.create(
-            incident=incident,
-            level=incident.current_level,
-            action="expired",
-            detail={"reason": "no more levels"},
-        )
-        return
 
+def _expire(incident):
+    from incidents.models import IncidentLog
+
+    now = datetime.now(timezone.utc)
+    incident.status = "expired"
+    incident.resolved_at = now
+    incident.save(update_fields=["status", "resolved_at"])
     IncidentLog.objects.create(
         incident=incident,
         level=incident.current_level,
-        action="escalated",
-        detail={"from_level": incident.current_level, "to_level": next_level_obj.level},
+        action="expired",
+        detail={"reason": "no more levels"},
     )
 
-    incident.current_level = next_level_obj.level
-    incident.level_started_at = datetime.now(timezone.utc)
-    incident.save(update_fields=["current_level", "level_started_at"])
 
-    success = _send_notification(incident, next_level_obj)
+def _expire_no_site(incident):
+    from incidents.models import IncidentLog
+
+    now = datetime.now(timezone.utc)
+    incident.status = "expired"
+    incident.resolved_at = now
+    incident.save(update_fields=["status", "resolved_at"])
     IncidentLog.objects.create(
         incident=incident,
-        level=next_level_obj.level,
-        action="notified",
-        success=success,
+        level=incident.current_level,
+        action="expired",
+        detail={"reason": "device has no site assigned"},
     )
 
 

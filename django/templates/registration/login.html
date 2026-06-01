@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Iniciar Sesion{% endblock %}
+{% block content %}
+<div class="page-center">
+    <div class="container-tight py-4">
+        <div class="text-center mb-4">
+            <i class="ti ti-shield-lock" style="font-size:3rem;color:#00c4cc;"></i>
+            <h1 class="mt-2">STSecurity</h1>
+        </div>
+        <div class="card card-md">
+            <div class="card-body">
+                <h2 class="card-title text-center mb-4">Iniciar Sesion</h2>
+                {% if form.errors %}
+                <div class="alert alert-danger" role="alert">
+                    Usuario o contrasena incorrectos.
+                </div>
+                {% endif %}
+                <form method="post" action="{% url 'login' %}" autocomplete="off">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label" for="id_username">Usuario</label>
+                        <input type="text" class="form-control" name="username" id="id_username" autofocus required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="id_password">Contrasena</label>
+                        <input type="password" class="form-control" name="password" id="id_password" required>
+                    </div>
+                    <div class="form-footer">
+                        <button type="submit" class="btn btn-primary w-100">Ingresar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<style>
+.page-center { display:flex; align-items:center; justify-content:center; min-height:80vh; }
+.container-tight { max-width:400px; width:100%; }
+</style>
+{% endblock %}
