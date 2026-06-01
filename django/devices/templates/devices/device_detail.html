@@ -45,6 +45,14 @@
                             {% endfor %}
                         </select>
                     </dd>
+                    <dt>Pipeline</dt>
+                    <dd>
+                        <select class="form-select form-select-sm" id="pipelineSelect" style="max-width:220px">
+                            <option value="main" {% if device.deepstream_pipeline == "main" %}selected{% endif %}>Peoplenet</option>
+                            <option value="facerec" {% if device.deepstream_pipeline == "facerec" %}selected{% endif %}>Face Recognition</option>
+                            <option value="yolov9" {% if device.deepstream_pipeline == "yolov9" %}selected{% endif %}>YOLO v9</option>
+                        </select>
+                    </dd>
                 </dl>
             </div>
         </div>
@@ -436,6 +444,15 @@ document.getElementById('siteSelect').addEventListener('change', async function(
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({site_id: siteId}),
     });
+});
+
+document.getElementById('pipelineSelect').addEventListener('change', async function() {
+    await fetch('/api/devices/' + DEVICE_ID + '/assign-pipeline/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pipeline: this.value}),
+    });
+    location.reload();
 });
 
 renderCapabilities();

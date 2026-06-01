@@ -231,6 +231,52 @@ services:
       - /dev/dri:/dev/dri:rw
       - ./computer_vision/config:/opt/computer_vision/config:rw
 
+  # pipeline1: Face Recognition — det_10g PGIE + 2d106det SGIE0 + w600k_r50 SGIE1
+  # Cameras assigned via Device.deepstream_pipeline="facerec"
+  computer-vision-facerec:
+    build: ./computer_vision
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - GST_DEBUG=1
+      - no_proxy=*
+      - NO_PROXY=*
+      - GIO_USE_PROXY_RESOLVER=none
+      - GIO_MODULE_DIR=/dev/null
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /var/www/dev_security/videos:/opt/videos:ro
+      - /dev/dri:/dev/dri:rw
+      - ./computer_vision/config:/opt/computer_vision/config:rw
+    command: ["../app/pipeline-test3", "./config_facerec.yml"]
+
+  # pipeline2: YOLO v9 — PGIE only, requires DeepStream-Yolo custom lib
+  # Cameras assigned via Device.deepstream_pipeline="yolov9"
+  computer-vision-yolov9:
+    build: ./computer_vision
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - GST_DEBUG=1
+      - no_proxy=*
+      - NO_PROXY=*
+      - GIO_USE_PROXY_RESOLVER=none
+      - GIO_MODULE_DIR=/dev/null
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /var/www/dev_security/videos:/opt/videos:ro
+      - /dev/dri:/dev/dri:rw
+      - ./computer_vision/config:/opt/computer_vision/config:rw
+    command: ["../app/pipeline-test3", "./config_yolov9.yml"]
+
   nginx:
     image: nginx:alpine
     volumes:

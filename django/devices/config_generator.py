@@ -4,6 +4,41 @@ NVDSANALYTICS_CONFIG_FILE = "config_nvdsanalytics.txt"
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
+PIPELINE_CONFIGS = {
+    "main": {
+        "filename": "config.yml",
+        "container": "mediamtx-manager-computer-vision-1",
+        "models_dir": "../models/peoplenet",
+    },
+    "facerec": {
+        "filename": "config_facerec.yml",
+        "container": "mediamtx-manager-computer-vision-facerec-1",
+        "models_dir": "../models/facerec",
+        "sgie_sections": (
+            "secondary-gie0:\n"
+            "  plugin-type: 0\n"
+            "  config-file-path: ../models/facerec/sgie0_config.yml\n"
+            "\n"
+            "secondary-gie1:\n"
+            "  plugin-type: 0\n"
+            "  config-file-path: ../models/facerec/sgie1_config.yml\n"
+        ),
+    },
+    "yolov9": {
+        "filename": "config_yolov9.yml",
+        "container": "mediamtx-manager-computer-vision-yolov9-1",
+        "models_dir": "../models/yolov9",
+    },
+}
+
+
+def get_pipeline_filename(pipeline_id):
+    return PIPELINE_CONFIGS[pipeline_id]["filename"]
+
+
+def get_pipeline_container(pipeline_id):
+    return PIPELINE_CONFIGS[pipeline_id]["container"]
+
 
 def _shapes_to_nvdsanalytics(shapes, stream_idx=0, prefix=""):
     sections = {}
@@ -115,7 +150,7 @@ def generate_nvdsanalytics_config(devices, config_dir):
         f.write(content)
 
 
-def generate_config(devices, output_path, models_dir=None):
+def generate_config(devices, output_path, pipeline_id="main"):
     uris = []
     for device in devices:
         if not device.is_online or not device.stream_uris:
@@ -130,10 +165,12 @@ def generate_config(devices, output_path, models_dir=None):
     source_list = ";".join(uris) + ";" if uris else ""
     batch_size = len(uris) or 1
 
-    if models_dir is None:
-        models_dir = os.environ.get("MODELS_DIR", "../models/peoplenet")
+    pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
+    models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
+    sgie_sections = pipeline_cfg.get("sgie_sections", "")
 
     config_dir = os.path.dirname(output_path)
+    os.makedirs(config_dir, exist_ok=True)
 
     config = f"""source-list:
   list: "{source_list}"
@@ -148,7 +185,7 @@ primary-gie:
   plugin-type: 0
   config-file-path: {models_dir}/pgie_config.yml
 
-analytics:
+{sgie_sections}analytics:
   enable: 1
   config-file: {NVDSANALYTICS_CONFIG_FILE}
 
@@ -164,8 +201,76 @@ sink:
   qos: 0
 """
 
-    os.makedirs(config_dir, exist_ok=True)
     with open(output_path, "w") as f:
         f.write(config)
 
     return uris
+
+
+def generate_all_configs(config_dir=None):
+    from django.apps import apps
+
+    Device = apps.get_model("devices", "Device")
+
+    if config_dir is None:
+        config_dir = os.path.dirname(
+            os.environ.get("CONFIG_YML_PATH", "/opt/computer_vision/config/config.yml")
+        )
+
+    for pipeline_id in PIPELINE_CONFIGS:
+        devices = list(
+            Device.objects.filter(
+                deepstream_pipeline=pipeline_id,
+                is_online=True,
+                stream_uris__isnull=False,
+            ).exclude(stream_uris={})
+        )
+        filename = PIPELINE_CONFIGS[pipeline_id]["filename"]
+        output_path = os.path.join(config_dir, filename)
+
+        if devices:
+            generate_config(devices, output_path, pipeline_id)
+            generate_nvdsanalytics_config(devices, config_dir)
+        else:
+            write_empty_config(output_path, pipeline_id)
+
+
+def write_empty_config(output_path, pipeline_id):
+    pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
+    models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
+    sgie_sections = pipeline_cfg.get("sgie_sections", "")
+
+    config_dir = os.path.dirname(output_path)
+    os.makedirs(config_dir, exist_ok=True)
+
+    config = f"""source-list:
+  list: ""
+
+streammux:
+  batch-size: 1
+  batched-push-timeout: 40000
+  width: 1920
+  height: 1080
+
+primary-gie:
+  plugin-type: 0
+  config-file-path: {models_dir}/pgie_config.yml
+
+{sgie_sections}analytics:
+  enable: 1
+  config-file: {NVDSANALYTICS_CONFIG_FILE}
+
+osd:
+  process-mode: 0
+  display-text: 1
+
+tiler:
+  width: 1280
+  height: 720
+
+sink:
+  qos: 0
+"""
+
+    with open(output_path, "w") as f:
+        f.write(config)

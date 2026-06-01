@@ -915,3 +915,21 @@ def deepstream_preview_keepalive(request, device_id):
     except Exception as e:
         logger.warning("Keepalive failed: %s", e)
     return JsonResponse({"ok": True})
+
+
+@login_required
+@csrf_exempt
+def assign_pipeline(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+    if request.method == "POST":
+        data = json.loads(request.body) if request.body else {}
+        pipeline = data.get("pipeline", "main")
+        if pipeline not in dict(Device.PIPELINE_CHOICES):
+            return JsonResponse({"error": "Invalid pipeline"}, status=400)
+        device.deepstream_pipeline = pipeline
+        device.save(update_fields=["deepstream_pipeline"])
+        from devices.utils import regenerate_config_and_restart
+
+        regenerate_config_and_restart(pipeline_id=pipeline)
+        return JsonResponse({"ok": True})
+    return JsonResponse({"error": "POST required"}, status=405)

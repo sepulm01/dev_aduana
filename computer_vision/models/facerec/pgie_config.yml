@@ -1,0 +1,29 @@
+# FaceRec pipeline — PGIE: det_10g face/person detector
+# Used by pipeline1 (facerec). Cameras assigned via Device.deepstream_pipeline="facerec"
+# PGIE operates in process-mode=1 (primary, full-frame)
+# SGIE0 and SGIE1 operate in process-mode=2 (secondary, on face bboxes)
+
+property:
+  gpu-id: 0
+  net-scale-factor: 0.00392156862745098
+  model-color-format: 0
+  onnx-file: ../models/facerec/det_10g.onnx
+  labelfile-path: ../models/facerec/labels/labels.txt
+  batch-size: 3
+  network-mode: 0
+  num-detected-classes: 3
+  interval: 0
+  gie-unique-id: 1
+  process-mode: 1
+  network-type: 0
+  cluster-mode: 2
+  maintain-aspect-ratio: 1
+  symmetric-padding: 1
+  infer-dims: 3;544;960
+  custom-lib-path: ../models/facerec/libnvds_retinaface_parser.so
+  parse-bbox-func-name: NvDsInferParseCustomRetinaFace
+
+class-attrs-all:
+  pre-cluster-threshold: 0.25
+  topk: 300
+  nms-iou-threshold: 0.45

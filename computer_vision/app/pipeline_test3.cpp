@@ -20,6 +20,24 @@
 #include "nvds_analytics_meta.h"
 #include "snapshot_sender.h"
 
+/*
+ * Utility: check if a YAML config section exists by reading the file.
+ * Used to conditionally enable SGIE elements.
+ */
+static gboolean yaml_has_section(const gchar* file, const gchar* section) {
+    gchar key[256];
+    g_snprintf(key, sizeof(key), "[%s]", section);
+    FILE* fp = fopen(file, "r");
+    if (!fp) return FALSE;
+    gchar line[512];
+    gboolean found = FALSE;
+    while (fgets(line, sizeof(line), fp)) {
+        if (strstr(line, key)) { found = TRUE; break; }
+    }
+    fclose(fp);
+    return found;
+}
+
 #define MAX_DISPLAY_LEN 64
 #define PGIE_CLASS_ID_VEHICLE 0
 #define PGIE_CLASS_ID_PERSON 2
@@ -462,6 +480,8 @@ int main(int argc, char* argv[])
                *queue1, *queue2, *queue3, *queue4, *queue5,
                *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL,
                *nvds_analytics = NULL;
+    GstElement *sgie0 = NULL, *sgie1 = NULL;
+    GstElement *q_sgie0 = NULL, *q_sgie1 = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
     guint i, num_sources = 0;
@@ -564,6 +584,29 @@ int main(int argc, char* argv[])
     if (show_display && (!tiler || !nvvidconv || !nvosd)) return -1;
 
     if (yaml_config) {
+        if (yaml_has_section(argv[1], "secondary-gie0")) {
+            sgie0 = gst_element_factory_make("nvinfer", "secondary-gie0");
+            q_sgie0 = gst_element_factory_make("queue", "queue-sgie0");
+            if (!sgie0 || !q_sgie0) {
+                g_printerr("SGIE0 creation failed.\n");
+                return -1;
+            }
+            RETURN_ON_PARSER_ERROR(nvds_parse_gie(sgie0, argv[1], "secondary-gie0"));
+            g_print("[Pipeline] SGIE0 (secondary-gie0) configured\n");
+        }
+        if (yaml_has_section(argv[1], "secondary-gie1")) {
+            sgie1 = gst_element_factory_make("nvinfer", "secondary-gie1");
+            q_sgie1 = gst_element_factory_make("queue", "queue-sgie1");
+            if (!sgie1 || !q_sgie1) {
+                g_printerr("SGIE1 creation failed.\n");
+                return -1;
+            }
+            RETURN_ON_PARSER_ERROR(nvds_parse_gie(sgie1, argv[1], "secondary-gie1"));
+            g_print("[Pipeline] SGIE1 (secondary-gie1) configured\n");
+        }
+    }
+
+    if (yaml_config) {
         RETURN_ON_PARSER_ERROR(nvds_parse_streammux(streammux, argv[1], "streammux"));
         RETURN_ON_PARSER_ERROR(nvds_parse_gie(pgie, argv[1], "primary-gie"));
         g_object_get(G_OBJECT(pgie), "batch-size", &pgie_batch_size, NULL);
@@ -601,10 +644,20 @@ int main(int argc, char* argv[])
                          nvds_analytics,
                          tiler,
                          queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL);
-        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
-                                    nvds_analytics,
-                                    tiler,
-                                    queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
+        if (sgie0) gst_bin_add_many(GST_BIN(pipeline), q_sgie0, sgie0, NULL);
+        if (sgie1) gst_bin_add_many(GST_BIN(pipeline), q_sgie1, sgie1, NULL);
+
+        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker, NULL)) {
+            g_printerr("streammux→nvtracker link failed.\n");
+            return -1;
+        }
+        GstElement* prev = nvtracker;
+        if (sgie0) { gst_element_link_many(prev, q_sgie0, sgie0, NULL); prev = sgie0; }
+        if (sgie1) { gst_element_link_many(prev, q_sgie1, sgie1, NULL); prev = sgie1; }
+        if (!gst_element_link_many(prev,
+                                   nvds_analytics,
+                                   tiler,
+                                   queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
         }
@@ -612,10 +665,20 @@ int main(int argc, char* argv[])
         gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
                          nvds_analytics,
                          sink, NULL);
+        if (sgie0) gst_bin_add_many(GST_BIN(pipeline), q_sgie0, sgie0, NULL);
+        if (sgie1) gst_bin_add_many(GST_BIN(pipeline), q_sgie1, sgie1, NULL);
         g_object_set(G_OBJECT(sink), "sync", FALSE, NULL);
-        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
-                                    nvds_analytics,
-                                    sink, NULL)) {
+
+        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker, NULL)) {
+            g_printerr("streammux→nvtracker link failed.\n");
+            return -1;
+        }
+        GstElement* prev = nvtracker;
+        if (sgie0) { gst_element_link_many(prev, q_sgie0, sgie0, NULL); prev = sgie0; }
+        if (sgie1) { gst_element_link_many(prev, q_sgie1, sgie1, NULL); prev = sgie1; }
+        if (!gst_element_link_many(prev,
+                                   nvds_analytics,
+                                   sink, NULL)) {
             g_printerr("Elements could not be linked.\n");
             return -1;
         }

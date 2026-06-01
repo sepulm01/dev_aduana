@@ -1,0 +1,29 @@
+# YOLO v9 pipeline — PGIE only, no SGIE
+# Used by pipeline2 (yolov9). Cameras assigned via Device.deepstream_pipeline="yolov9"
+# Requires DeepStream-Yolo custom library compiled and installed
+
+property:
+  gpu-id: 0
+  net-scale-factor: 0.0039215697906911373
+  model-color-format: 0
+  onnx-file: ../models/yolov9/yolov9-e-converted.pt.onnx
+  model-engine-file: ../models/yolov9/model_b3_gpu0_fp32.engine
+  labelfile-path: ../models/yolov9/labels.txt
+  batch-size: 3
+  network-mode: 0
+  num-detected-classes: 80
+  interval: 0
+  gie-unique-id: 1
+  process-mode: 1
+  network-type: 0
+  cluster-mode: 2
+  maintain-aspect-ratio: 1
+  symmetric-padding: 1
+  parse-bbox-func-name: NvDsInferParseYolo
+  custom-lib-path: /opt/nvidia/deepstream/deepstream/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
+  engine-create-func-name: NvDsInferYoloCudaEngineGet
+
+class-attrs-all:
+  pre-cluster-threshold: 0.25
+  topk: 300
+  nms-iou-threshold: 0.45

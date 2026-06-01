@@ -100,4 +100,9 @@ urlpatterns = [
         views.deepstream_preview_keepalive,
         name="deepstream_preview_keepalive",
     ),
+    path(
+        "api/devices/<int:device_id>/assign-pipeline/",
+        views.assign_pipeline,
+        name="assign_pipeline",
+    ),
 ]

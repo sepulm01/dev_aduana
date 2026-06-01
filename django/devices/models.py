@@ -24,6 +24,16 @@ class Device(models.Model):
     motion_active = models.BooleanField(default=False)
     event_listener_enabled = models.BooleanField(default=False)
     deepstream_enabled = models.BooleanField(default=False)
+    PIPELINE_CHOICES = [
+        ("main", "Peoplenet"),
+        ("facerec", "Face Recognition"),
+        ("yolov9", "YOLO v9"),
+    ]
+    deepstream_pipeline = models.CharField(
+        max_length=20,
+        default="main",
+        choices=PIPELINE_CHOICES,
+    )
     site = models.ForeignKey(
         "operadores.Site",
         on_delete=models.SET_NULL,
