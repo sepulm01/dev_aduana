@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Incidente #{{ incident.id }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'incident_list' %}" class="text-reset">Incidentes</a></li>
+        <li class="breadcrumb-item active">#{{ incident.id }}</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-md-7">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3 class="card-title">{{ incident.incident_type.name }}</h3>
+                {% if incident.status == "active" %}
+                <span class="badge bg-red">Activo</span>
+                {% elif incident.status == "acknowledged" %}
+                <span class="badge bg-yellow">Atendido</span>
+                {% elif incident.status == "resolved" %}
+                <span class="badge bg-green">Resuelto</span>
+                {% else %}
+                <span class="badge bg-secondary">Expirado</span>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                <dl class="dl-row mb-0">
+                    <dt>Dispositivo</dt>
+                    <dd><a href="/devices/{{ incident.device.id }}/">{{ incident.device.name }}</a></dd>
+                    <dt>Nivel actual</dt>
+                    <dd><span class="badge bg-purple-lt">Nivel {{ incident.current_level }}</span></dd>
+                    <dt>Creado</dt>
+                    <dd>{{ incident.created_at|date:"d/m/Y H:i:s" }}</dd>
+                    {% if incident.resolved_at %}
+                    <dt>Resuelto</dt>
+                    <dd>{{ incident.resolved_at|date:"d/m/Y H:i:s" }}</dd>
+                    {% endif %}
+                    {% if incident.acknowledged_by %}
+                    <dt>Atendido por</dt>
+                    <dd>{{ incident.acknowledged_by }} ({{ incident.acknowledged_at|date:"H:i:s" }})</dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title">Datos del evento</h3>
+            </div>
+            <div class="card-body">
+                <dl class="dl-row mb-0">
+                    <dt>Codigo</dt>
+                    <dd>{{ incident.event_data.code|default:"-" }}</dd>
+                    <dt>Accion</dt>
+                    <dd>{{ incident.event_data.action|default:"-" }}</dd>
+                </dl>
+                {% with data=incident.event_data.data %}
+                {% if data %}
+                <div class="mt-2">
+                    {% if data.Object %}
+                    <h6 class="mt-2">Objetos detectados</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-vcenter small">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Clase</th>
+                                    <th>Confianza</th>
+                                    <th>ROI</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for obj in data.Object %}
+                                <tr>
+                                    <td>{{ obj.object_id }}</td>
+                                    <td>{{ obj.class_label }}</td>
+                                    <td>{{ obj.confidence|floatformat:2 }}</td>
+                                    <td>{{ obj.roi|join:", "|default:"-" }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                    {% if data.analytics %}
+                    <h6 class="mt-2">Analytics</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-vcenter small">
+                            <thead>
+                                <tr><th>Metrica</th><th>Valor</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for key, value in data.analytics.items %}
+                                <tr>
+                                    <td>{{ key }}</td>
+                                    <td>{% if value == True %}SI{% elif value == False %}NO{% else %}{{ value }}{% endif %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% endwith %}
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title">Bitacora</h3>
+            </div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush">
+                    {% for log in logs %}
+                    <div class="list-group-item py-2 small">
+                        <span class="text-muted">{{ log.timestamp|date:"H:i:s" }}</span>
+                        {% if log.action == "created" %}
+                        <span class="badge bg-blue-lt ms-2">Creado</span>
+                        {% elif log.action == "notified" %}
+                        <span class="badge bg-azure-lt ms-2">Notificado</span>
+                        <span class="text-muted">via {{ log.detail.channel_name|default:"?" }}</span>
+                        {% elif log.action == "notified_user" %}
+                        <span class="badge bg-azure-lt ms-2">Notificado operador</span>
+                        <span class="text-muted">{{ log.detail.user|default:"?" }}</span>
+                        {% elif log.action == "escalated" %}
+                        <span class="badge bg-orange-lt ms-2">Escalado</span>
+                        <span class="text-muted">L{{ log.detail.from_level }} &rarr; L{{ log.detail.to_level }}</span>
+                        {% elif log.action == "acknowledged" %}
+                        <span class="badge bg-yellow-lt ms-2">Atendido</span>
+                        <span class="text-muted">por {{ log.detail.by|default:"?" }}</span>
+                        {% elif log.action == "resolved" %}
+                        <span class="badge bg-green-lt ms-2">Resuelto</span>
+                        <span class="text-muted">{{ log.detail.reason|default:"" }}</span>
+                        {% elif log.action == "expired" %}
+                        <span class="badge bg-secondary-lt ms-2">Expirado</span>
+                        <span class="text-muted">{{ log.detail.reason|default:"" }}</span>
+                        {% endif %}
+                        {% if not log.success %}
+                        <i class="ti ti-alert-triangle text-danger ms-1" title="Fallido"></i>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <div class="list-group-item text-muted text-center">Sin registros</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-5">
+        {% if incident.snapshot %}
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title">Foto del incidente</h3>
+            </div>
+            <img src="{{ incident.snapshot.url }}" class="card-img-bottom" style="max-height:400px;object-fit:cover;">
+        </div>
+        {% endif %}
+        <div class="card">
+            <div class="card-body text-center">
+                <a href="/devices/{{ incident.device.id }}/" class="btn btn-outline-primary w-100">
+                    <i class="ti ti-video me-1"></i>Ver dispositivo
+                </a>
+                <a href="{% url 'incident_dashboard' %}" class="btn btn-outline-danger w-100 mt-2">
+                    <i class="ti ti-alert-triangle me-1"></i>Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

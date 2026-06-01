@@ -17,6 +17,7 @@
                 </div>
                 <small class="text-muted">#{{ inc.id }} &middot; {{ inc.created_at|date:"H:i:s" }}</small>
             </div>
+            <a href="{% url 'incident_detail' inc.id %}" style="display:block;">
             {% if item.webrtc_url %}
             <div style="position:relative;aspect-ratio:16/9;background:#000;">
                 <iframe src="{{ item.webrtc_url }}"
@@ -27,9 +28,10 @@
             {% elif inc.snapshot %}
             <img src="{{ inc.snapshot.url }}" style="width:100%;max-height:300px;object-fit:cover;">
             {% endif %}
+            </a>
             <div class="card-body py-2">
                 <small class="text-muted">Dispositivo: {{ inc.device.name }}</small>
-                <a href="/devices/{{ inc.device.id }}/" class="btn btn-sm btn-ghost-primary float-end">Ver dispositivo</a>
+                <a href="{% url 'incident_detail' inc.id %}" class="btn btn-sm btn-ghost-primary float-end">Detalle</a>
             </div>
         </div>
     </div>

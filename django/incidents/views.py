@@ -130,3 +130,17 @@ def incident_dashboard(request):
     return render(request, "incidents/dashboard.html", {
         "incidents_data": incidents_data,
     })
+
+
+@login_required
+def incident_detail(request, incident_id):
+    incident = get_object_or_404(
+        Incident.objects.select_related("incident_type", "device"),
+        id=incident_id,
+    )
+    logs = incident.logs.order_by("-timestamp")
+
+    return render(request, "incidents/incident_detail.html", {
+        "incident": incident,
+        "logs": logs,
+    })
