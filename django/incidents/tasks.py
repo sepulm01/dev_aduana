@@ -152,7 +152,7 @@ def _send_to_channel(channel, incident, config, user=None):
         message = _build_escalation_message(incident, config, user)
 
         if config.requires_ack and channel.channel_type == "telegram":
-            callback_data = f"incident_{incident.id}"
+            callback_data = str(incident.id)
             reply_markup = {
                 "inline_keyboard": [
                     [

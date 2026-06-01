@@ -78,10 +78,11 @@ class TelegramAckPoller:
         parts = callback_data.split("_", 1)
         if len(parts) != 2:
             return
-        cmd, incident_id_str = parts
+        cmd = parts[0]
         try:
-            incident_id = int(incident_id_str)
+            incident_id = int(parts[1])
         except ValueError:
+            logger.warning("Invalid callback data: %s", callback_data)
             return
 
         from notifications.backends.telegram import TelegramBackend
