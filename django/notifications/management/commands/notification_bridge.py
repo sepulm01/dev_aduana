@@ -254,6 +254,19 @@ class NotificationBridge:
                 detail={"event_code": event_data.get("code")},
             )
 
+            photo_bytes = self._capture_device_snapshot(device_id)
+            if photo_bytes:
+                try:
+                    from django.core.files.base import ContentFile
+
+                    incident.snapshot.save(
+                        f"incident_{incident.id}.jpg",
+                        ContentFile(photo_bytes),
+                        save=True,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to save incident snapshot: %s", e)
+
             self._broadcast_incident(incident, device_id)
             return incident
         except Exception as e:

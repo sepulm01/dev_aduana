@@ -41,6 +41,7 @@ class Incident(models.Model):
     level_started_at = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
+    snapshot = models.ImageField(upload_to="incidents/snapshots/%Y/%m/", null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]

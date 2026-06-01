@@ -24,6 +24,8 @@
                     allow="autoplay;encrypted-media" allowfullscreen>
                 </iframe>
             </div>
+            {% elif inc.snapshot %}
+            <img src="{{ inc.snapshot.url }}" style="width:100%;max-height:300px;object-fit:cover;">
             {% endif %}
             <div class="card-body py-2">
                 <small class="text-muted">Dispositivo: {{ inc.device.name }}</small>
