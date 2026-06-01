@@ -156,6 +156,21 @@ services:
       postgres:
         condition: service_healthy
 
+  snapshot-receiver:
+    build: ./django
+    command: python manage.py snapshot_receiver
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:12349:12349"
+    volumes:
+      - ./django/media:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   face-receiver:
     build: ./django
     command: python manage.py face_receiver

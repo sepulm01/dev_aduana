@@ -11,7 +11,7 @@ NVDS_VERSION:=8.0
 
 LIB_INSTALL_DIR?=/opt/nvidia/deepstream/deepstream-$(NVDS_VERSION)/lib/
 
-SRCS:= pipeline_test3.cpp
+SRCS:= pipeline_test3.cpp snapshot_sender.cpp
 
 OBJS:= $(SRCS:.cpp=.o)
 

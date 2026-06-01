@@ -18,6 +18,7 @@
 #include "nvds_yml_parser.h"
 #include "gst-nvmessage.h"
 #include "nvds_analytics_meta.h"
+#include "snapshot_sender.h"
 
 #define MAX_DISPLAY_LEN 64
 #define PGIE_CLASS_ID_VEHICLE 0
@@ -46,6 +47,14 @@ static redisContext* pub_ctx = NULL;
 static int source_to_device[MAX_SOURCES];
 static guint64 frame_counts[MAX_SOURCES];
 static const char* g_labels[] = {"person", "bag", "face"};
+
+struct ProbeData {
+    SnapshotSender* roi_snap;
+    SnapshotSender* lc_snap;
+    SnapshotSender* oc_snap;
+    guint64 last_snap_time;
+};
+#define SNAP_COOLDOWN_US 3000000
 
 static std::string parse_analytics_frame_meta(NvDsFrameMeta* fm)
 {
@@ -113,6 +122,7 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
 {
     static guint64 last_flush = 0, last_health = 0, last_reload = 0;
 
+    ProbeData* pd = (ProbeData*)user_data;
     GstBuffer* buf = GST_BUFFER(info->data);
     NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
     if (!batch_meta) return GST_PAD_PROBE_OK;
@@ -159,6 +169,8 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
             int obj_count = 0;
 
             bool has_obj_in_any_roi = false;
+            bool has_obj_in_any_lc = false;
+            bool has_obj_in_any_oc = false;
             for (NvDsMetaList* lfu = fm->frame_user_meta_list; lfu; lfu = lfu->next) {
                 NvDsUserMeta* fum = (NvDsUserMeta*)lfu->data;
                 if (fum->base_meta.meta_type == NVDS_USER_FRAME_META_NVDSANALYTICS) {
@@ -166,6 +178,16 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                         (NvDsAnalyticsFrameMeta*)fum->user_meta_data;
                     if (afm && !afm->objInROIcnt.empty()) {
                         has_obj_in_any_roi = true;
+                    }
+                    if (afm && !afm->objLCCurrCnt.empty()) {
+                        for (auto& p : afm->objLCCurrCnt) {
+                            if (p.second > 0) { has_obj_in_any_lc = true; break; }
+                        }
+                    }
+                    if (afm && !afm->ocStatus.empty()) {
+                        for (auto& p : afm->ocStatus) {
+                            if (p.second) { has_obj_in_any_oc = true; break; }
+                        }
                     }
                 }
             }
@@ -295,6 +317,33 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 }
                 g_mutex_unlock(&redis_mutex);
                 g_print("[Analytics] device=%d objects=%d\n", dev_id, obj_count);
+            }
+
+            if (pd && fm->obj_meta_list && obj_count > 0 &&
+                (has_obj_in_any_roi || has_obj_in_any_lc || has_obj_in_any_oc)) {
+
+                if (now - pd->last_snap_time >= SNAP_COOLDOWN_US) {
+                    GstMapInfo inmap = GST_MAP_INFO_INIT;
+                    if (gst_buffer_map(buf, &inmap, GST_MAP_READ)) {
+                        NvBufSurface* surf = (NvBufSurface*)inmap.data;
+                        if (surf) {
+                            if (has_obj_in_any_roi && pd->roi_snap) {
+                                pd->roi_snap->send_full_frame(
+                                    surf, fm, dev_id, sid);
+                            }
+                            if (has_obj_in_any_lc && pd->lc_snap) {
+                                pd->lc_snap->send_full_frame(
+                                    surf, fm, dev_id, sid);
+                            }
+                            if (has_obj_in_any_oc && pd->oc_snap) {
+                                pd->oc_snap->send_full_frame(
+                                    surf, fm, dev_id, sid);
+                            }
+                        }
+                        gst_buffer_unmap(buf, &inmap);
+                    }
+                    pd->last_snap_time = now;
+                }
             }
         }
     }
@@ -573,9 +622,24 @@ int main(int argc, char* argv[])
     }
 
     GstPad* probe_pad = gst_element_get_static_pad(nvds_analytics, "src");
+
+    ProbeData probe_data;
+    memset(&probe_data, 0, sizeof(probe_data));
+    SnapshotSender roi_snap("snapshot-receiver", 12349, "roi");
+    SnapshotSender lc_snap("snapshot-receiver", 12349, "lc");
+    SnapshotSender oc_snap("snapshot-receiver", 12349, "oc");
+
+    bool roi_ok = roi_snap.start();
+    bool lc_ok = lc_snap.start();
+    bool oc_ok = oc_snap.start();
+    if (roi_ok) probe_data.roi_snap = &roi_snap;
+    if (lc_ok) probe_data.lc_snap = &lc_snap;
+    if (oc_ok) probe_data.oc_snap = &oc_snap;
+    probe_data.last_snap_time = 0;
+
     if (probe_pad) {
         gst_pad_add_probe(probe_pad, GST_PAD_PROBE_TYPE_BUFFER,
-                          analytics_pad_probe, NULL, NULL);
+                          analytics_pad_probe, &probe_data, NULL);
         g_print("[Pipeline] Analytics probe added on nvdsanalytics src\n");
         gst_object_unref(probe_pad);
     }
@@ -599,6 +663,11 @@ int main(int argc, char* argv[])
 
     g_print("Stopping playback\n");
     gst_element_set_state(pipeline, GST_STATE_NULL);
+
+    roi_snap.stop();
+    lc_snap.stop();
+    oc_snap.stop();
+
     if (pub_ctx) redisFree(pub_ctx);
     gst_object_unref(GST_OBJECT(pipeline));
     g_source_remove(bus_watch_id);
