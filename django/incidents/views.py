@@ -104,3 +104,29 @@ def incident_ack(request, incident_id):
         )
         return JsonResponse({"ok": True})
     return JsonResponse({"error": "POST required"}, status=405)
+
+
+@login_required
+def incident_dashboard(request):
+    from live.views import build_stream_context
+
+    active_incidents = Incident.objects.filter(
+        status="active"
+    ).select_related("incident_type", "device").order_by("-created_at")
+
+    hosts = request.get_host()
+    incidents_data = []
+    for inc in active_incidents:
+        device = inc.device
+        profile_token = device.default_profile_token or ""
+        ctx = {}
+        if profile_token:
+            ctx = build_stream_context(device, profile_token, hosts)
+        incidents_data.append({
+            "incident": inc,
+            "webrtc_url": ctx.get("webrtc_url", ""),
+        })
+
+    return render(request, "incidents/dashboard.html", {
+        "incidents_data": incidents_data,
+    })

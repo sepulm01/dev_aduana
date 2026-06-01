@@ -6,4 +6,8 @@ websocket_urlpatterns = [
         r"ws/device/(?P<device_id>\d+)/$",
         consumers.DeviceConsumer.as_asgi(),
     ),
+    re_path(
+        r"ws/incidents/$",
+        consumers.IncidentConsumer.as_asgi(),
+    ),
 ]

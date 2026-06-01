@@ -236,8 +236,7 @@ class NotificationBridge:
                 if existing:
                     return existing
 
-            first_level = itype.levels.order_by("level").first()
-            current_level = first_level.level if first_level else 1
+            current_level = 1
 
             incident = Incident.objects.create(
                 incident_type=itype,
@@ -254,6 +253,8 @@ class NotificationBridge:
                 action="created",
                 detail={"event_code": event_data.get("code")},
             )
+
+            self._broadcast_incident(incident, device_id)
             return incident
         except Exception as e:
             logger.warning("Create incident error: %s", e)
@@ -302,6 +303,37 @@ class NotificationBridge:
         self._duration_last_seen[key] = now
         first = self._duration_first_seen.get(key, now)
         return now - first >= rule.min_duration_seconds
+
+    def _broadcast_incident(self, incident, device_id):
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            device_name = f"Device #{device_id}"
+            try:
+                from devices.models import Device
+
+                device = Device.objects.only("name").get(id=device_id)
+                device_name = device.name
+            except Exception:
+                pass
+
+            channel_layer = get_channel_layer()
+            if channel_layer is None:
+                return
+            async_to_sync(channel_layer.group_send)(
+                "incidents",
+                {
+                    "type": "incident_alert",
+                    "incident_id": incident.id,
+                    "device_id": device_id,
+                    "device_name": device_name,
+                    "incident_type": incident.incident_type.name,
+                    "level": incident.current_level,
+                },
+            )
+        except Exception as e:
+            logger.warning("Broadcast incident error: %s", e)
 
     def _handle_event(self, device_id, event_data):
         event_data = self._filter_ivs_event(device_id, event_data)
