@@ -90,13 +90,9 @@ def rule_create(request):
         if not name or not channel_id:
             return JsonResponse({"error": "name y channel_id requeridos"}, status=400)
         channel = get_object_or_404(NotificationChannel, id=channel_id)
-        device = None
-        if data.get("device_id"):
-            device = get_object_or_404(Device, id=data["device_id"])
         rule = NotificationRule.objects.create(
             name=name,
             channel=channel,
-            device=device,
             event_codes=data.get("event_codes", []),
             analytics_trigger=data.get("analytics_trigger", []),
             min_objects=data.get("min_objects", 0),
@@ -111,6 +107,11 @@ def rule_create(request):
             schedule=data.get("schedule", {}),
             incident_type_id=data.get("incident_type_id") or None,
         )
+        for device_id in data.get("device_ids", []):
+            try:
+                rule.devices.add(Device.objects.get(id=device_id))
+            except Device.DoesNotExist:
+                pass
         return JsonResponse({"ok": True, "id": rule.id})
     return render(request, "notifications/rule_form.html", {
         "rule": None,
@@ -136,11 +137,6 @@ def rule_edit(request, rule_id):
         channel_id = data.get("channel_id")
         if channel_id:
             rule.channel = get_object_or_404(NotificationChannel, id=channel_id)
-        device_id = data.get("device_id")
-        if device_id:
-            rule.device = get_object_or_404(Device, id=device_id)
-        else:
-            rule.device = None
         rule.event_codes = data.get("event_codes", rule.event_codes)
         rule.analytics_trigger = data.get("analytics_trigger", rule.analytics_trigger)
         rule.min_objects = data.get("min_objects", rule.min_objects)
@@ -155,6 +151,13 @@ def rule_edit(request, rule_id):
         rule.schedule = data.get("schedule", rule.schedule)
         rule.incident_type_id = data.get("incident_type_id") or None
         rule.save()
+        if "device_ids" in data:
+            rule.devices.clear()
+            for device_id in data["device_ids"]:
+                try:
+                    rule.devices.add(Device.objects.get(id=device_id))
+                except Device.DoesNotExist:
+                    pass
         return JsonResponse({"ok": True})
     return render(request, "notifications/rule_form.html", {
         "rule": rule,

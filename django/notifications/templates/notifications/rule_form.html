@@ -32,15 +32,19 @@
                 </select>
             </div>
             <div class="mb-3">
-                <label class="form-label">Dispositivo (vacio = todos)</label>
-                <select class="form-select" name="device_id">
-                    <option value="">Todos los dispositivos</option>
+                <label class="form-label">Dispositivos (vacio = todos)</label>
+                <div class="row">
                     {% for dev in devices %}
-                    <option value="{{ dev.id }}" {% if rule.device_id == dev.id %}selected{% endif %}>
-                        {{ dev.name }} ({{ dev.host }})
-                    </option>
+                    <div class="col-auto">
+                        <label class="form-check">
+                            <input class="form-check-input device-check" type="checkbox" value="{{ dev.id }}"
+                                {% if rule and dev in rule.devices.all %}checked{% endif %}>
+                            <span class="form-check-label">{{ dev.name }}</span>
+                        </label>
+                    </div>
                     {% endfor %}
-                </select>
+                </div>
+                <small class="form-hint">Sin seleccion = aplica a todos los dispositivos</small>
             </div>
             <div class="mb-3">
                 <label class="form-label">Tipo de Incidente (escalacion)</label>
@@ -226,6 +230,11 @@ document.getElementById("rule-form").addEventListener("submit", async (e) => {
     var channelId = fd.get("channel_id");
     if (!name || !channelId) return;
 
+    var deviceIds = [];
+    document.querySelectorAll(".device-check:checked").forEach(function(cb) {
+        deviceIds.push(parseInt(cb.value));
+    });
+
     var eventCodes = fd.get("event_codes").trim()
         ? fd.get("event_codes").split(",").map(function(s){ return s.trim(); }).filter(Boolean)
         : [];
@@ -236,7 +245,7 @@ document.getElementById("rule-form").addEventListener("submit", async (e) => {
     var payload = {
         name: name,
         channel_id: parseInt(channelId),
-        device_id: fd.get("device_id") ? parseInt(fd.get("device_id")) : null,
+        device_ids: deviceIds,
         event_codes: eventCodes,
         analytics_trigger: analyticsTrigger,
         min_objects: parseInt(fd.get("min_objects")) || 0,

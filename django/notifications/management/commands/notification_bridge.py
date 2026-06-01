@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 import redis
 from redis import exceptions as redis_exceptions
 
-from django.utils import timezone as tz
 from django.core.management.base import BaseCommand
 
 logger = logging.getLogger("notification_bridge")
@@ -34,7 +33,7 @@ class NotificationBridge:
 
             self._rules_cache = list(
                 NotificationRule.objects.filter(is_active=True)
-                .select_related("channel", "device", "incident_type")
+                .select_related("channel", "incident_type")
             )
         except Exception as e:
             logger.warning("Rule refresh error: %s", e)
@@ -113,7 +112,7 @@ class NotificationBridge:
         return ctx
 
     def _rule_matches_event(self, rule, device_id, event_data):
-        if rule.device is not None and rule.device.id != device_id:
+        if rule.devices.exists() and not rule.devices.filter(id=device_id).exists():
             return False
 
         code = event_data.get("code", "")
@@ -281,31 +280,9 @@ class NotificationBridge:
             return None
 
     def _check_schedule(self, rule):
-        if not rule.valid_from and not rule.valid_until and not rule.schedule:
-            return True
+        from notifications.utils import is_rule_active_now
 
-        now = tz.localtime()
-        t = now.strftime("%H:%M")
-
-        if rule.valid_from and now < rule.valid_from:
-            return False
-        if rule.valid_until and now > rule.valid_until:
-            return False
-
-        if rule.schedule:
-            today = now.strftime("%a").lower()[:3]
-            blocks = rule.schedule.get(today, [])
-            if not blocks:
-                return False
-            matched = False
-            for start, end in blocks:
-                if start <= t < end:
-                    matched = True
-                    break
-            if not matched:
-                return False
-
-        return True
+        return is_rule_active_now(rule)
 
     def _check_min_duration(self, rule, device_id):
         if rule.min_duration_seconds <= 0:

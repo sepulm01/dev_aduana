@@ -24,10 +24,8 @@ class NotificationRule(models.Model):
     channel = models.ForeignKey(
         NotificationChannel, on_delete=models.CASCADE, related_name="rules"
     )
-    device = models.ForeignKey(
+    devices = models.ManyToManyField(
         "devices.Device",
-        on_delete=models.CASCADE,
-        null=True,
         blank=True,
         related_name="notification_rules",
     )

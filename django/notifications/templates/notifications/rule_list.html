@@ -31,7 +31,15 @@
                 <tr>
                     <td>{{ rule.name }}</td>
                     <td><span class="badge bg-azure-lt">{{ rule.channel.name }}</span></td>
-                    <td>{{ rule.device.name|default:"Todos" }}</td>
+                    <td>
+                        {% with devs=rule.devices.all %}
+                        {% if devs %}
+                        {% for d in devs %}{{ d.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                        {% else %}
+                        Todos
+                        {% endif %}
+                        {% endwith %}
+                    </td>
                     <td>{{ rule.event_codes|join:", "|default:"-" }}</td>
                     <td>
                         {% if rule.is_active %}

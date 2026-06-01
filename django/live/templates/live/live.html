@@ -49,6 +49,28 @@
                 <div id="ivsEventLog" class="small mt-2" style="max-height:120px;overflow-y:auto;"></div>
             </div>
         </div>
+        {% if device_rules %}
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title"><i class="ti ti-bell me-2"></i>Reglas</h3>
+            </div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush">
+                    {% for dr in device_rules %}
+                    <div class="list-group-item py-2 small">
+                        {% if dr.active_now %}
+                        <span class="badge bg-green me-2" title="Activa ahora">&bull;</span>
+                        {% else %}
+                        <span class="badge bg-secondary me-2" title="Inactiva">&bull;</span>
+                        {% endif %}
+                        {{ dr.name }}
+                        <span class="text-muted ms-1">({{ dr.channel_name }})</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
