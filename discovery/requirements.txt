@@ -1,4 +1,0 @@
-flask>=3,<4
-wsdiscovery>=2,<3
-python-nmap>=0.7,<1
-requests>=2,<3

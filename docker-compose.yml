@@ -39,7 +39,6 @@ services:
     environment:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
-      - DISCOVERY_SERVICE_URL=http://host.docker.internal:8765
       - DEEPSTREAM_ANALYTICS_CONFIG=/opt/deepstream-app/config/config_nvdsanalytics.txt
     extra_hosts:
       - "host.docker.internal:host-gateway"
