@@ -77,19 +77,20 @@ All services connect via Docker DNS `redis://redis:6379` — never hardcode `127
 ## Services Architecture
 
 | Service | Role |
-|---|---|
+|---|---|---|
 | `postgres` | Database (pgvector/pgvector:pg16) |
 | `redis` | Message broker + cache (redis:7-alpine) |
 | `django-http` | REST API + UI (gunicorn:8000) |
 | `django-asgi` | WebSockets (daphne:8001) |
-| `celery-worker` | Async tasks (camera orchestrator) |
-| `celery-beat` | Scheduler (orchestrate_cameras every 5s) |
+| `celery-worker` | Async tasks (camera orchestrator + incident manager) |
+| `celery-beat` | Scheduler (orchestrate_cameras + incident_manager every 5s) |
 | `redis-event-bridge` | Redis `device:*:events` → Channels |
 | `face-receiver` | TCP :12348, face crops/embeddings → `Detection` records |
 | `mediamtx` | RTSP:8554, WebRTC:8889, API:9997 |
-| `discovery-service` | WS-Discovery + nmap ONVIF (Flask:8765) |
 | `event-stream-service` | Dahua event streaming |
-| `deepstream` | GPU analytics (runtime: nvidia) |
+| `notification-bridge` | Redis pubsub → evalúa NotificationRules → envía Telegram/Webhook |
+| `telegram-ack-poller` | Polling getUpdates → detecta inline keyboard → acknowledge/resolve |
+| `computer-vision` | GPU analytics (runtime: nvidia) |
 | `nginx` | Reverse proxy (:80) |
 
 MediaMTX: stream naming `cam_{device_id}_{profile_token}`, `_hw` suffix for transcoded. ffmpeg: `-c:v libx264 -preset ultrafast -tune zerolatency -c:a copy`. API auth: `admin:mediamtx_admin_pass`. RTSP URLs must percent-encode `+` → `%2B`.
@@ -144,6 +145,8 @@ Device.username/password (ONVIF)
 | `ensure_heartbeat` | devices | Ensures `orchestrate_cameras` periodic task in DB, cleans stale entries |
 | `redis_event_bridge` | live | Daemon: subscribes Redis `device:*:events` → Channels WebSocket groups |
 | `face_receiver` | live | TCP server (:12348): face `Detection` records, cosine-distance face matching, `FACE_MATCH_COOLDOWN_SECONDS` dedup |
+| `notification_bridge` | notifications | Daemon: subscribes Redis `device:*:events` → evalúa NotificationRules → envía canales + crea Incidentes |
+| `telegram_ack_poller` | incidents | Polling `getUpdates` cada 2s → detecta callbacks de botones inline → acknowledge/resolve incidentes |
 
 ## DeepStream
 
@@ -230,3 +233,62 @@ Analytics probe on `nvdslogger src` works in both modes. Display mode (X11 windo
 - **No test suite yet** — add tests inside individual app `tests/` directories.
 - **No ruff config** — uses ruff defaults (88-char line length). Add `pyproject.toml` `[tool.ruff]` to customize.
 - **No typechecking** — install `django-stubs` if type checking is desired.
+
+## Authentication
+
+All views are protected with `@login_required`. Django auth settings:
+
+```python
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
+```
+
+Login page at `/accounts/login/` (Tabler UI). Logout via POST to `/accounts/logout/`.
+Superuser `admin` exists. New users are created via Django admin `/admin/`.
+
+## Apps
+
+### `notifications`
+
+Notification rules with multi-channel backends (Telegram, Webhook). Features:
+- Filtering by device, event code, analytics trigger, minimum objects
+- Preset-aware event filtering (coherent with `redis-event-bridge`)
+- Cooldown between notifications + min_duration_seconds (merodeo)
+- RTSP photo capture attached to Telegram messages (send_photo)
+- Schedule: date range + weekly time blocks per day (vanilla JS grid)
+- IncidentType linkage for escalation workflow
+
+### `incidents`
+
+Incident management with operator-based escalation via Sites:
+- IncidentType: templates with auto_resolve_seconds, dedup_window_seconds
+- Incident: status machine active → acknowledged → resolved → expired
+- IncidentLog: complete audit trail
+- Incident snapshot (ImageField) captured at creation time
+- Dashboard with live WebRTC iframes + real-time toast alerts via WebSocket
+- Detail page with full event data, objects table, analytics table, audit log
+
+### `operadores`
+
+Operator profiles and site-based escalation:
+- OperatorProfile: OneToOne(User), escalation_level (1/2/3), cargo, personal channels
+- Site: organizational grouping with shared channels + SiteEscalationLevel config
+- SiteEscalationLevel: timeout_seconds per level within a site
+- SiteMembership: User ↔ Site many-to-many
+- Device.site FK: assign camera to a site
+- Signal auto-creates OperatorProfile on User creation
+
+### WebSocket routes
+
+| Route | Consumer | Group | Purpose |
+|---|---|---|---|
+| `/ws/device/(?P<device_id>\d+)/$` | DeviceConsumer | `device_{id}` | Per-device IVS events |
+| `/ws/incidents/$` | IncidentConsumer | `incidents` | Global incident alerts (toast) |
+
+### Celery tasks
+
+| Task | Schedule | Purpose |
+|---|---|---|
+| `devices.tasks.orchestrate_cameras` | 5s | ONVIF ping, FPS check, recovery |
+| `incidents.tasks.incident_manager` | 5s | Process active incidents, notify, escalate, auto-resolve |

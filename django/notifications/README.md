@@ -10,17 +10,27 @@ Redis device:*:events
         ▼
 notification-bridge (management command)
         │
-        ├── Telegram (Bot API, texto + foto + inline keyboard)
-        └── Webhook (HTTP POST/GET, JSON)
+        ├── _check_schedule(rule)         # vigencia + dias + horarios
+        ├── _filter_ivs_event(device)     # preset activo
+        ├── _rule_matches_event(rule)     # device, codigo, analytics, min_objects
+        ├── _check_min_duration(rule)     # umbral de merodeo
+        ├── _check_cooldown(rule)         # tiempo entre notificaciones
+        │
+        ├── _send_notification(rule)      # notificacion inmediata
+        │   ├── Telegram (texto + foto via sendPhoto)
+        │   └── Webhook (JSON POST)
+        │
+        └── _create_incident(rule)        # si rule.incident_type != null
+            ├── Captura snapshot RTSP
+            ├── Guarda Incident + IncidentLog
+            └── _broadcast_incident() → WebSocket incident_alert
 ```
-
-El `notification-bridge` es un servicio Docker que se suscribe a `device:*:events` en Redis, evalua las reglas de notificacion configuradas y envia mensajes por los canales definidos.
 
 ## Modelos
 
 ### NotificationChannel
 
-Representa un canal de comunicacion (Telegram, Webhook).
+Representa un canal de comunicacion.
 
 | Campo | Tipo | Descripcion |
 |---|---|---|
@@ -31,7 +41,7 @@ Representa un canal de comunicacion (Telegram, Webhook).
 
 **Config para Telegram:**
 ```json
-{"bot_token": "123:abc", "chat_id": "-456"}
+{"bot_token": "123:abc", "chat_id": "-456", "parse_mode": "HTML"}
 ```
 
 **Config para Webhook:**
@@ -48,69 +58,95 @@ Define que eventos notificar, por que canal y con que filtros.
 | name | CharField | Nombre de la regla |
 | channel | FK | Canal de destino |
 | device | FK, nullable | Dispositivo especifico (null = todos) |
-| event_codes | JSONField | Codigos de evento: `["DeepStreamDetection", "VideoMotion"]`. Vacio = todos |
-| analytics_trigger | JSONField | Tipos de analytics: `["roi", "lc", "oc", "direction"]`. Vacio = sin filtro |
-| min_objects | IntegerField | Minimo de objetos detectados (default 0) |
-| cooldown_seconds | IntegerField | Tiempo minimo entre notificaciones (default 0) |
-| min_duration_seconds | IntegerField | Tiempo minimo de presencia continua antes del primer aviso (default 0) |
+| event_codes | JSONField | Codigos de evento. Vacio = todos |
+| analytics_trigger | JSONField | `["roi", "lc", "oc", "direction"]`. Vacio = sin filtro |
+| min_objects | IntegerField | Minimo de objetos detectados |
+| cooldown_seconds | IntegerField | Tiempo minimo entre notificaciones |
+| min_duration_seconds | IntegerField | Tiempo de presencia continua antes del primer aviso (merodeo) |
 | is_active | BooleanField | Habilitar/deshabilitar |
-| message_template | TextField | Template de mensaje con variables |
+| message_template | TextField | Template con variables `{device_name}`, `{code}`, `{action}` |
 | send_immediate | BooleanField | Envio inmediato sin esperar escalacion |
 | send_photo | BooleanField | Adjuntar foto del evento (captura RTSP via ffmpeg) |
-| incident_type | FK, nullable | Tipo de incidente asociado para escalacion |
+| incident_type | FK, nullable | Tipo de incidente asociado para workflow de escalacion |
+| valid_from | DateTimeField, nullable | Inicio de vigencia |
+| valid_until | DateTimeField, nullable | Fin de vigencia |
+| schedule | JSONField | Bloques por dia: `{"mon":[["08:00","18:00"]], "tue":[], ...}` |
+
+## Filtros en orden de evaluacion
+
+En `notification_bridge._handle_event()`, los filtros se evaluan en este orden:
+
+1. **`_check_schedule(rule)`** — early exit. Vigencia, dia de la semana, rango horario
+2. **`_filter_ivs_event(device_id, event_data)`** — preset activo (coherente con `redis-event-bridge`)
+3. **`_rule_matches_event(rule, device_id, event_data)`** — device, event_codes, analytics_trigger, min_objects
+4. **`_check_min_duration(rule, device_id)`** — umbral de merodeo (tracking en memoria)
+5. **`_check_cooldown(rule, device_id)`** — cooldown via Redis SETEX
 
 ## Como configurar
 
 ### 1. Crear un canal (`/notifications/channels/create/`)
 
 **Telegram:**
-1. Crear un bot con @BotFather
-2. Copiar el token
-3. Enviar un mensaje al bot
-4. Visitar `https://api.telegram.org/bot<TOKEN>/getUpdates` para obtener el `chat.id`
-5. Completar el formulario con nombre, tipo Telegram, token y chat ID
+1. Crear un bot con @BotFather y copiar el token
+2. Enviar un mensaje al bot
+3. Obtener `chat_id` via `https://api.telegram.org/bot<TOKEN>/getUpdates`
+4. Completar formulario: nombre, tipo Telegram, token, chat ID
 
 **Webhook:**
-1. Completar URL del endpoint que recibira POST con el payload
-2. Opcional: headers, metodo HTTP, timeout
+1. URL del endpoint que recibira POST con `{"text": "...", "photo_base64": "..."}`
+2. Opcional: metodo HTTP, headers, timeout
 
 ### 2. Crear una regla (`/notifications/rules/create/`)
 
-1. Elegir canal y dispositivo (opcional)
-2. Configurar filtros: codigos de evento, triggers de analytics, minimo de objetos
-3. Configurar tiempos: cooldown y min_duration_seconds
-4. Activar envio de foto si se desea
-5. Guardar
+1. Nombre, canal y dispositivo (opcional)
+2. Filtros: codigos de evento, triggers de analytics, minimo de objetos
+3. Tiempos: cooldown (entre notificaciones) y min_duration_seconds (merodeo)
+4. Horario: vigencia, dias con bloques horarios, botones rapidos
+5. Foto: checkbox para adjuntar snapshot RTSP
+6. Tipo de Incidente: para activar workflow de escalacion
+7. Guardar
 
-### 3. El bridge procesa automaticamente
+## Horario programable
 
-Al crearse la regla, el bridge la cachea en ~30s y comienza a evaluar eventos.
+La grilla de horario en el formulario permite definir bloques por dia con inputs `time` nativos:
 
-## Variables del template de mensaje
+```
+Lun  [08:00] → [18:00] [×]  [+ bloque]
+Mar  [08:00] → [18:00] [×]  [+ bloque]
+...
+Sab  (sin bloques) [+ bloque]
+Dom  (sin bloques) [+ bloque]
 
-| Variable | Descripcion |
-|---|---|
-| `{device_name}` | Nombre del dispositivo |
-| `{code}` | Codigo del evento (DeepStreamDetection) |
-| `{action}` | Accion (Pulse, Start) |
-| `{data}` | Datos completos del evento |
+[Lun-Vie 08-18]  [Todo el dia]  [Limpiar]
+```
+
+Sin dependencias externas. El `schedule` se serializa como JSON:
+```json
+{"mon": [["08:00", "18:00"]], "tue": [["22:00", "06:00"]], ...}
+```
+
+## Merodeo (min_duration_seconds)
+
+El bridge trackea pares `(rule_id, device_id)` con timestamp de primera deteccion. Si pasan >3s sin deteccion, el contador se reinicia. Solo dispara cuando `now - first_seen >= min_duration_seconds`.
+
+Despues de una notificacion exitosa, el contador se resetea.
 
 ## Backends
 
 ### TelegramBackend
 
-- `send()` — envia texto via `sendMessage`
-- `send_with_reply_markup()` — envia con botones inline (usado por escalacion)
-- `send_with_photo()` — envia foto + caption via `sendPhoto` (multipart/form-data)
-- `get_updates()` — polling de callback queries (usado por telegram_ack_poller)
+- `send()` — texto via `sendMessage`
+- `send_with_reply_markup()` — texto con botones inline (usado por escalacion)
+- `send_with_photo()` — foto JPEG + caption via `sendPhoto` (multipart/form-data)
+- `get_updates()` — polling de callback queries
 
 ### WebhookBackend
 
 - `send()` — POST/PUT JSON a URL configurable
-- `send_with_photo()` — incluye la foto como `photo_base64` en el JSON
+- `send_with_photo()` — incluye `photo_base64` en el JSON
 
 ## Servicios Docker
 
 | Servicio | Comando | Funcion |
 |---|---|---|
-| `notification-bridge` | `python manage.py notification_bridge` | Escucha Redis, evalua reglas, envia notificaciones |
+| `notification-bridge` | `python manage.py notification_bridge` | Suscriptor Redis → evalua reglas → envia notificaciones + crea incidentes |
