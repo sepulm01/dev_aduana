@@ -105,12 +105,16 @@ def rule_create(request):
             message_template=data.get("message_template", ""),
             send_immediate=data.get("send_immediate", True),
             send_photo=data.get("send_photo", False),
+            valid_from=data.get("valid_from") or None,
+            valid_until=data.get("valid_until") or None,
+            schedule=data.get("schedule", {}),
         )
         return JsonResponse({"ok": True, "id": rule.id})
     return render(request, "notifications/rule_form.html", {
         "rule": None,
         "channels": channels,
         "devices": devices,
+        "schedule_json": "{}",
     })
 
 
@@ -143,12 +147,16 @@ def rule_edit(request, rule_id):
         rule.message_template = data.get("message_template", rule.message_template)
         rule.send_immediate = data.get("send_immediate", rule.send_immediate)
         rule.send_photo = data.get("send_photo", rule.send_photo)
+        rule.valid_from = data.get("valid_from") or None
+        rule.valid_until = data.get("valid_until") or None
+        rule.schedule = data.get("schedule", rule.schedule)
         rule.save()
         return JsonResponse({"ok": True})
     return render(request, "notifications/rule_form.html", {
         "rule": rule,
         "channels": channels,
         "devices": devices,
+        "schedule_json": json.dumps(rule.schedule),
     })
 
 

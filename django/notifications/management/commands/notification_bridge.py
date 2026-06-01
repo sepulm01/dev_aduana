@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import redis
 from redis import exceptions as redis_exceptions
 
+from django.utils import timezone as tz
 from django.core.management.base import BaseCommand
 
 logger = logging.getLogger("notification_bridge")
@@ -258,6 +259,33 @@ class NotificationBridge:
             logger.warning("Create incident error: %s", e)
             return None
 
+    def _check_schedule(self, rule):
+        if not rule.valid_from and not rule.valid_until and not rule.schedule:
+            return True
+
+        now = tz.localtime()
+        t = now.strftime("%H:%M")
+
+        if rule.valid_from and now < rule.valid_from:
+            return False
+        if rule.valid_until and now > rule.valid_until:
+            return False
+
+        if rule.schedule:
+            today = now.strftime("%a").lower()[:3]
+            blocks = rule.schedule.get(today, [])
+            if not blocks:
+                return False
+            matched = False
+            for start, end in blocks:
+                if start <= t < end:
+                    matched = True
+                    break
+            if not matched:
+                return False
+
+        return True
+
     def _check_min_duration(self, rule, device_id):
         if rule.min_duration_seconds <= 0:
             return True
@@ -280,6 +308,8 @@ class NotificationBridge:
 
         for rule in self._rules_cache:
             try:
+                if not self._check_schedule(rule):
+                    continue
                 if not self._rule_matches_event(rule, device_id, event_data):
                     continue
                 if not self._check_min_duration(rule, device_id):

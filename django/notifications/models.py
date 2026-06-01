@@ -40,6 +40,9 @@ class NotificationRule(models.Model):
     message_template = models.TextField(blank=True, default="")
     send_immediate = models.BooleanField(default=True)
     send_photo = models.BooleanField(default=False)
+    valid_from = models.DateTimeField(null=True, blank=True)
+    valid_until = models.DateTimeField(null=True, blank=True)
+    schedule = models.JSONField(blank=True, default=dict)
     incident_type = models.ForeignKey(
         "incidents.IncidentType",
         on_delete=models.SET_NULL,

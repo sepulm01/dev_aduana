@@ -68,6 +68,33 @@
                     <small class="form-hint">0 = instantaneo. 60 = requiere presencia por 1 minuto</small>
                 </div>
             </div>
+
+            <hr>
+            <h4 class="mb-3">Horario</h4>
+            <div class="row mb-3">
+                <div class="col">
+                    <label class="form-label">Vigencia desde</label>
+                    <input type="date" class="form-control" id="valid_from" value="{{ rule.valid_from|date:"Y-m-d"|default:"" }}">
+                </div>
+                <div class="col">
+                    <label class="form-label">Vigencia hasta</label>
+                    <input type="date" class="form-control" id="valid_until" value="{{ rule.valid_until|date:"Y-m-d"|default:"" }}">
+                </div>
+                <div class="col-auto d-flex align-items-end pb-2">
+                    <small class="text-muted">Vacio = sin limite</small>
+                </div>
+            </div>
+            <div class="mb-2">
+                <button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="quickFill('mon-fri')">Lun-Vie 08-18</button>
+                <button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="quickFill('all-day')">Todo el dia</button>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="quickFill('clear')">Limpiar</button>
+            </div>
+
+            <div id="schedule-grid">
+<script id="schedule-data" type="application/json">{{ schedule_json|safe }}</script>
+            </div>
+
+            <hr>
             <div class="mb-3">
                 <label class="form-label">Template de Mensaje</label>
                 <textarea class="form-control" name="message_template" rows="4" placeholder="{% templatetag openvariable %}device_name{% templatetag closevariable %}: {{ '{code}' }} {{ '{action}' }} detectado">{{ rule.message_template|default:"" }}</textarea>
@@ -101,22 +128,103 @@
 {% endblock %}
 {% block scripts %}
 <script>
+var DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
+var DAY_NAMES = ["Lun","Mar","Mie","Jue","Vie","Sab","Dom"];
+
+function renderGrid(schedule) {
+    var html = "";
+    for (var i = 0; i < DAYS.length; i++) {
+        var day = DAYS[i];
+        html += '<div class="row g-2 mb-2 align-items-center schedule-day" data-day="' + day + '">';
+        html += '<div class="col-auto" style="width:50px"><strong>' + DAY_NAMES[i] + '</strong></div>';
+        html += '<div class="col" id="blocks-' + day + '">';
+        var blocks = schedule[day] || [];
+        for (var j = 0; j < blocks.length; j++) {
+            html += '<div class="d-inline-flex align-items-center me-2 mb-1 schedule-block">';
+            html += '<input type="time" class="form-control form-control-sm time-from" value="' + blocks[j][0] + '" style="width:110px">';
+            html += '<span class="mx-1 text-muted">&rarr;</span>';
+            html += '<input type="time" class="form-control form-control-sm time-to" value="' + blocks[j][1] + '" style="width:110px">';
+            html += '<button type="button" class="btn btn-sm btn-ghost-danger ms-1" onclick="this.closest(\'.schedule-block\').remove()">&times;</button>';
+            html += '</div>';
+        }
+        html += '</div>';
+        html += '<div class="col-auto"><button type="button" class="btn btn-sm btn-ghost-secondary" onclick="addBlock(\'' + day + '\')">+ bloque</button></div>';
+        html += '</div>';
+    }
+    document.getElementById("schedule-grid").innerHTML = html;
+}
+
+function addBlock(day) {
+    var container = document.getElementById("blocks-" + day);
+    var div = document.createElement("div");
+    div.className = "d-inline-flex align-items-center me-2 mb-1 schedule-block";
+    div.innerHTML = '<input type="time" class="form-control form-control-sm time-from" value="08:00" style="width:110px">' +
+        '<span class="mx-1 text-muted">&rarr;</span>' +
+        '<input type="time" class="form-control form-control-sm time-to" value="18:00" style="width:110px">' +
+        '<button type="button" class="btn btn-sm btn-ghost-danger ms-1" onclick="this.closest(\'.schedule-block\').remove()">&times;</button>';
+    container.appendChild(div);
+}
+
+function quickFill(mode) {
+    var targetDays = mode === "all-day" ? DAYS : ["mon","tue","wed","thu","fri"];
+    var from = mode === "all-day" ? "00:00" : "08:00";
+    var to = mode === "all-day" ? "23:59" : "18:00";
+
+    for (var i = 0; i < DAYS.length; i++) {
+        document.getElementById("blocks-" + DAYS[i]).innerHTML = "";
+    }
+    if (mode === "clear") return;
+
+    for (var j = 0; j < targetDays.length; j++) {
+        addBlock(targetDays[j]);
+        var blocks = document.querySelectorAll("#blocks-" + targetDays[j] + " .schedule-block");
+        var last = blocks[blocks.length - 1];
+        last.querySelector(".time-from").value = from;
+        last.querySelector(".time-to").value = to;
+    }
+}
+
+function buildSchedule() {
+    var schedule = {};
+    document.querySelectorAll(".schedule-day").forEach(function(row) {
+        var day = row.dataset.day;
+        var blocks = [];
+        row.querySelectorAll(".schedule-block").forEach(function(block) {
+            var from = block.querySelector(".time-from").value;
+            var to = block.querySelector(".time-to").value;
+            if (from && to) blocks.push([from, to]);
+        });
+        if (blocks.length) schedule[day] = blocks;
+    });
+    return schedule;
+}
+
+(function init() {
+    var el = document.getElementById("schedule-data");
+    var schedule = {};
+    if (el) {
+        try { schedule = JSON.parse(el.textContent); } catch(e) {}
+        if (typeof schedule !== "object" || schedule === null) schedule = {};
+    }
+    renderGrid(schedule);
+})();
+
 document.getElementById("rule-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
-    const name = fd.get("name").trim();
-    const channelId = fd.get("channel_id");
+    var fd = new FormData(e.target);
+    var name = fd.get("name").trim();
+    var channelId = fd.get("channel_id");
     if (!name || !channelId) return;
 
-    const eventCodes = fd.get("event_codes").trim()
-        ? fd.get("event_codes").split(",").map(s => s.trim()).filter(Boolean)
+    var eventCodes = fd.get("event_codes").trim()
+        ? fd.get("event_codes").split(",").map(function(s){ return s.trim(); }).filter(Boolean)
         : [];
-    const analyticsTrigger = fd.get("analytics_trigger").trim()
-        ? fd.get("analytics_trigger").split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
+    var analyticsTrigger = fd.get("analytics_trigger").trim()
+        ? fd.get("analytics_trigger").split(",").map(function(s){ return s.trim().toLowerCase(); }).filter(Boolean)
         : [];
 
-    const payload = {
-        name,
+    var payload = {
+        name: name,
         channel_id: parseInt(channelId),
         device_id: fd.get("device_id") ? parseInt(fd.get("device_id")) : null,
         event_codes: eventCodes,
@@ -128,13 +236,16 @@ document.getElementById("rule-form").addEventListener("submit", async (e) => {
         message_template: fd.get("message_template").trim(),
         send_immediate: fd.get("send_immediate") === "on",
         send_photo: fd.get("send_photo") === "on",
+        valid_from: document.getElementById("valid_from").value || null,
+        valid_until: document.getElementById("valid_until").value || null,
+        schedule: buildSchedule(),
     };
     {% if rule %}
-    const url = "{% url 'notification_rule_edit' rule.id %}";
+    var url = "{% url 'notification_rule_edit' rule.id %}";
     {% else %}
-    const url = "{% url 'notification_rule_create' %}";
+    var url = "{% url 'notification_rule_create' %}";
     {% endif %}
-    const resp = await fetch(url, {
+    var resp = await fetch(url, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(payload),
@@ -142,7 +253,7 @@ document.getElementById("rule-form").addEventListener("submit", async (e) => {
     if (resp.ok) {
         window.location.href = "{% url 'notification_rule_list' %}";
     } else {
-        const data = await resp.json();
+        var data = await resp.json();
         alert(data.error || "Error al guardar");
     }
 });
