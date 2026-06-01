@@ -12,7 +12,7 @@
     <div class="col-md-6">
         <div class="card mb-3">
             <div class="card-header">
-                <h3 class="card-title"><i class="ti ti-info-circle me-2"></i>Información</h3>
+                <h3 class="card-title"><i class="ti ti-info-circle me-2"></i>Informacion</h3>
             </div>
             <div class="card-body">
                 <dl class="dl-row mb-0">
@@ -29,40 +29,27 @@
                     <dt>Online</dt>
                     <dd>
                         {% if device.is_online %}
-                        <span class="badge bg-green">En línea</span>
+                        <span class="badge bg-green">En linea</span>
                         {% else %}
                         <span class="badge bg-red">Desconectado</span>
                         {% endif %}
+                    </dd>
+                    <dt>Site</dt>
+                    <dd>
+                        <select class="form-select form-select-sm" id="siteSelect" style="max-width:220px">
+                            <option value="">Sin site</option>
+                            {% for site in sites %}
+                            <option value="{{ site.id }}" {% if device.site_id == site.id %}selected{% endif %}>
+                                {{ site.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
                     </dd>
                 </dl>
             </div>
         </div>
 
         <div class="card mb-3">
-            <div class="card-header">
-                <h3 class="card-title"><i class="ti ti-eye me-2"></i>Detección de movimiento</h3>
-            </div>
-            <div class="card-body" id="motionConfig">
-                <div class="text-center text-muted py-3">
-                    <span class="spinner-border spinner-border-sm"></span>
-                    <p class="mt-2 mb-0 small">Cargando configuración...</p>
-                </div>
-            </div>
-        </div>
-
-        <div class="card mb-3">
-            <div class="card-header">
-                <h3 class="card-title"><i class="ti ti-topology-star-3 me-2"></i>Reglas IVS</h3>
-            </div>
-            <div class="card-body" id="ivsConfig">
-                <div class="text-center text-muted py-3">
-                    <span class="spinner-border spinner-border-sm"></span>
-                    <p class="mt-2 mb-0 small">Cargando reglas...</p>
-                </div>
-            </div>
-        </div>
-
-        <div class="card mb-3" id="analyticsCard">
             <div class="card-header">
                 <h3 class="card-title"><i class="ti ti-chart-dots me-2"></i>Analytics IA</h3>
             </div>
@@ -72,22 +59,7 @@
                 </a>
                 {% if not device.deepstream_enabled %}
                 <div class="alert alert-warning mt-2 mb-0 py-2 px-3 small">
-                    <i class="ti ti-alert-triangle me-1"></i>IA no está habilitada para esta cámara.
-                </div>
-                {% else %}
-                <div id="dsPreviewCard" class="mt-2">
-                    <div class="d-flex align-items-center justify-content-between small text-muted mb-1">
-                        <span><i class="ti ti-eye me-1"></i>Vista IA</span>
-                        <span id="dsPreviewStatus" class="badge bg-secondary">Inactivo</span>
-                    </div>
-                    <div id="dsVideoContainer" style="position:relative;width:100%;aspect-ratio:16/9;background:#000;">
-                        <iframe id="dsPreviewFrame"
-                            src="{{ webrtc_url }}"
-                            style="width:100%;height:100%;border:0;position:absolute;top:0;left:0;"
-                            allow="autoplay;encrypted-media"
-                            allowfullscreen>
-                        </iframe>
-                    </div>
+                    <i class="ti ti-alert-triangle me-1"></i>IA no esta habilitada para esta camara.
                 </div>
                 {% endif %}
             </div>
@@ -107,7 +79,7 @@
             <div class="card-body">
                 <p class="mb-0 small text-muted" id="scanStatus">
                     {% if device.camera_specs.last_scan %}
-                    Último scan: {{ device.camera_specs.last_scan }}
+                    Ultimo scan: {{ device.camera_specs.last_scan }}
                     {% else %}
                     Sin escanear. Presiona "Scan".
                     {% endif %}
@@ -167,19 +139,15 @@
 {% load static %}
 <script src="{% static 'live/ptz-control.js' %}"></script>
 <script>
-const DEVICE_ID = {{ device.id }};
-const SCAN_URL = '/api/devices/{{ device.id }}/scan/';
-const SYNC_TIME_URL = '/api/devices/{{ device.id }}/sync-time/';
-const PROFILES_URL = '/api/devices/{{ device.id }}/profiles/';
-const PRESET_URL = '/api/ptz/{{ device.id }}/preset/';
-const DEFAULT_PROFILE_URL = '/api/devices/{{ device.id }}/default-profile/';
-const MOTION_CONFIG_URL = '/api/devices/{{ device.id }}/motion-config/';
-const IVS_URL = '/api/devices/{{ device.id }}/ivs/';
-const EVENTS_URL = '/api/devices/{{ device.id }}/events/';
-const EVENT_LISTENER_URL = '/api/devices/{{ device.id }}/event-listener/';
+var DEVICE_ID = {{ device.id }};
+var SCAN_URL = '/api/devices/{{ device.id }}/scan/';
+var SYNC_TIME_URL = '/api/devices/{{ device.id }}/sync-time/';
+var PROFILES_URL = '/api/devices/{{ device.id }}/profiles/';
+var PRESET_URL = '/api/ptz/{{ device.id }}/preset/';
+var DEFAULT_PROFILE_URL = '/api/devices/{{ device.id }}/default-profile/';
 
-const specs = {{ camera_specs_json|safe }};
-const defaultProfileToken = '{{ device.default_profile_token|default:"" }}';
+var specs = {{ camera_specs_json|safe }};
+var defaultProfileToken = '{{ device.default_profile_token|default:"" }}';
 
 {% if profile_token %}
 window.ptzCtrl_detail = new PTZControl({
@@ -199,14 +167,14 @@ initVideoPlayer('_detail');
 {% endif %}
 
 async function scanDevice() {
-    const btn = document.getElementById('scanBtn');
-    const status = document.getElementById('scanStatus');
+    var btn = document.getElementById('scanBtn');
+    var status = document.getElementById('scanStatus');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     status.textContent = 'Escaneando...';
     try {
-        const resp = await fetch(SCAN_URL, {method: 'POST'});
-        const data = await resp.json();
+        var resp = await fetch(SCAN_URL, {method: 'POST'});
+        var data = await resp.json();
         if (data.ok) {
             location.reload();
         } else {
@@ -220,23 +188,23 @@ async function scanDevice() {
 }
 
 async function syncTime() {
-    const btn = document.getElementById('syncTimeBtn');
-    const status = document.getElementById('scanStatus');
+    var btn = document.getElementById('syncTimeBtn');
+    var status = document.getElementById('scanStatus');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     try {
-        const resp = await fetch(SYNC_TIME_URL, {method: 'POST'});
-        const data = await resp.json();
-        const r = data.results?.[0];
+        var resp = await fetch(SYNC_TIME_URL, {method: 'POST'});
+        var data = await resp.json();
+        var r = data.results?.[0];
         if (r && r.ok) {
             status.textContent = 'Hora sincronizada correctamente';
-            setTimeout(() => location.reload(), 1500);
+            setTimeout(function() { location.reload(); }, 1500);
         } else {
-            const msg = 'Error: ' + (r?.error || 'desconocido');
+            var msg = 'Error: ' + (r?.error || 'desconocido');
             status.textContent = msg;
             btn.innerHTML = '<i class="ti ti-alert-triangle me-1"></i>Error';
             btn.classList.replace('btn-outline-info', 'btn-outline-danger');
-            setTimeout(() => {
+            setTimeout(function() {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="ti ti-clock me-1"></i>Sync time';
                 btn.classList.replace('btn-outline-danger', 'btn-outline-info');
@@ -263,18 +231,18 @@ async function setDefaultProfile(token) {
     }
 }
 
-let selectedPresetProfile = '';
+var selectedPresetProfile = '';
 
 async function loadPtzProfiles() {
     try {
-        const resp = await fetch(PROFILES_URL);
+        var resp = await fetch(PROFILES_URL);
         if (!resp.ok) return;
-        const profiles = await resp.json();
+        var profiles = await resp.json();
         if (!Array.isArray(profiles)) return;
-        const select = document.getElementById('presetProfileSelect');
-        profiles.forEach(p => {
+        var select = document.getElementById('presetProfileSelect');
+        profiles.forEach(function(p) {
             if (p.ptz) {
-                const opt = document.createElement('option');
+                var opt = document.createElement('option');
                 opt.value = p.token;
                 opt.textContent = p.name;
                 select.appendChild(opt);
@@ -295,29 +263,29 @@ document.getElementById('presetProfileSelect').addEventListener('change', functi
 });
 
 async function loadPresets() {
-    const container = document.getElementById('presetList');
+    var container = document.getElementById('presetList');
     container.innerHTML = '<div class="text-center py-2"><span class="spinner-border spinner-border-sm"></span></div>';
     try {
-        const resp = await fetch(PRESET_URL + '?profile_token=' + encodeURIComponent(selectedPresetProfile));
-        const presets = await resp.json();
+        var resp = await fetch(PRESET_URL + '?profile_token=' + encodeURIComponent(selectedPresetProfile));
+        var presets = await resp.json();
         if (!Array.isArray(presets) || presets.length === 0) {
             container.innerHTML = '<p class="text-muted small text-center mb-0">Sin presets</p>';
             return;
         }
         container.innerHTML = '<div class="list-group list-group-flush">' +
-            presets.map(p => `
-                <div class="list-group-item d-flex justify-content-between align-items-center py-2">
-                    <span class="small">${p.name || p.token}</span>
-                    <div>
-                        <button class="btn btn-sm btn-outline-success me-1 py-0 px-1" onclick="gotoPreset(this, '${p.token}')" title="Ir">
-                            <i class="ti ti-player-play"></i>
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removePreset(this, '${p.token}')" title="Eliminar">
-                            <i class="ti ti-x"></i>
-                        </button>
-                    </div>
-                </div>
-            `).join('') +
+            presets.map(function(p) {
+                return '<div class="list-group-item d-flex justify-content-between align-items-center py-2">' +
+                    '<span class="small">' + (p.name || p.token) + '</span>' +
+                    '<div>' +
+                        '<button class="btn btn-sm btn-outline-success me-1 py-0 px-1" onclick="gotoPreset(this, \'' + p.token + '\')" title="Ir">' +
+                            '<i class="ti ti-player-play"></i>' +
+                        '</button>' +
+                        '<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removePreset(this, \'' + p.token + '\')" title="Eliminar">' +
+                            '<i class="ti ti-x"></i>' +
+                        '</button>' +
+                    '</div>' +
+                '</div>';
+            }).join('') +
         '</div>';
     } catch (e) {
         container.innerHTML = '<p class="text-danger small text-center mb-0">Error al cargar presets</p>';
@@ -325,7 +293,7 @@ async function loadPresets() {
 }
 
 async function savePreset() {
-    const name = document.getElementById('presetName').value.trim();
+    var name = document.getElementById('presetName').value.trim();
     if (!selectedPresetProfile) {
         alert('Selecciona un perfil PTZ primero');
         return;
@@ -334,20 +302,16 @@ async function savePreset() {
         alert('Ingresa un nombre para el preset');
         return;
     }
-    const btn = document.querySelector('#presetName + button');
+    var btn = document.querySelector('#presetName + button');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     try {
-        const resp = await fetch(PRESET_URL, {
+        var resp = await fetch(PRESET_URL, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                action: 'set',
-                profile_token: selectedPresetProfile,
-                name: name,
-            }),
+            body: JSON.stringify({action: 'set', profile_token: selectedPresetProfile, name: name}),
         });
-        const data = await resp.json();
+        var data = await resp.json();
         if (resp.ok && data.ok) {
             document.getElementById('presetName').value = '';
             loadPresets();
@@ -356,7 +320,6 @@ async function savePreset() {
         }
     } catch (e) {
         alert('Error de red al guardar preset');
-        console.error('Error saving preset:', e);
     }
     btn.disabled = false;
     btn.innerHTML = '<i class="ti ti-plus"></i>';
@@ -364,26 +327,21 @@ async function savePreset() {
 
 async function gotoPreset(btnEl, token) {
     if (!selectedPresetProfile) return;
-    const orig = btnEl.innerHTML;
+    var orig = btnEl.innerHTML;
     btnEl.disabled = true;
     btnEl.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     try {
-        const resp = await fetch(PRESET_URL, {
+        var resp = await fetch(PRESET_URL, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                action: 'goto',
-                profile_token: selectedPresetProfile,
-                preset_token: token,
-            }),
+            body: JSON.stringify({action: 'goto', profile_token: selectedPresetProfile, preset_token: token}),
         });
         if (!resp.ok) {
-            const data = await resp.json();
+            var data = await resp.json();
             alert('Error al mover: ' + (data.error || 'desconocido'));
         }
     } catch (e) {
         alert('Error de red al mover preset');
-        console.error('Error goto preset:', e);
     }
     btnEl.disabled = false;
     btnEl.innerHTML = orig;
@@ -391,30 +349,25 @@ async function gotoPreset(btnEl, token) {
 
 async function removePreset(btnEl, token) {
     if (!selectedPresetProfile) return;
-    const orig = btnEl.innerHTML;
+    var orig = btnEl.innerHTML;
     btnEl.disabled = true;
     btnEl.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     try {
-        const resp = await fetch(PRESET_URL, {
+        var resp = await fetch(PRESET_URL, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                action: 'remove',
-                profile_token: selectedPresetProfile,
-                preset_token: token,
-            }),
+            body: JSON.stringify({action: 'remove', profile_token: selectedPresetProfile, preset_token: token}),
         });
         if (resp.ok) {
             loadPresets();
         } else {
-            const data = await resp.json();
+            var data = await resp.json();
             alert('Error al eliminar: ' + (data.error || 'desconocido'));
             btnEl.disabled = false;
             btnEl.innerHTML = orig;
         }
     } catch (e) {
         alert('Error de red al eliminar preset');
-        console.error('Error removing preset:', e);
         btnEl.disabled = false;
         btnEl.innerHTML = orig;
     }
@@ -422,30 +375,28 @@ async function removePreset(btnEl, token) {
 
 async function loadProfiles() {
     try {
-        const resp = await fetch(PROFILES_URL);
-        const profiles = await resp.json();
-        const container = document.getElementById('profiles');
-
+        var resp = await fetch(PROFILES_URL);
+        var profiles = await resp.json();
+        var container = document.getElementById('profiles');
         if (!Array.isArray(profiles) || profiles.length === 0) {
             container.innerHTML = '<p class="text-muted small text-center mb-0">Sin perfiles disponibles</p>';
             return;
         }
-
         container.innerHTML = '<div class="list-group list-group-flush">' +
-            profiles.map(p => {
-                const enc = p.video_encoder?.encoding || '-';
-                const res = p.video_encoder?.resolution;
-                const resStr = res ? `${res.width}x${res.height}` : '-';
-                const hasPtz = p.ptz ? '<i class="ti ti-arrows-move text-info ms-1" title="PTZ"></i>' : '';
-                const isDefault = defaultProfileToken === p.token;
-                return `<div class="list-group-item d-flex justify-content-between align-items-center">
-                    <div>
-                        <a href="/live/{{ device.id }}/?profile=${p.token}" class="text-reset text-decoration-none">${p.name} ${hasPtz}</a>
-                        ${isDefault ? '<span class="badge bg-blue ms-1">Default</span>' : ''}
-                        <br><small class="text-muted">${enc} ${resStr}</small>
-                    </div>
-                    ${!isDefault ? `<button class="btn btn-sm btn-outline-info py-0 px-1" onclick="setDefaultProfile('${p.token}')" title="Set as default"><i class="ti ti-star"></i></button>` : ''}
-                </div>`;
+            profiles.map(function(p) {
+                var enc = p.video_encoder?.encoding || '-';
+                var res = p.video_encoder?.resolution;
+                var resStr = res ? res.width + 'x' + res.height : '-';
+                var hasPtz = p.ptz ? '<i class="ti ti-arrows-move text-info ms-1" title="PTZ"></i>' : '';
+                var isDefault = defaultProfileToken === p.token;
+                return '<div class="list-group-item d-flex justify-content-between align-items-center">' +
+                    '<div>' +
+                        '<a href="/live/{{ device.id }}/?profile=' + p.token + '" class="text-reset text-decoration-none">' + p.name + ' ' + hasPtz + '</a>' +
+                        (isDefault ? '<span class="badge bg-blue ms-1">Default</span>' : '') +
+                        '<br><small class="text-muted">' + enc + ' ' + resStr + '</small>' +
+                    '</div>' +
+                    (!isDefault ? '<button class="btn btn-sm btn-outline-info py-0 px-1" onclick="setDefaultProfile(\'' + p.token + '\')" title="Set as default"><i class="ti ti-star"></i></button>' : '') +
+                '</div>';
             }).join('') +
         '</div>';
     } catch (e) {
@@ -454,621 +405,41 @@ async function loadProfiles() {
 }
 
 function renderCapabilities() {
-    const container = document.getElementById('capabilities');
-    const lastScan = specs.last_scan || '-';
-
-    let rows = '';
+    var container = document.getElementById('capabilities');
+    var lastScan = specs.last_scan || '-';
+    var rows = '';
     if (specs.onvif_profiles?.profiles) {
-        const p = specs.onvif_profiles.profiles;
-        rows += `<tr><td>ONVIF</td><td>${['S','T','M','G','Q'].filter(k => p[k]).join(', ') || '-'}</td></tr>`;
+        var p = specs.onvif_profiles.profiles;
+        rows += '<tr><td>ONVIF</td><td>' + (['S','T','M','G','Q'].filter(function(k){ return p[k]; }).join(', ') || '-') + '</td></tr>';
     }
     if (specs.video_source) {
-        const v = specs.video_source;
-        rows += `<tr><td>Resolución</td><td>${v.max_width || '-'}×${v.max_height || '-'} @ ${v.max_framerate || '-'}fps</td></tr>`;
+        var v = specs.video_source;
+        rows += '<tr><td>Resolucion</td><td>' + (v.max_width || '-') + '\u00d7' + (v.max_height || '-') + ' @ ' + (v.max_framerate || '-') + 'fps</td></tr>';
     }
     if (specs.network) {
-        rows += `<tr><td>MAC</td><td>${specs.network.mac || '-'}</td></tr>`;
-        rows += `<tr><td>IP</td><td>${specs.network.ip || '-'}</td></tr>`;
+        rows += '<tr><td>MAC</td><td>' + (specs.network.mac || '-') + '</td></tr>';
+        rows += '<tr><td>IP</td><td>' + (specs.network.ip || '-') + '</td></tr>';
     }
-    if (specs.hostname) {
-        rows += `<tr><td>Hostname</td><td>${specs.hostname}</td></tr>`;
-    }
-    if (specs.dns?.length) {
-        rows += `<tr><td>DNS</td><td>${specs.dns.join(', ')}</td></tr>`;
-    }
-    if (specs.ntp?.length) {
-        rows += `<tr><td>NTP</td><td>${specs.ntp.join(', ')}</td></tr>`;
-    }
-    if (specs.system_time) {
-        rows += `<tr><td>Zona horaria</td><td>${specs.system_time.tz || '-'}</td></tr>`;
-    }
-    if (specs.last_time_sync) {
-        rows += `<tr><td>Última sincro</td><td>${specs.last_time_sync}</td></tr>`;
-    }
-
+    if (specs.hostname) rows += '<tr><td>Hostname</td><td>' + specs.hostname + '</td></tr>';
+    if (specs.dns?.length) rows += '<tr><td>DNS</td><td>' + specs.dns.join(', ') + '</td></tr>';
+    if (specs.ntp?.length) rows += '<tr><td>NTP</td><td>' + specs.ntp.join(', ') + '</td></tr>';
+    if (specs.system_time) rows += '<tr><td>Zona horaria</td><td>' + (specs.system_time.tz || '-') + '</td></tr>';
+    if (specs.last_time_sync) rows += '<tr><td>Ultima sincro</td><td>' + specs.last_time_sync + '</td></tr>';
     if (!rows) return;
-
-    container.innerHTML = `
-        <table class="table table-vcenter mt-2 mb-0 small">
-            <tbody>${rows}</tbody>
-        </table>
-    `;
+    container.innerHTML = '<table class="table table-vcenter mt-2 mb-0 small"><tbody>' + rows + '</tbody></table>';
 }
+
+document.getElementById('siteSelect').addEventListener('change', async function() {
+    var siteId = this.value || null;
+    await fetch('/api/devices/' + DEVICE_ID + '/assign-site/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({site_id: siteId}),
+    });
+});
 
 renderCapabilities();
-
-let motionData = null;
-
-async function loadMotionConfig() {
-    const container = document.getElementById('motionConfig');
-    try {
-        const resp = await fetch(MOTION_CONFIG_URL);
-        if (!resp.ok) {
-            const err = await resp.json();
-            container.innerHTML = '<p class="text-danger small mb-0">' + (err.error || 'Error al cargar') + '</p>';
-            return;
-        }
-        motionData = await resp.json();
-        renderMotionConfig();
-    } catch (e) {
-        container.innerHTML = '<p class="text-danger small mb-0">Error de red al cargar configuración</p>';
-    }
-}
-
-function renderMotionConfig() {
-    const container = document.getElementById('motionConfig');
-    const md = motionData?.MotionDetect?.[0];
-    if (!md) {
-        container.innerHTML = '<p class="text-muted small mb-0">Sin configuración disponible</p>';
-        return;
-    }
-
-    const enabled = md.Enable === 'true';
-    const level = parseInt(md.Level) || 0;
-    const windows = Array.isArray(md.MotionDetectWindow) ? md.MotionDetectWindow : [];
-    const eh = md.EventHandler || {};
-    const recordEnabled = eh.RecordEnable === 'true';
-    const alarmEnabled = eh.AlarmOutEnable === 'true';
-
-    let windowsHtml = '';
-    windows.forEach((w, i) => {
-        const s = parseInt(w.Sensitive) || 0;
-        const t = parseInt(w.Threshold) || 0;
-        const coords = Array.isArray(w.Window) ? w.Window.join(", ") : (w.Window || "-");
-        windowsHtml += `
-            <div class="border rounded p-2 mb-2">
-                <div class="d-flex justify-content-between align-items-center mb-1">
-                    <strong class="small">${w.Name || ("Ventana " + (i + 1))}</strong>
-                </div>
-                <div class="row g-2 small">
-                    <div class="col-6">
-                        <label class="text-muted d-block">Sensibilidad</label>
-                        <input type="range" class="form-range win-sensitive" min="0" max="100" step="5" value="${s}" data-idx="${i}" ${enabled ? '' : 'disabled'}>
-                        <span class="win-sensitive-val">${s}</span>
-                    </div>
-                    <div class="col-6">
-                        <label class="text-muted d-block">Umbral</label>
-                        <input type="range" class="form-range win-threshold" min="0" max="10" step="1" value="${t}" data-idx="${i}" ${enabled ? '' : 'disabled'}>
-                        <span class="win-threshold-val">${t}</span>
-                    </div>
-                </div>
-                <small class="text-muted d-block mt-1">Coords: ${coords}</small>
-            </div>
-        `;
-    });
-
-    container.innerHTML = `
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" id="motionEnable" ${enabled ? 'checked' : ''}>
-                <label class="form-check-label small" for="motionEnable">Habilitado</label>
-            </div>
-            <div class="small text-muted">Nivel: <span id="motionLevelVal">${level}</span></div>
-        </div>
-        <div class="mb-3">
-            <input type="range" class="form-range" id="motionLevel" min="0" max="6" step="1" value="${level}">
-        </div>
-        <div class="d-flex gap-3 mb-2">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="motionRecord" ${recordEnabled ? 'checked' : ''}>
-                <label class="form-check-label small" for="motionRecord">Grabar</label>
-            </div>
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="motionAlarm" ${alarmEnabled ? 'checked' : ''}>
-                <label class="form-check-label small" for="motionAlarm">Alarma</label>
-            </div>
-        </div>
-        <div class="mb-2">
-            <a class="small text-info" data-bs-toggle="collapse" href="#motionWindows" role="button">
-                Ventanas (${windows.length})
-            </a>
-        </div>
-        <div class="collapse" id="motionWindows">
-            ${windowsHtml}
-        </div>
-        <button class="btn btn-sm btn-outline-success w-100 mt-2" onclick="saveMotionConfig()">
-            <i class="ti ti-check me-1"></i>Guardar configuración
-        </button>
-    `;
-
-    document.getElementById('motionLevel').addEventListener('input', function() {
-        document.getElementById('motionLevelVal').textContent = this.value;
-    });
-
-    document.querySelectorAll('.win-sensitive').forEach(el => {
-        el.addEventListener('input', function() {
-            this.parentElement.querySelector('.win-sensitive-val').textContent = this.value;
-        });
-    });
-    document.querySelectorAll('.win-threshold').forEach(el => {
-        el.addEventListener('input', function() {
-            this.parentElement.querySelector('.win-threshold-val').textContent = this.value;
-        });
-    });
-}
-
-async function saveMotionConfig() {
-    const md = motionData?.MotionDetect?.[0];
-    if (!md) return;
-
-    const enabled = document.getElementById('motionEnable').checked;
-    md.Enable = enabled ? 'true' : 'false';
-    md.Level = document.getElementById('motionLevel').value;
-
-    const eventHandlers = md.EventHandlers?.[0];
-    if (eventHandlers) {
-        eventHandlers.Record = document.getElementById('motionRecord').checked ? 'true' : 'false';
-        eventHandlers.Alarm = document.getElementById('motionAlarm').checked ? 'true' : 'false';
-    }
-
-    const windows = Array.isArray(md.Window) ? md.Window : [];
-    document.querySelectorAll('.win-sensitive').forEach(el => {
-        const idx = parseInt(el.dataset.idx);
-        if (windows[idx]) windows[idx].Sensitive = el.value;
-    });
-    document.querySelectorAll('.win-threshold').forEach(el => {
-        const idx = parseInt(el.dataset.idx);
-        if (windows[idx]) windows[idx].Threshold = el.value;
-    });
-
-    const btn = document.querySelector('#motionConfig .btn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando...';
-
-    try {
-        const resp = await fetch(MOTION_CONFIG_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(motionData),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            btn.innerHTML = '<i class="ti ti-check me-1"></i>Guardado';
-            btn.classList.replace('btn-outline-success', 'btn-outline-info');
-            setTimeout(() => {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="ti ti-check me-1"></i>Guardar configuración';
-                btn.classList.replace('btn-outline-info', 'btn-outline-success');
-            }, 2000);
-        } else {
-            btn.innerHTML = '<i class="ti ti-alert-triangle me-1"></i>Error: ' + (data.error || 'desconocido');
-            btn.classList.replace('btn-outline-success', 'btn-outline-danger');
-            setTimeout(() => {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="ti ti-check me-1"></i>Guardar configuración';
-                btn.classList.replace('btn-outline-danger', 'btn-outline-success');
-            }, 3000);
-        }
-    } catch (e) {
-        btn.innerHTML = '<i class="ti ti-alert-triangle me-1"></i>Error de red';
-        btn.classList.replace('btn-outline-success', 'btn-outline-danger');
-        setTimeout(() => {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="ti ti-check me-1"></i>Guardar configuración';
-            btn.classList.replace('btn-outline-danger', 'btn-outline-success');
-        }, 3000);
-    }
-}
-
-loadMotionConfig();
 loadProfiles();
 loadPtzProfiles();
-loadIVSConfig();
-
-async function loadIVSConfig() {
-    const container = document.getElementById('ivsConfig');
-    try {
-        const resp = await fetch(IVS_URL);
-        if (!resp.ok) {
-            const err = await resp.json();
-            container.innerHTML = '<p class="text-danger small mb-0">' + (err.error || 'Error al cargar') + '</p>';
-            return;
-        }
-        const data = await resp.json();
-        renderIVSConfig(data.rules || []);
-    } catch (e) {
-        container.innerHTML = '<p class="text-danger small mb-0">Error de red al cargar reglas IVS</p>';
-    }
-}
-
-function renderIVSConfig(rules) {
-    const container = document.getElementById('ivsConfig');
-    const listenerEnabled = {{ device.event_listener_enabled|yesno:"true,false" }};
-
-    let rulesHtml = '';
-    rules.forEach((rule, i) => {
-        const typeLabel = rule.type === 'CrossLine' ? 'Tripwire' : rule.type === 'CrossRegion' ? 'Intrusión' : rule.type;
-        const dirLabel = rule.direction === 'A->B' ? 'A→B' : rule.direction === 'B->A' ? 'B→A' : 'Ambos';
-        const enableClass = rule.enable ? 'bg-green' : 'bg-secondary';
-        const enableLabel = rule.enable ? 'Activa' : 'Inactiva';
-        rulesHtml += `
-            <div class="border rounded p-2 mb-2">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div>
-                        <span class="badge ${enableClass} me-1">${enableLabel}</span>
-                        <strong class="small">${rule.name || ('Regla ' + (i + 1))}</strong>
-                        <span class="badge bg-dark ms-1">${typeLabel}</span>
-                        <span class="text-muted small ms-2">Dir: ${dirLabel}</span>
-                    </div>
-                    <div>
-                        <button class="btn btn-sm btn-outline-info py-0 px-1" onclick="editIVSRule(${i})" title="Editar">
-                            <i class="ti ti-edit"></i>
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteIVSRule(${i})" title="Eliminar">
-                            <i class="ti ti-trash"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
-    });
-
-    container.innerHTML = `
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" id="eventListenerEnabled" ${listenerEnabled ? 'checked' : ''} onchange="toggleEventListener()">
-                <label class="form-check-label small" for="eventListenerEnabled">Eventos en vivo</label>
-            </div>
-        </div>
-        <div class="mb-2">
-            <svg id="ivsCanvas" viewBox="0 0 1600 900" style="width:100%;max-height:240px;background:#111;border-radius:4px;cursor:crosshair;">
-                <rect width="1600" height="900" fill="#1a1a1a"/>
-                <g id="ivsRulesGroup"></g>
-            </svg>
-        </div>
-        <div class="mb-2">
-            <button class="btn btn-sm btn-primary" onclick="showAddRuleDialog()">
-                <i class="ti ti-plus me-1"></i>Agregar regla
-            </button>
-        </div>
-        <div id="ivsRulesList">
-            ${rules.length === 0 ? '<p class="text-muted small text-center mb-0">Sin reglas configuradas</p>' : rulesHtml}
-        </div>
-    `;
-
-    window._ivsRules = rules;
-    drawIVSRules(rules);
-
-    document.getElementById('ivsCanvas').addEventListener('click', function(e) {
-        const svg = e.currentTarget;
-        const rect = svg.getBoundingClientRect();
-        const scaleX = 1600 / rect.width;
-        const scaleY = 900 / rect.height;
-        const x = (e.clientX - rect.left) * scaleX;
-        const y = (e.clientY - rect.top) * scaleY;
-        handleCanvasClick(x, y);
-    });
-}
-
-function drawIVSRules(rules) {
-    const group = document.getElementById('ivsRulesGroup');
-    if (!group) return;
-    group.innerHTML = '';
-
-    rules.forEach((rule, i) => {
-        if (!rule.enable) return;
-        const color = i === 0 ? '#00d2ff' : i === 1 ? '#ff6b6b' : '#ffd93d';
-
-        if (rule.type === 'CrossLine' && rule.detect_line) {
-            const pts = rule.detect_line.split(',').map(Number);
-            if (pts.length >= 4) {
-                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                line.setAttribute('x1', pts[0]);
-                line.setAttribute('y1', pts[1]);
-                line.setAttribute('x2', pts[2]);
-                line.setAttribute('y2', pts[3]);
-                line.setAttribute('stroke', color);
-                line.setAttribute('stroke-width', '4');
-                line.setAttribute('stroke-linecap', 'round');
-                group.appendChild(line);
-
-                const dir = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                const mx = (pts[0] + pts[2]) / 2;
-                const my = (pts[1] + pts[3]) / 2;
-                const dx = pts[2] - pts[0];
-                const dy = pts[3] - pts[1];
-                const len = Math.sqrt(dx * dx + dy * dy) || 1;
-                const nx = -dy / len * 15;
-                const ny = dx / len * 15;
-                dir.setAttribute('points', `${pts[2]},${pts[3]} ${pts[2] - dx / len * 20 + nx},${pts[3] - dy / len * 20 + ny} ${pts[2] - dx / len * 20 - nx},${pts[3] - dy / len * 20 - ny}`);
-                dir.setAttribute('fill', color);
-                group.appendChild(dir);
-            }
-        } else if (rule.type === 'CrossRegion' && rule.detect_region) {
-            const pts = rule.detect_region.split(',').map(Number);
-            if (pts.length >= 8) {
-                const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                const points = [];
-                for (let j = 0; j < pts.length; j += 2) {
-                    points.push(pts[j] + ',' + pts[j + 1]);
-                }
-                poly.setAttribute('points', points.join(' '));
-                poly.setAttribute('fill', color);
-                poly.setAttribute('fill-opacity', '0.2');
-                poly.setAttribute('stroke', color);
-                poly.setAttribute('stroke-width', '3');
-                group.appendChild(poly);
-            }
-        }
-    });
-}
-
-let _drawingMode = null;
-let _drawPts = [];
-let _activeRuleIdx = null;
-
-function handleCanvasClick(x, y) {
-    if (_activeRuleIdx === null) return;
-    const rules = window._ivsRules || [];
-    const rule = rules[_activeRuleIdx];
-    if (!rule) return;
-
-    if (rule.type === 'CrossLine') {
-        if (_drawPts.length === 0) {
-            _drawPts = [x, y];
-        } else {
-            const pts = _drawPts.concat([x, y]);
-            rule.detect_line = pts.join(',');
-            _drawPts = [];
-            _drawingMode = null;
-            updateRulePreview();
-        }
-    } else if (rule.type === 'CrossRegion') {
-        _drawPts.push(x, y);
-        if (_drawPts.length >= 8 && _drawPts.length % 2 === 0) {
-            const closed = confirm('Cerrar región? Click "Aceptar" para cerrar o "Cancelar" para seguir agregando puntos.');
-            if (closed) {
-                rule.detect_region = _drawPts.join(',');
-                _drawPts = [];
-                _drawingMode = null;
-                updateRulePreview();
-            }
-        }
-    }
-}
-
-function updateRulePreview() {
-    const rules = window._ivsRules || [];
-    drawIVSRules(rules);
-    renderRuleForm(_activeRuleIdx, rules[_activeRuleIdx]);
-}
-
-function showAddRuleDialog() {
-    const rules = window._ivsRules || [];
-    const idx = rules.length;
-    const newRule = {index: idx, name: '', type: 'CrossLine', enable: true, direction: 'Both', detect_line: '', detect_region: ''};
-    rules.push(newRule);
-    window._ivsRules = rules;
-    _activeRuleIdx = idx;
-    renderRuleForm(idx, newRule);
-}
-
-function editIVSRule(idx) {
-    const rules = window._ivsRules || [];
-    _activeRuleIdx = idx;
-    renderRuleForm(idx, rules[idx]);
-}
-
-function deleteIVSRule(idx) {
-    const rules = window._ivsRules || [];
-    rules.splice(idx, 1);
-    rules.forEach((r, i) => r.index = i);
-    window._ivsRules = rules;
-    saveIVSRules();
-}
-
-function renderRuleForm(idx, rule) {
-    const container = document.getElementById('ivsRulesList');
-    if (!container) return;
-
-    container.innerHTML = `
-        <div class="border rounded p-3 bg-dark mb-2">
-            <h6 class="text-light mb-3">${idx >= 0 ? 'Editar' : 'Nueva'} Regla #${idx + 1}</h6>
-            <div class="row g-2 mb-2">
-                <div class="col-6">
-                    <label class="text-muted small">Nombre</label>
-                    <input type="text" class="form-control form-control-sm" id="ruleName" value="${rule.name || ''}" placeholder="Nombre de la regla">
-                </div>
-                <div class="col-3">
-                    <label class="text-muted small">Tipo</label>
-                    <select class="form-select form-select-sm" id="ruleType" onchange="onRuleTypeChange()">
-                        <option value="CrossLine" ${rule.type === 'CrossLine' ? 'selected' : ''}>Tripwire</option>
-                        <option value="CrossRegion" ${rule.type === 'CrossRegion' ? 'selected' : ''}>Intrusión</option>
-                        <option value="SmartMotion" ${rule.type === 'SmartMotion' ? 'selected' : ''}>Smart Motion</option>
-                    </select>
-                </div>
-                <div class="col-3">
-                    <label class="text-muted small">Dirección</label>
-                    <select class="form-select form-select-sm" id="ruleDirection">
-                        <option value="Both" ${rule.direction === 'Both' ? 'selected' : ''}>Ambos</option>
-                        <option value="A->B" ${rule.direction === 'A->B' ? 'selected' : ''}>A → B</option>
-                        <option value="B->A" ${rule.direction === 'B->A' ? 'selected' : ''}>B → A</option>
-                    </select>
-                </div>
-            </div>
-            <div class="form-check form-switch mb-2">
-                <input class="form-check-input" type="checkbox" id="ruleEnable" ${rule.enable ? 'checked' : ''}>
-                <label class="form-check-label small" for="ruleEnable">Activa</label>
-            </div>
-            <div class="mb-2 small text-muted" id="drawHint">
-                ${rule.type === 'CrossLine' ? 'Click en el canvas para definir punto inicial y final de la línea.' : rule.type === 'CrossRegion' ? 'Click en el canvas para agregar puntos de la región (mínimo 4).' : 'Smart Motion no requiere coordenadas.'}
-            </div>
-            <div id="ruleCoordsPreview" class="small text-info mb-2">
-                ${rule.detect_line ? 'Línea: ' + rule.detect_line : rule.detect_region ? 'Región: ' + rule.detect_region : 'Sin coordenadas definidas'}
-            </div>
-            <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-success" onclick="saveIVSRules()"><i class="ti ti-check me-1"></i>Guardar</button>
-                <button class="btn btn-sm btn-secondary" onclick="cancelRuleEdit()"><i class="ti ti-x me-1"></i>Cancelar</button>
-                <button class="btn btn-sm btn-outline-warning" onclick="resetRuleCoords()"><i class="ti ti-refresh me-1"></i>Limpiar coords</button>
-            </div>
-        </div>
-        ${window._ivsRules.filter((r, i) => i !== idx).map((r, i) => {
-            const realIdx = i >= idx ? i + 1 : i;
-            const typeLabel = r.type === 'CrossLine' ? 'Tripwire' : r.type === 'CrossRegion' ? 'Intrusión' : r.type;
-            return `<div class="border rounded p-2 mb-2">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div>
-                        <span class="badge ${r.enable ? 'bg-green' : 'bg-secondary'} me-1">${r.enable ? 'Activa' : 'Inactiva'}</span>
-                        <strong class="small">${r.name || ('Regla ' + (realIdx + 1))}</strong>
-                        <span class="badge bg-dark ms-1">${typeLabel}</span>
-                    </div>
-                    <div>
-                        <button class="btn btn-sm btn-outline-info py-0 px-1" onclick="editIVSRule(${realIdx})"><i class="ti ti-edit"></i></button>
-                        <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteIVSRule(${realIdx})"><i class="ti ti-trash"></i></button>
-                    </div>
-                </div>
-            </div>`;
-        }).join('')}
-    `;
-    drawIVSRules(window._ivsRules || []);
-}
-
-function onRuleTypeChange() {
-    const type = document.getElementById('ruleType').value;
-    const rules = window._ivsRules || [];
-    if (_activeRuleIdx !== null && rules[_activeRuleIdx]) {
-        rules[_activeRuleIdx].type = type;
-        rules[_activeRuleIdx].detect_line = '';
-        rules[_activeRuleIdx].detect_region = '';
-        document.getElementById('drawHint').textContent = type === 'CrossLine' ? 'Click en el canvas para definir punto inicial y final de la línea.' : type === 'CrossRegion' ? 'Click en el canvas para agregar puntos de la región (mínimo 4).' : 'Smart Motion no requiere coordenadas.';
-        document.getElementById('ruleCoordsPreview').textContent = 'Sin coordenadas definidas';
-        drawIVSRules(rules);
-    }
-}
-
-function resetRuleCoords() {
-    const rules = window._ivsRules || [];
-    if (_activeRuleIdx !== null && rules[_activeRuleIdx]) {
-        rules[_activeRuleIdx].detect_line = '';
-        rules[_activeRuleIdx].detect_region = '';
-        _drawPts = [];
-        document.getElementById('ruleCoordsPreview').textContent = 'Sin coordenadas definidas';
-        drawIVSRules(rules);
-    }
-}
-
-function cancelRuleEdit() {
-    const rules = window._ivsRules || [];
-    if (_activeRuleIdx !== null && _activeRuleIdx === rules.length - 1 && !rules[_activeRuleIdx].name) {
-        rules.pop();
-    }
-    _activeRuleIdx = null;
-    _drawPts = [];
-    loadIVSConfig();
-}
-
-async function saveIVSRules() {
-    const rules = window._ivsRules || [];
-    const enriched = rules.map((r, i) => ({
-        index: i,
-        name: r.name || ('Rule ' + (i + 1)),
-        type: r.type,
-        enable: r.enable,
-        direction: r.direction,
-        detect_line: r.detect_line || '',
-        detect_region: r.detect_region || '',
-        event_handler: r.event_handler || {},
-    }));
-
-    const btn = document.querySelector('#ivsConfig .btn-primary');
-    const origText = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando...';
-
-    try {
-        const resp = await fetch(IVS_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({rules: enriched}),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            _activeRuleIdx = null;
-            loadIVSConfig();
-        } else {
-            alert('Error: ' + (data.error || 'desconocido'));
-            btn.disabled = false;
-            btn.innerHTML = origText;
-        }
-    } catch (e) {
-        alert('Error de red al guardar reglas IVS');
-        btn.disabled = false;
-        btn.innerHTML = origText;
-    }
-}
-
-async function toggleEventListener() {
-    const enabled = document.getElementById('eventListenerEnabled').checked;
-    try {
-        await fetch(EVENT_LISTENER_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({enable: enabled}),
-        });
-    } catch (e) {
-        console.error('Error toggling event listener:', e);
-    }
-}
-
-{% if device.deepstream_enabled %}
-(function() {
-    const DEVICE_ID = {{ device.id }};
-    const DS_START_URL = '/api/devices/' + DEVICE_ID + '/deepstream/preview/start/';
-    const DS_STOP_URL  = '/api/devices/' + DEVICE_ID + '/deepstream/preview/stop/';
-    const DS_KEEPALIVE_URL = '/api/devices/' + DEVICE_ID + '/deepstream/preview/keepalive/';
-
-    let dsHeartbeatInterval = null;
-
-    async function startDsPreview() {
-        try {
-            await fetch(DS_START_URL, {method: 'POST'});
-            document.getElementById('dsPreviewStatus').textContent = 'Activo';
-            document.getElementById('dsPreviewStatus').className = 'badge bg-success';
-            document.getElementById('dsPreviewFrame').style.display = 'block';
-        } catch (e) {
-            console.error('Failed to start IA preview:', e);
-        }
-    }
-
-    function stopDsPreview() {
-        if (dsHeartbeatInterval) {
-            clearInterval(dsHeartbeatInterval);
-            dsHeartbeatInterval = null;
-        }
-        fetch(DS_STOP_URL, {method: 'POST', keepalive: true}).catch(() => {});
-        document.getElementById('dsPreviewStatus').textContent = 'Inactivo';
-        document.getElementById('dsPreviewStatus').className = 'badge bg-secondary';
-    }
-
-    function keepalive() {
-        fetch(DS_KEEPALIVE_URL, {method: 'POST'}).catch(() => {});
-    }
-
-    startDsPreview();
-    dsHeartbeatInterval = setInterval(keepalive, 15000);
-
-    window.addEventListener('beforeunload', stopDsPreview);
-})();
-{% endif %}
 </script>
 {% endblock %}

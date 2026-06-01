@@ -38,6 +38,9 @@ def device_detail(request, device_id):
     ctx["device"] = device
     ctx["profile_token"] = profile_token
     ctx["camera_specs_json"] = json.dumps(device.camera_specs or {})
+    from operadores.models import Site
+
+    ctx["sites"] = Site.objects.filter(is_active=True)
     return render(request, "devices/device_detail.html", ctx)
 
 
