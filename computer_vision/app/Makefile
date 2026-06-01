@@ -29,7 +29,7 @@ LIBS:= $(shell pkg-config --libs $(PKGS))
 LIBS+= -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart -lnvdsgst_helper -lm \
 	-L$(LIB_INSTALL_DIR) -lnvdsgst_meta -lnvds_meta -lnvds_yml_parser \
 	-lcuda -Wl,-rpath,$(LIB_INSTALL_DIR) \
-	-lhiredis
+	-lhiredis -lnvds_batch_jpegenc
 
 all: $(APP)
 
