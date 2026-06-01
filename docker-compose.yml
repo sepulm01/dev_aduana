@@ -103,13 +103,6 @@ services:
       redis:
         condition: service_healthy
 
-  discovery-service:
-    build: ./discovery
-    network_mode: host
-    restart: unless-stopped
-    environment:
-      - DISCOVERY_PORT=8765
-
   event-stream-service:
     build: ./event-stream-service
     restart: unless-stopped

@@ -12,34 +12,10 @@
 
 <div class="row">
     <div class="col-12">
-        <div class="card mb-3">
+        <div class="card">
             <div class="card-header">
-                <h3 class="card-title">Escanear red local</h3>
+                <h3 class="card-title">Agregar manualmente</h3>
             </div>
-            <div class="card-body">
-                <button id="scanBtn" class="btn btn-primary" onclick="startDiscovery()">
-                    <i class="ti ti-wifi me-2"></i>Escanear red
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div id="results" class="d-none">
-    <div class="card mb-3">
-        <div class="card-header">
-            <h3 class="card-title">Dispositivos encontrados</h3>
-        </div>
-        <div class="card-body">
-            <div id="results-list"></div>
-        </div>
-    </div>
-</div>
-
-<div class="card">
-    <div class="card-header">
-        <h3 class="card-title">Agregar manualmente</h3>
-    </div>
     <div class="card-body">
         <form id="manualForm" onsubmit="return addManual(event)">
             <div class="row">
@@ -71,81 +47,6 @@
 
 {% block scripts %}
 <script>
-async function startDiscovery() {
-    const btn = document.getElementById('scanBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Escaneando...';
-
-    try {
-        const resp = await fetch('/api/discover/', { method: 'POST' });
-        const devices = await resp.json();
-        showResults(devices);
-    } catch (e) {
-        alert('Error: ' + e.message);
-    }
-    btn.disabled = false;
-    btn.innerHTML = '<i class="ti ti-wifi me-2"></i>Escanear red';
-}
-
-function showResults(devices) {
-    const container = document.getElementById('results');
-    const list = document.getElementById('results-list');
-    container.classList.remove('d-none');
-
-    if (!devices || devices.length === 0) {
-        list.innerHTML = '<div class="alert alert-warning"><i class="ti ti-alert-triangle me-2"></i>No se encontraron dispositivos</div>';
-        return;
-    }
-
-    list.innerHTML = '<div class="list-group list-group-flush">' +
-    devices.map((d, i) => {
-        const host = d.xaddrs?.[0] || d.host || '';
-        return `<div class="list-group-item">
-            <div class="row align-items-center">
-                <div class="col">
-                    <div class="fw-bold">${d.name || 'Desconocido'}</div>
-                    <div class="text-muted">${d.hardware || ''} — ${host}</div>
-                </div>
-                <div class="col-auto">
-                    <button class="btn btn-success btn-icon" onclick="addDiscovered(${i})" title="Agregar">
-                        <i class="ti ti-plus"></i>
-                    </button>
-                </div>
-            </div>
-        </div>`;
-    }).join('') +
-    '</div>';
-
-    window._discoveredDevices = devices;
-}
-
-async function addDiscovered(index) {
-    const devices = window._discoveredDevices || [];
-    const d = devices[index];
-    if (!d) return;
-
-    const host = d.xaddrs?.[0] || d.host || '';
-    try {
-        const resp = await fetch('/api/devices/', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                name: d.name || host,
-                host: host,
-                port: 80,
-                xaddrs: d.xaddrs || [],
-                scopes: d.scopes || [],
-            }),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            window.location.href = '/devices/' + data.id + '/';
-        }
-    } catch (e) {
-        alert('Error: ' + e.message);
-    }
-}
-
 async function addManual(e) {
     e.preventDefault();
     try {
