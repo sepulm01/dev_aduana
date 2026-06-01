@@ -21,6 +21,8 @@ INSTALLED_APPS = [
     "live",
     "ptz",
     "detections",
+    "notifications.apps.NotificationsConfig",
+    "incidents.apps.IncidentsConfig",
 ]
 
 MIDDLEWARE = [
@@ -83,6 +85,10 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BEAT_SCHEDULE = {
     "orchestrate-cameras-every-5s": {
         "task": "devices.tasks.orchestrate_cameras",
+        "schedule": 5.0,
+    },
+    "incident-manager-every-5s": {
+        "task": "incidents.tasks.incident_manager",
         "schedule": 5.0,
     },
 }

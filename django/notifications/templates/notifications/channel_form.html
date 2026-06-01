@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}{% if channel %}Editar{% else %}Nuevo{% endif %} Canal{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="row align-items-center">
+        <div class="col">
+            <h2 class="page-title">{% if channel %}Editar{% else %}Nuevo{% endif %} Canal de Notificacion</h2>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'notification_channel_list' %}" class="btn btn-ghost-secondary">
+                <i class="ti ti-arrow-left"></i> Volver
+            </a>
+        </div>
+    </div>
+</div>
+<div class="card">
+    <div class="card-body">
+        <form id="channel-form" autocomplete="off">
+            <div class="mb-3">
+                <label class="form-label required">Nombre</label>
+                <input type="text" class="form-control" name="name" value="{{ channel.name|default:"" }}" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label required">Tipo</label>
+                <select class="form-select" name="channel_type" id="channel-type" required>
+                    <option value="">Seleccionar...</option>
+                    <option value="telegram" {% if channel.channel_type == "telegram" %}selected{% endif %}>Telegram</option>
+                    <option value="webhook" {% if channel.channel_type == "webhook" %}selected{% endif %}>Webhook</option>
+                </select>
+            </div>
+            <div id="config-telegram" class="d-none">
+                <div class="mb-3">
+                    <label class="form-label required">Bot Token</label>
+                    <input type="text" class="form-control" name="config_bot_token" value="{{ channel.config.bot_token|default:"" }}">
+                    <small class="form-hint">Obtenido de @BotFather en Telegram</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label required">Chat ID</label>
+                    <input type="text" class="form-control" name="config_chat_id" value="{{ channel.config.chat_id|default:"" }}">
+                    <small class="form-hint">ID del chat, grupo o canal</small>
+                </div>
+            </div>
+            <div id="config-webhook" class="d-none">
+                <div class="mb-3">
+                    <label class="form-label required">URL</label>
+                    <input type="url" class="form-control" name="config_url" value="{{ channel.config.url|default:"" }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Metodo HTTP</label>
+                    <select class="form-select" name="config_method">
+                        <option value="POST" {% if channel.config.method == "POST" or not channel %}selected{% endif %}>POST</option>
+                        <option value="PUT">PUT</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Headers (JSON)</label>
+                    <textarea class="form-control" name="config_headers" rows="3" placeholder='{"Authorization": "Bearer token"}'>{{ channel.config.headers|default:"" }}</textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Timeout (segundos)</label>
+                    <input type="number" class="form-control" name="config_timeout" value="{{ channel.config.timeout|default:10 }}">
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="is_active" {% if channel.is_active or not channel %}checked{% endif %}>
+                    <span class="form-check-label">Activo</span>
+                </label>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="ti ti-device-floppy"></i> Guardar
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const channelType = document.getElementById("channel-type");
+const configTelegram = document.getElementById("config-telegram");
+const configWebhook = document.getElementById("config-webhook");
+
+function toggleConfig() {
+    const val = channelType.value;
+    configTelegram.classList.toggle("d-none", val !== "telegram");
+    configWebhook.classList.toggle("d-none", val !== "webhook");
+}
+
+channelType.addEventListener("change", toggleConfig);
+toggleConfig();
+
+document.getElementById("channel-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = fd.get("name").trim();
+    const channelTypeVal = fd.get("channel_type");
+    if (!name || !channelTypeVal) return;
+
+    let config = {};
+    if (channelTypeVal === "telegram") {
+        config = {
+            bot_token: fd.get("config_bot_token").trim(),
+            chat_id: fd.get("config_chat_id").trim(),
+        };
+    } else if (channelTypeVal === "webhook") {
+        config = {
+            url: fd.get("config_url").trim(),
+            method: fd.get("config_method"),
+            timeout: parseInt(fd.get("config_timeout")) || 10,
+        };
+        try {
+            const hdrText = fd.get("config_headers").trim();
+            if (hdrText) config.headers = JSON.parse(hdrText);
+        } catch {}
+    }
+    const payload = {
+        name,
+        channel_type: channelTypeVal,
+        config,
+        is_active: fd.get("is_active") === "on",
+    };
+    {% if channel %}
+    const url = "{% url 'notification_channel_edit' channel.id %}";
+    {% else %}
+    const url = "{% url 'notification_channel_create' %}";
+    {% endif %}
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    });
+    if (resp.ok) {
+        window.location.href = "{% url 'notification_channel_list' %}";
+    } else {
+        const data = await resp.json();
+        alert(data.error || "Error al guardar");
+    }
+});
+</script>
+{% endblock %}

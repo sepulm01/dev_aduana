@@ -136,6 +136,32 @@ services:
       postgres:
         condition: service_healthy
 
+  notification-bridge:
+    build: ./django
+    command: python manage.py notification_bridge
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  telegram-ack-poller:
+    build: ./django
+    command: python manage.py telegram_ack_poller
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
   face-receiver:
     build: ./django
     command: python manage.py face_receiver

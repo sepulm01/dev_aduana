@@ -6,4 +6,6 @@ urlpatterns = [
     path("", include("devices.urls")),
     path("live/", include("live.urls")),
     path("api/ptz/", include("ptz.urls")),
+    path("", include("notifications.urls")),
+    path("", include("incidents.urls")),
 ]

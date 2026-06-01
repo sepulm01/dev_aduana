@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}{% if incident_type %}Editar{% else %}Nuevo{% endif %} Tipo de Incidente{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="row align-items-center">
+        <div class="col">
+            <h2 class="page-title">{% if incident_type %}Editar{% else %}Nuevo{% endif %} Tipo de Incidente</h2>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'incident_type_list' %}" class="btn btn-ghost-secondary">
+                <i class="ti ti-arrow-left"></i> Volver
+            </a>
+        </div>
+    </div>
+</div>
+<div class="card">
+    <div class="card-body">
+        <form id="type-form" autocomplete="off">
+            <div class="mb-3">
+                <label class="form-label required">Nombre</label>
+                <input type="text" class="form-control" name="name" value="{{ incident_type.name|default:"" }}" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Descripcion</label>
+                <textarea class="form-control" name="description" rows="2">{{ incident_type.description|default:"" }}</textarea>
+            </div>
+            <div class="row mb-3">
+                <div class="col">
+                    <label class="form-label">Auto-resolucion (segundos)</label>
+                    <input type="number" class="form-control" name="auto_resolve_seconds" value="{{ incident_type.auto_resolve_seconds|default:0 }}" min="0">
+                    <small class="form-hint">0 = no se aut-resuelve</small>
+                </div>
+                <div class="col">
+                    <label class="form-label">Ventana de Dedup (segundos)</label>
+                    <input type="number" class="form-control" name="dedup_window_seconds" value="{{ incident_type.dedup_window_seconds|default:0 }}" min="0">
+                    <small class="form-hint">0 = sin dedup</small>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="is_active" {% if incident_type.is_active or not incident_type %}checked{% endif %}>
+                    <span class="form-check-label">Activo</span>
+                </label>
+            </div>
+
+            <h4 class="mt-4 mb-3">Niveles de Escalacion</h4>
+            <div id="levels-container">
+                {% if incident_type %}
+                {% for level in incident_type.levels.all %}
+                <div class="card card-sm mb-2 level-card">
+                    <div class="card-body">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-auto">
+                                <label class="form-label">Nivel</label>
+                                <input type="number" class="form-control level-num" value="{{ level.level }}" style="width:70px" min="1">
+                            </div>
+                            <div class="col">
+                                <label class="form-label">Canal</label>
+                                <select class="form-select level-channel">
+                                    <option value="">Seleccionar...</option>
+                                    {% for ch in channels %}
+                                    <option value="{{ ch.id }}" {% if level.channel_id == ch.id %}selected{% endif %}>{{ ch.name }} ({{ ch.get_channel_type_display }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col">
+                                <label class="form-label">Timeout (s)</label>
+                                <input type="number" class="form-control level-timeout" value="{{ level.timeout_seconds }}">
+                            </div>
+                            <div class="col-auto mb-3">
+                                <label class="form-check form-switch">
+                                    <input class="form-check-input level-ack" type="checkbox" {% if level.requires_ack %}checked{% endif %}>
+                                    <span class="form-check-label">Requiere ack</span>
+                                </label>
+                            </div>
+                            <div class="col">
+                                <label class="form-label">Template</label>
+                                <input type="text" class="form-control level-template" value="{{ level.message_template|default:"" }}" placeholder="Opcional">
+                            </div>
+                            <div class="col-auto">
+                                <button type="button" class="btn btn-sm btn-ghost-danger" onclick="removeLevel(this)">&times;</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-primary mb-3" onclick="addLevel()">
+                <i class="ti ti-plus"></i> Agregar Nivel
+            </button>
+
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">
+                    <i class="ti ti-device-floppy"></i> Guardar
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function addLevel() {
+    const container = document.getElementById("levels-container");
+    const idx = container.children.length + 1;
+    const html = `
+    <div class="card card-sm mb-2 level-card">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label">Nivel</label>
+                    <input type="number" class="form-control level-num" value="${idx}" style="width:70px" min="1">
+                </div>
+                <div class="col">
+                    <label class="form-label">Canal</label>
+                    <select class="form-select level-channel">
+                        <option value="">Seleccionar...</option>
+                        {% for ch in channels %}
+                        <option value="{{ ch.id }}">{{ ch.name }} ({{ ch.get_channel_type_display }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col">
+                    <label class="form-label">Timeout (s)</label>
+                    <input type="number" class="form-control level-timeout" value="60">
+                </div>
+                <div class="col-auto mb-3">
+                    <label class="form-check form-switch">
+                        <input class="form-check-input level-ack" type="checkbox" checked>
+                        <span class="form-check-label">Requiere ack</span>
+                    </label>
+                </div>
+                <div class="col">
+                    <label class="form-label">Template</label>
+                    <input type="text" class="form-control level-template" placeholder="Opcional">
+                </div>
+                <div class="col-auto">
+                    <button type="button" class="btn btn-sm btn-ghost-danger" onclick="removeLevel(this)">&times;</button>
+                </div>
+            </div>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML("beforeend", html);
+}
+
+function removeLevel(btn) {
+    btn.closest(".level-card").remove();
+}
+
+document.getElementById("type-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = fd.get("name").trim();
+    if (!name) return;
+
+    const levels = [];
+    document.querySelectorAll(".level-card").forEach(card => {
+        const num = card.querySelector(".level-num").value;
+        const channel = card.querySelector(".level-channel").value;
+        const timeout = card.querySelector(".level-timeout").value;
+        const ack = card.querySelector(".level-ack").checked;
+        const template = card.querySelector(".level-template").value.trim();
+        if (channel) {
+            levels.push({
+                level: parseInt(num) || 1,
+                channel_id: parseInt(channel),
+                timeout_seconds: parseInt(timeout) || 60,
+                requires_ack: ack,
+                message_template: template,
+                auto_actions: [],
+            });
+        }
+    });
+
+    const payload = {
+        name,
+        description: fd.get("description").trim(),
+        auto_resolve_seconds: parseInt(fd.get("auto_resolve_seconds")) || 0,
+        dedup_window_seconds: parseInt(fd.get("dedup_window_seconds")) || 0,
+        is_active: fd.get("is_active") === "on",
+        levels,
+    };
+    {% if incident_type %}
+    const url = "{% url 'incident_type_edit' incident_type.id %}";
+    {% else %}
+    const url = "{% url 'incident_type_create' %}";
+    {% endif %}
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    });
+    if (resp.ok) {
+        window.location.href = "{% url 'incident_type_list' %}";
+    } else {
+        const data = await resp.json();
+        alert(data.error || "Error al guardar");
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Incidentes{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="row align-items-center">
+        <div class="col">
+            <h2 class="page-title">Incidentes</h2>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'incident_type_list' %}" class="btn btn-outline-primary">
+                <i class="ti ti-settings"></i> Tipos de Incidente
+            </a>
+        </div>
+    </div>
+</div>
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-vcenter card-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Tipo</th>
+                    <th>Dispositivo</th>
+                    <th>Nivel</th>
+                    <th>Estado</th>
+                    <th>Creado</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for incident in incidents %}
+                <tr>
+                    <td>#{{ incident.id }}</td>
+                    <td>{{ incident.incident_type.name }}</td>
+                    <td>{{ incident.device.name|default:"-" }}</td>
+                    <td>{{ incident.current_level }}</td>
+                    <td>
+                        {% if incident.status == "active" %}
+                            <span class="badge bg-red-lt">Activo</span>
+                        {% elif incident.status == "acknowledged" %}
+                            <span class="badge bg-yellow-lt">Atendido</span>
+                        {% elif incident.status == "resolved" %}
+                            <span class="badge bg-green-lt">Resuelto</span>
+                        {% elif incident.status == "expired" %}
+                            <span class="badge bg-secondary-lt">Expirado</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-muted">{{ incident.created_at|date:"d/m H:i" }}</td>
+                    <td class="text-end">
+                        {% if incident.status == "active" %}
+                        <button class="btn btn-sm btn-success" onclick="ackIncident({{ incident.id }})">
+                            <i class="ti ti-check"></i> Atender
+                        </button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted py-4">No hay incidentes registrados</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if incidents|length >= 100 %}
+    <div class="card-footer text-muted">Mostrando ultimos 100 incidentes</div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function ackIncident(id) {
+    const resp = await fetch(`/api/incidents/${id}/ack/`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({by: "web_ui"}),
+    });
+    if (resp.ok) location.reload();
+}
+</script>
+{% endblock %}

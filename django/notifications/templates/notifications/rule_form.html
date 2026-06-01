@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}{% if rule %}Editar{% else %}Nueva{% endif %} Regla{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div class="row align-items-center">
+        <div class="col">
+            <h2 class="page-title">{% if rule %}Editar{% else %}Nueva{% endif %} Regla de Notificacion</h2>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'notification_rule_list' %}" class="btn btn-ghost-secondary">
+                <i class="ti ti-arrow-left"></i> Volver
+            </a>
+        </div>
+    </div>
+</div>
+<div class="card">
+    <div class="card-body">
+        <form id="rule-form" autocomplete="off">
+            <div class="mb-3">
+                <label class="form-label required">Nombre</label>
+                <input type="text" class="form-control" name="name" value="{{ rule.name|default:"" }}" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label required">Canal</label>
+                <select class="form-select" name="channel_id" required>
+                    <option value="">Seleccionar...</option>
+                    {% for ch in channels %}
+                    <option value="{{ ch.id }}" {% if rule.channel_id == ch.id %}selected{% endif %}>
+                        {{ ch.name }} ({{ ch.get_channel_type_display }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Dispositivo (vacio = todos)</label>
+                <select class="form-select" name="device_id">
+                    <option value="">Todos los dispositivos</option>
+                    {% for dev in devices %}
+                    <option value="{{ dev.id }}" {% if rule.device_id == dev.id %}selected{% endif %}>
+                        {{ dev.name }} ({{ dev.host }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Codigos de Evento</label>
+                <input type="text" class="form-control" name="event_codes" value="{{ rule.event_codes|join:", "|default:"" }}" placeholder="DeepStreamDetection, VideoMotion">
+                <small class="form-hint">Separados por coma. Vacio = todos los eventos</small>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Triggers de Analytics</label>
+                <input type="text" class="form-control" name="analytics_trigger" value="{{ rule.analytics_trigger|join:", "|default:"" }}" placeholder="roi, lc, oc, direction">
+                <small class="form-hint">roi, lc, oc, direction. Vacio = sin filtro de analytics</small>
+            </div>
+            <div class="row mb-3">
+                <div class="col">
+                    <label class="form-label">Minimo Objetos</label>
+                    <input type="number" class="form-control" name="min_objects" value="{{ rule.min_objects|default:0 }}" min="0">
+                </div>
+                <div class="col">
+                    <label class="form-label">Cooldown (segundos)</label>
+                    <input type="number" class="form-control" name="cooldown_seconds" value="{{ rule.cooldown_seconds|default:0 }}" min="0">
+                    <small class="form-hint">Tiempo minimo entre avisos</small>
+                </div>
+                <div class="col">
+                    <label class="form-label">Min. merodeo (segundos)</label>
+                    <input type="number" class="form-control" name="min_duration_seconds" value="{{ rule.min_duration_seconds|default:0 }}" min="0">
+                    <small class="form-hint">0 = instantaneo. 60 = requiere presencia por 1 minuto</small>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Template de Mensaje</label>
+                <textarea class="form-control" name="message_template" rows="4" placeholder="{% templatetag openvariable %}device_name{% templatetag closevariable %}: {{ '{code}' }} {{ '{action}' }} detectado">{{ rule.message_template|default:"" }}</textarea>
+                <small class="form-hint">Variables: {{ '{device_name}' }}, {{ '{code}' }}, {{ '{action}' }}, {{ '{data}' }}. Vacio = mensaje automatico</small>
+            </div>
+            <div class="mb-3">
+                <label class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="send_immediate" {% if rule.send_immediate or not rule %}checked{% endif %}>
+                    <span class="form-check-label">Envio inmediato (sin esperar escalacion)</span>
+                </label>
+            </div>
+            <div class="mb-3">
+                <label class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="send_photo" {% if rule.send_photo %}checked{% endif %}>
+                    <span class="form-check-label">Adjuntar foto del evento</span>
+                </label>
+                <small class="form-hint">Captura un frame de la camara y lo envia junto al mensaje (solo Telegram)</small>
+            </div>
+            <div class="mb-3">
+                <label class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="is_active" {% if rule.is_active or not rule %}checked{% endif %}>
+                    <span class="form-check-label">Activo</span>
+                </label>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="ti ti-device-floppy"></i> Guardar
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById("rule-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = fd.get("name").trim();
+    const channelId = fd.get("channel_id");
+    if (!name || !channelId) return;
+
+    const eventCodes = fd.get("event_codes").trim()
+        ? fd.get("event_codes").split(",").map(s => s.trim()).filter(Boolean)
+        : [];
+    const analyticsTrigger = fd.get("analytics_trigger").trim()
+        ? fd.get("analytics_trigger").split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
+        : [];
+
+    const payload = {
+        name,
+        channel_id: parseInt(channelId),
+        device_id: fd.get("device_id") ? parseInt(fd.get("device_id")) : null,
+        event_codes: eventCodes,
+        analytics_trigger: analyticsTrigger,
+        min_objects: parseInt(fd.get("min_objects")) || 0,
+        cooldown_seconds: parseInt(fd.get("cooldown_seconds")) || 0,
+        min_duration_seconds: parseInt(fd.get("min_duration_seconds")) || 0,
+        is_active: fd.get("is_active") === "on",
+        message_template: fd.get("message_template").trim(),
+        send_immediate: fd.get("send_immediate") === "on",
+        send_photo: fd.get("send_photo") === "on",
+    };
+    {% if rule %}
+    const url = "{% url 'notification_rule_edit' rule.id %}";
+    {% else %}
+    const url = "{% url 'notification_rule_create' %}";
+    {% endif %}
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    });
+    if (resp.ok) {
+        window.location.href = "{% url 'notification_rule_list' %}";
+    } else {
+        const data = await resp.json();
+        alert(data.error || "Error al guardar");
+    }
+});
+</script>
+{% endblock %}
