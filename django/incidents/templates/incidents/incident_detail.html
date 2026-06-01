@@ -159,8 +159,8 @@
         {% endif %}
         <div class="card">
             <div class="card-body text-center">
-                <a href="/devices/{{ incident.device.id }}/" class="btn btn-outline-primary w-100">
-                    <i class="ti ti-video me-1"></i>Ver dispositivo
+                <a href="/live/{{ incident.device.id }}/" class="btn btn-outline-primary w-100">
+                    <i class="ti ti-video me-1"></i>Ver en vivo
                 </a>
                 <a href="{% url 'incident_dashboard' %}" class="btn btn-outline-danger w-100 mt-2">
                     <i class="ti ti-alert-triangle me-1"></i>Dashboard
