@@ -19,8 +19,8 @@
             <thead>
                 <tr>
                     <th>Nombre</th>
-                    <th>Niveles</th>
                     <th>Auto-resolucion</th>
+                    <th>Dedup</th>
                     <th>Activo</th>
                     <th></th>
                 </tr>
@@ -34,14 +34,8 @@
                         <div class="text-muted small">{{ itype.description|truncatechars:80 }}</div>
                         {% endif %}
                     </td>
-                    <td>
-                        {% for level in itype.levels.all %}
-                        <span class="badge bg-azure-lt me-1">N{{ level.level }}: {{ level.channel.name }} ({{ level.timeout_seconds }}s)</span>
-                        {% empty %}
-                        <span class="text-muted">Sin niveles</span>
-                        {% endfor %}
-                    </td>
                     <td>{{ itype.auto_resolve_seconds }}s</td>
+                    <td>{{ itype.dedup_window_seconds }}s</td>
                     <td>
                         {% if itype.is_active %}
                             <span class="badge bg-success-lt">Si</span>
@@ -77,7 +71,7 @@
 <script>
 async function deleteType(id) {
     if (!confirm("Eliminar este tipo de incidente?")) return;
-    const resp = await fetch("{% url 'incident_type_delete' 0 %}".replace("0", id), {method: "POST"});
+    var resp = await fetch("{% url 'incident_type_delete' 0 %}".replace("0", id), {method: "POST"});
     if (resp.ok) location.reload();
 }
 </script>

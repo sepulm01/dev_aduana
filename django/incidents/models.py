@@ -15,27 +15,6 @@ class IncidentType(models.Model):
         return self.name
 
 
-class EscalationLevel(models.Model):
-    incident_type = models.ForeignKey(
-        IncidentType, on_delete=models.CASCADE, related_name="levels"
-    )
-    level = models.IntegerField()
-    channel = models.ForeignKey(
-        "notifications.NotificationChannel", on_delete=models.CASCADE
-    )
-    timeout_seconds = models.IntegerField()
-    requires_ack = models.BooleanField(default=True)
-    message_template = models.TextField(blank=True, default="")
-    auto_actions = models.JSONField(blank=True, default=list)
-
-    class Meta:
-        ordering = ["incident_type", "level"]
-        unique_together = ["incident_type", "level"]
-
-    def __str__(self):
-        return f"{self.incident_type} level {self.level}"
-
-
 class Incident(models.Model):
     STATUS_CHOICES = [
         ("active", "Active"),

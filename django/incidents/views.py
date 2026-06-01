@@ -6,23 +6,21 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
 
-from incidents.models import IncidentType, EscalationLevel, Incident, IncidentLog
+from incidents.models import IncidentType, Incident, IncidentLog
 from devices.models import Device
-from notifications.models import NotificationChannel
 
 logger = logging.getLogger(__name__)
 
 
 @login_required
 def incident_type_list(request):
-    types = IncidentType.objects.prefetch_related("levels__channel").all()
+    types = IncidentType.objects.all()
     return render(request, "incidents/incident_type_list.html", {"incident_types": types})
 
 
 @login_required
 @csrf_exempt
 def incident_type_create(request):
-    channels = NotificationChannel.objects.filter(is_active=True)
     if request.method == "POST":
         try:
             data = json.loads(request.body)
@@ -38,20 +36,9 @@ def incident_type_create(request):
             auto_resolve_seconds=data.get("auto_resolve_seconds", 0),
             dedup_window_seconds=data.get("dedup_window_seconds", 0),
         )
-        for level_data in data.get("levels", []):
-            EscalationLevel.objects.create(
-                incident_type=itype,
-                level=level_data.get("level", 1),
-                channel_id=level_data["channel_id"],
-                timeout_seconds=level_data.get("timeout_seconds", 60),
-                requires_ack=level_data.get("requires_ack", True),
-                message_template=level_data.get("message_template", ""),
-                auto_actions=level_data.get("auto_actions", []),
-            )
         return JsonResponse({"ok": True, "id": itype.id})
     return render(request, "incidents/incident_type_form.html", {
         "incident_type": None,
-        "channels": channels,
     })
 
 
@@ -59,7 +46,6 @@ def incident_type_create(request):
 @csrf_exempt
 def incident_type_edit(request, type_id):
     itype = get_object_or_404(IncidentType, id=type_id)
-    channels = NotificationChannel.objects.filter(is_active=True)
     if request.method == "POST":
         try:
             data = json.loads(request.body)
@@ -71,22 +57,9 @@ def incident_type_edit(request, type_id):
         itype.auto_resolve_seconds = data.get("auto_resolve_seconds", itype.auto_resolve_seconds)
         itype.dedup_window_seconds = data.get("dedup_window_seconds", itype.dedup_window_seconds)
         itype.save()
-        if "levels" in data:
-            itype.levels.all().delete()
-            for level_data in data["levels"]:
-                EscalationLevel.objects.create(
-                    incident_type=itype,
-                    level=level_data.get("level", 1),
-                    channel_id=level_data["channel_id"],
-                    timeout_seconds=level_data.get("timeout_seconds", 60),
-                    requires_ack=level_data.get("requires_ack", True),
-                    message_template=level_data.get("message_template", ""),
-                    auto_actions=level_data.get("auto_actions", []),
-                )
         return JsonResponse({"ok": True})
     return render(request, "incidents/incident_type_form.html", {
         "incident_type": itype,
-        "channels": channels,
     })
 
 
