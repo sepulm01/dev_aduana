@@ -114,7 +114,7 @@ bool SnapshotSender::send_full_frame(NvBufSurface* surf, NvDsFrameMeta* frame_me
     if (fh <= 0) fh = 1080;
 
     NvDsObjEncUsrArgs objData = {};
-    objData.saveImg = TRUE;
+    objData.saveImg = FALSE;
     objData.attachUsrMeta = TRUE;
     objData.quality = encode_quality_;
     objData.objNum = ++obj_counter_;
@@ -210,7 +210,7 @@ bool SnapshotSender::send_obj_crop(NvBufSurface* surf, NvDsObjectMeta* obj_meta,
     if (fh <= 0) fh = 1080;
 
     NvDsObjEncUsrArgs objData = {};
-    objData.saveImg = TRUE;
+    objData.saveImg = FALSE;
     objData.attachUsrMeta = TRUE;
     objData.quality = encode_quality_;
     objData.objNum = ++obj_counter_;
