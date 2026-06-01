@@ -204,6 +204,13 @@ class NotificationBridge:
             return False, ""
 
     def _capture_device_snapshot(self, device_id):
+        """
+        Fallback: captura un frame via RTSP usando ffmpeg.
+        La via principal para snapshots de incidentes es el SnapshotSender
+        de DeepStream (GPU → TCP socket → snapshot_receiver), que tiene
+        ~50ms de latencia vs 2-8s de esta via. Este metodo se mantiene
+        como respaldo cuando el pipeline GPU no esta disponible.
+        """
         from devices.models import Device
         from onvif_utils.snapshot import capture_frame_rtsp
 
