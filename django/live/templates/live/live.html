@@ -63,7 +63,7 @@
                         {% else %}
                         <span class="badge bg-secondary me-2" title="Inactiva">&bull;</span>
                         {% endif %}
-                        {{ dr.name }}
+                        <a href="{% url 'notification_rule_edit' dr.rule_id %}" class="text-reset">{{ dr.name }}</a>
                         <span class="text-muted ms-1">({{ dr.channel_name }})</span>
                     </div>
                     {% endfor %}

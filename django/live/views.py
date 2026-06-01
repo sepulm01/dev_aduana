@@ -72,6 +72,7 @@ def live_view(request, device_id):
         if not rule.devices.exists() or rule.devices.filter(id=device_id).exists():
             device_rules.append({
                 "name": rule.name,
+                "rule_id": rule.id,
                 "channel_name": rule.channel.name,
                 "active_now": is_rule_active_now(rule),
             })
