@@ -8,6 +8,7 @@ from django.contrib.auth.decorators import login_required
 
 from notifications.models import NotificationChannel, NotificationRule
 from devices.models import Device
+from incidents.models import IncidentType
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +109,14 @@ def rule_create(request):
             valid_from=data.get("valid_from") or None,
             valid_until=data.get("valid_until") or None,
             schedule=data.get("schedule", {}),
+            incident_type_id=data.get("incident_type_id") or None,
         )
         return JsonResponse({"ok": True, "id": rule.id})
     return render(request, "notifications/rule_form.html", {
         "rule": None,
         "channels": channels,
         "devices": devices,
+        "incident_types": IncidentType.objects.filter(is_active=True),
         "schedule_json": "{}",
     })
 
@@ -150,12 +153,14 @@ def rule_edit(request, rule_id):
         rule.valid_from = data.get("valid_from") or None
         rule.valid_until = data.get("valid_until") or None
         rule.schedule = data.get("schedule", rule.schedule)
+        rule.incident_type_id = data.get("incident_type_id") or None
         rule.save()
         return JsonResponse({"ok": True})
     return render(request, "notifications/rule_form.html", {
         "rule": rule,
         "channels": channels,
         "devices": devices,
+        "incident_types": IncidentType.objects.filter(is_active=True),
         "schedule_json": json.dumps(rule.schedule),
     })
 

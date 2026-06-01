@@ -43,6 +43,16 @@
                 </select>
             </div>
             <div class="mb-3">
+                <label class="form-label">Tipo de Incidente (escalacion)</label>
+                <select class="form-select" name="incident_type_id">
+                    <option value="">Sin escalacion</option>
+                    {% for it in incident_types %}
+                    <option value="{{ it.id }}" {% if rule.incident_type_id == it.id %}selected{% endif %}>{{ it.name }}</option>
+                    {% endfor %}
+                </select>
+                <small class="form-hint">Al seleccionar un tipo, los eventos crearan incidentes con escalacion por niveles</small>
+            </div>
+            <div class="mb-3">
                 <label class="form-label">Codigos de Evento</label>
                 <input type="text" class="form-control" name="event_codes" value="{{ rule.event_codes|join:", "|default:"" }}" placeholder="DeepStreamDetection, VideoMotion">
                 <small class="form-hint">Separados por coma. Vacio = todos los eventos</small>
@@ -239,6 +249,7 @@ document.getElementById("rule-form").addEventListener("submit", async (e) => {
         valid_from: document.getElementById("valid_from").value || null,
         valid_until: document.getElementById("valid_until").value || null,
         schedule: buildSchedule(),
+        incident_type_id: fd.get("incident_type_id") ? parseInt(fd.get("incident_type_id")) : null,
     };
     {% if rule %}
     var url = "{% url 'notification_rule_edit' rule.id %}";
