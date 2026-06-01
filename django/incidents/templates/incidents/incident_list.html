@@ -47,9 +47,12 @@
                     </td>
                     <td class="text-muted">{{ incident.created_at|date:"d/m H:i" }}</td>
                     <td class="text-end">
+                        <a href="{% url 'incident_detail' incident.id %}" class="btn btn-sm btn-ghost-secondary me-1" title="Detalle">
+                            <i class="ti ti-eye"></i>
+                        </a>
                         {% if incident.status == "active" %}
                         <button class="btn btn-sm btn-success" onclick="ackIncident({{ incident.id }})">
-                            <i class="ti ti-check"></i> Atender
+                            <i class="ti ti-check"></i>
                         </button>
                         {% endif %}
                     </td>
