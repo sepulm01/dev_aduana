@@ -1,24 +1,16 @@
 # FaceRec pipeline — SGIE0: 106-point face landmarks (2d106det)
 # Operates on face bboxes (class_id=0) from PGIE det_10g
+# Paths are relative to this YAML file's directory (models/facerec/)
 
 property:
   gpu-id: 0
-  onnx-file: ../models/facerec/2d106det.onnx
-  model-engine-file: ../models/facerec/2d106det.onnx_b3_gpu0_fp32.engine
+  onnx-file: 2d106det.onnx
+  model-engine-file: 2d106det.onnx_b3_gpu0_fp32.engine
   infer-dims: 3;192;192
   batch-size: 3
   network-mode: 0
   gie-unique-id: 2
   process-mode: 2
   network-type: 1
-  operate-on-gie-id: 1
-  operate-on-class-ids: 0
+  operate-on-class-ids: 2
   output-tensor-meta: 1
-  model-color-format: 0
-  net-scale-factor: 1.0
-  offsets: 0.0;0.0;0.0
-  maintain-aspect-ratio: 1
-  symmetric-padding: 1
-  interval: 0
-  classifier-async-mode: 0
-  classifier-threshold: 0.0

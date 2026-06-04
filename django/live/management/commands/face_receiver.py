@@ -6,14 +6,17 @@ import time
 from collections import OrderedDict
 from datetime import datetime
 
+import cv2
+import numpy as np
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.utils import timezone
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
 from pgvector.django import CosineDistance
 
-from detections.models import Detection
+from detections.models import Detection, IdentityGroup
 
 
 PACK_FORMAT = "=I Q f 4f Q"
@@ -22,9 +25,10 @@ EMBEDDING_SIZE = 512 * 4
 LANDMARKS_SIZE = 212 * 4
 END_MARKER = b"END!"
 
-BUFFER_TIMEOUT_SEC = 10
+BUFFER_TIMEOUT_SEC = 3
 SCORE_THRESHOLD = 0.0
 COOLDOWN_SEC = getattr(settings, "FACE_MATCH_COOLDOWN_SECONDS", 300)
+FACE_QUALITY_MIN = getattr(settings, "FACE_QUALITY_MIN_SCORE", 1500)
 
 
 class FaceBuffer:
@@ -48,7 +52,7 @@ class FaceBuffer:
         area = bbox_width * bbox_height
         if area <= 0:
             area = 0.001
-        score = quality_score * area
+        score = quality_score * (1.0 + area * 0.1)
 
         if score < SCORE_THRESHOLD:
             return
@@ -114,32 +118,36 @@ class Command(BaseCommand):
 
     def _handle_client(self, client_socket, addr):
         buf = FaceBuffer()
+        stream = b""
         try:
             while True:
-                data = b""
+                try:
+                    r = client_socket.recv(65536)
+                except (ConnectionResetError, OSError):
+                    break
+                if not r:
+                    break
+                stream += r
+
                 while True:
-                    try:
-                        r = client_socket.recv(65536)
-                    except (ConnectionResetError, OSError):
-                        return
-                    if len(r) == 0:
-                        return
-                    pos = r.find(END_MARKER)
-                    if pos != -1:
-                        data += r[:pos]
-                        rest = r[pos + len(END_MARKER) :]
-                        total_remain = PACK_SIZE + EMBEDDING_SIZE + LANDMARKS_SIZE
-                        if len(rest) < total_remain:
-                            more = self._recv_exact(
-                                client_socket, total_remain - len(rest)
-                            )
-                            rest += more
-                        self._process_packet(buf, data, rest)
+                    pos = stream.find(END_MARKER)
+                    if pos == -1:
                         break
-                    data += r
+                    jpeg_bytes = stream[:pos]
+                    after = stream[pos + len(END_MARKER):]
+                    total_remain = PACK_SIZE + EMBEDDING_SIZE + LANDMARKS_SIZE
+                    if len(after) < total_remain:
+                        break
+                    self._process_packet(buf, jpeg_bytes, after)
+                    stream = after[total_remain:]
+
         except (ConnectionError, OSError, struct.error):
             pass
         finally:
+            for key in list(buf.buffer.keys()):
+                entry = buf.flush(key)
+                if entry:
+                    self._save_detection(entry)
             try:
                 client_socket.close()
             except OSError:
@@ -198,6 +206,16 @@ class Command(BaseCommand):
         if entry is None:
             return
 
+        if entry.get("jpeg_bytes"):
+            nparr = np.frombuffer(entry["jpeg_bytes"], np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
+            if img is not None and img.size > 0:
+                lap_var = cv2.Laplacian(img, cv2.CV_64F).var()
+                h, w = img.shape
+                quality_score = min(w, h) * lap_var
+                if quality_score < FACE_QUALITY_MIN:
+                    return
+
         embedding_list = None
         if len(entry["embedding_raw"]) >= EMBEDDING_SIZE:
             try:
@@ -212,22 +230,55 @@ class Command(BaseCommand):
             except struct.error:
                 pass
 
+        if landmarks_list:
+            is_lm_zero = all(abs(v) < 1e-10 for v in landmarks_list)
+            if is_lm_zero:
+                landmarks_list = None
+
         result = None
+        if embedding_list:
+            is_zero = all(abs(v) < 1e-10 for v in embedding_list)
+            if is_zero:
+                embedding_list = None
+
+        identity_group = None
         if embedding_list:
             result = self._check_match(entry["device_id"], embedding_list)
             if result is not None:
                 matched, distance = result
-                now = datetime.now()
-                matched_ts = matched.timestamp.replace(tzinfo=None)
-                delta = (now - matched_ts).total_seconds()
-                if delta < COOLDOWN_SEC:
+                now = timezone.now()
+                delta = (now - matched.timestamp).total_seconds()
+                if 0 < delta < COOLDOWN_SEC:
                     return
+                identity_group = matched.identity_group
+                if identity_group is None:
+                    identity_group = IdentityGroup.objects.create(
+                        first_seen=matched.timestamp,
+                        last_seen=matched.timestamp,
+                    )
+                    matched.identity_group = identity_group
+                    matched.save(update_fields=["identity_group"])
+                identity_group.last_seen = timezone.make_aware(
+                    datetime.fromtimestamp(entry["timestamp_ms"] / 1000.0)
+                )
+                identity_group.detection_count += 1
+                identity_group.save(
+                    update_fields=["detection_count", "last_seen"]
+                )
+            else:
+                ts = timezone.make_aware(
+                    datetime.fromtimestamp(entry["timestamp_ms"] / 1000.0)
+                )
+                identity_group = IdentityGroup.objects.create(
+                    first_seen=ts,
+                    last_seen=ts,
+                )
 
         obj = Detection(
             device_id=entry["device_id"],
             object_id=entry["object_id"],
             class_label="face",
-            confidence=entry["quality_score"],
+            identity_group=identity_group,
             bbox_left=entry["bbox"]["left"],
             bbox_top=entry["bbox"]["top"],
             bbox_width=entry["bbox"]["width"],

@@ -18,6 +18,8 @@ class DevicesConfig(AppConfig):
             from onvif_utils.mediamtx_api import MediaMTXAPI
 
             for device in Device.objects.all():
+                if device.source_type == "file":
+                    continue
                 if not device.username or not device.password:
                     continue
                 try:
@@ -42,6 +44,8 @@ class DevicesConfig(AppConfig):
             from onvif_utils.media import MediaService
 
             for device in Device.objects.filter(is_online=True):
+                if device.source_type == "file":
+                    continue
                 if not device.username or not device.password:
                     continue
                 try:

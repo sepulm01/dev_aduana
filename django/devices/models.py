@@ -34,6 +34,15 @@ class Device(models.Model):
         default="main",
         choices=PIPELINE_CHOICES,
     )
+    SOURCE_TYPE_CHOICES = [
+        ("rtsp", "RTSP Camera"),
+        ("file", "File (MP4)"),
+    ]
+    source_type = models.CharField(
+        max_length=10,
+        default="rtsp",
+        choices=SOURCE_TYPE_CHOICES,
+    )
     site = models.ForeignKey(
         "operadores.Site",
         on_delete=models.SET_NULL,

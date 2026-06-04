@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Rostros Detectados{% endblock %}
+
+{% block content %}
+<div class="container-xl">
+  <div class="page-header d-print-none">
+    <div class="row align-items-center">
+      <div class="col">
+        <h2 class="page-title">
+          <i class="ti ti-user-scan me-2" style="color:#00c4cc;"></i>Rostros Detectados
+        </h2>
+        <div class="text-muted mt-1">
+          {{ page_obj.paginator.count }} detección{{ page_obj.paginator.count|pluralize:"es" }} almacenada{{ page_obj.paginator.count|pluralize:"s" }}
+        </div>
+      </div>
+      <div class="col-auto">
+        <form method="get" class="d-flex gap-2 align-items-center">
+          <select name="device" class="form-select form-select-sm" style="min-width:180px;" onchange="this.form.submit()">
+            <option value="">Todas las cámaras</option>
+            {% for d in devices %}
+            <option value="{{ d.id }}" {% if selected_device == d.id|stringformat:"s" %}selected{% endif %}>
+              {{ d.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {% if page_obj.object_list %}
+  <div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-5 g-3 mt-1">
+    {% for det in page_obj %}
+    <div class="col">
+      <a href="{% url 'detection_detail' det.pk %}" class="text-decoration-none">
+        <div class="card h-100 card-sm" style="border:1px solid #2d3748;">
+          {% if det.crop %}
+          <img src="{{ det.crop.url }}" class="card-img-top" alt="Rostro"
+               style="object-fit:cover;height:160px;background:#1a1f2e;">
+          {% else %}
+          <div class="card-img-top d-flex align-items-center justify-content-center"
+               style="height:160px;background:#1a1f2e;">
+            <i class="ti ti-user-off" style="font-size:2.5rem;color:#4a5568;"></i>
+          </div>
+          {% endif %}
+          <div class="card-body py-2 px-2">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="badge bg-blue-lt">
+                <i class="ti ti-camera me-1"></i>{{ det.device.name|truncatechars:14 }}
+              </span>
+              {% if det.quality_score is not None %}
+              <span class="badge {% if det.quality_score >= 0.9 %}bg-green-lt{% elif det.quality_score >= 0.6 %}bg-yellow-lt{% else %}bg-red-lt{% endif %}">
+                {{ det.quality_score|floatformat:2 }}
+              </span>
+              {% endif %}
+            </div>
+            <div class="text-muted small">
+              <i class="ti ti-clock me-1"></i>{{ det.timestamp|date:"d/m H:i:s" }}
+            </div>
+            <div class="text-muted small">
+              <i class="ti ti-id me-1"></i>obj #{{ det.object_id }}
+            </div>
+            {% if det.has_embedding %}
+            <div class="mt-1">
+              <span class="badge bg-purple-lt" style="font-size:0.65rem;">
+                <i class="ti ti-brain me-1"></i>embedding
+              </span>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if page_obj.has_other_pages %}
+  <div class="d-flex justify-content-center mt-4">
+    <ul class="pagination">
+      {% if page_obj.has_previous %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if selected_device %}&device={{ selected_device }}{% endif %}">
+          <i class="ti ti-chevron-left"></i>
+        </a>
+      </li>
+      {% endif %}
+      {% for num in page_obj.paginator.page_range %}
+        {% if page_obj.number == num %}
+        <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+        {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ num }}{% if selected_device %}&device={{ selected_device }}{% endif %}">{{ num }}</a>
+        </li>
+        {% endif %}
+      {% endfor %}
+      {% if page_obj.has_next %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if selected_device %}&device={{ selected_device }}{% endif %}">
+          <i class="ti ti-chevron-right"></i>
+        </a>
+      </li>
+      {% endif %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="empty mt-4">
+    <div class="empty-icon">
+      <i class="ti ti-user-scan" style="font-size:3rem;color:#4a5568;"></i>
+    </div>
+    <p class="empty-title">Sin detecciones</p>
+    <p class="empty-subtitle text-muted">
+      Asigná una cámara al pipeline <strong>Face Recognition</strong> para comenzar a capturar rostros.
+    </p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

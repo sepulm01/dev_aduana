@@ -41,6 +41,7 @@ def device_detail(request, device_id):
     from operadores.models import Site
 
     ctx["sites"] = Site.objects.filter(is_active=True)
+    ctx["stream_uris_json"] = json.dumps(device.stream_uris or {}, indent=2)
     return render(request, "devices/device_detail.html", ctx)
 
 
@@ -931,5 +932,20 @@ def assign_pipeline(request, device_id):
         from devices.utils import regenerate_config_and_restart
 
         regenerate_config_and_restart(pipeline_id=pipeline)
+        return JsonResponse({"ok": True})
+    return JsonResponse({"error": "POST required"}, status=405)
+
+
+@login_required
+@csrf_exempt
+def edit_stream_uris(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+    if request.method == "POST":
+        data = json.loads(request.body) if request.body else {}
+        stream_uris = data.get("stream_uris")
+        if not isinstance(stream_uris, dict):
+            return JsonResponse({"error": "stream_uris must be a JSON object"}, status=400)
+        device.stream_uris = stream_uris
+        device.save(update_fields=["stream_uris"])
         return JsonResponse({"ok": True})
     return JsonResponse({"error": "POST required"}, status=405)

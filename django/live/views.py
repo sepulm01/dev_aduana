@@ -20,8 +20,10 @@ DEFAULT_CAMERA_SPECS = {
 
 
 def build_stream_context(device, profile_token, host_header=None):
-    stream_name = f"cam_{device.id}_{profile_token}_hw" if profile_token else ""
-    if profile_token:
+    is_file_source = getattr(device, "source_type", "rtsp") == "file"
+
+    stream_name = f"cam_{device.id}_{profile_token}_hw" if profile_token and not is_file_source else ""
+    if profile_token and not is_file_source:
         webrtc_url = f"/stream/{stream_name}/"
     else:
         webrtc_url = ""
@@ -36,6 +38,7 @@ def build_stream_context(device, profile_token, host_header=None):
         "webrtc_url": webrtc_url,
         "camera_specs_json": json.dumps(specs),
         "ptz_supported": has_ptz_caps,
+        "is_file_source": is_file_source,
     }
 
 

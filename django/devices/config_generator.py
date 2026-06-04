@@ -153,7 +153,9 @@ def generate_nvdsanalytics_config(devices, config_dir):
 def generate_config(devices, output_path, pipeline_id="main"):
     uris = []
     for device in devices:
-        if not device.is_online or not device.stream_uris:
+        if not device.stream_uris:
+            continue
+        if device.source_type == "rtsp" and not device.is_online:
             continue
         if not device.default_profile_token:
             continue
@@ -223,6 +225,14 @@ def generate_all_configs(config_dir=None):
                 deepstream_pipeline=pipeline_id,
                 is_online=True,
                 stream_uris__isnull=False,
+                source_type="rtsp",
+            ).exclude(stream_uris={})
+        )
+        devices += list(
+            Device.objects.filter(
+                deepstream_pipeline=pipeline_id,
+                stream_uris__isnull=False,
+                source_type="file",
             ).exclude(stream_uris={})
         )
         filename = PIPELINE_CONFIGS[pipeline_id]["filename"]

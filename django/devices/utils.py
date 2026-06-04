@@ -116,11 +116,16 @@ def regenerate_config_and_restart(pipeline_id=None):
 
     online_devices = list(
         Device.objects.filter(
-            is_online=True, stream_uris__isnull=False
+            is_online=True, stream_uris__isnull=False, source_type="rtsp"
+        ).exclude(stream_uris={})
+    )
+    file_devices = list(
+        Device.objects.filter(
+            stream_uris__isnull=False, source_type="file"
         ).exclude(stream_uris={})
     )
 
-    if not online_devices:
+    if not online_devices and not file_devices:
         logger.warning("No online devices with stream URIs, skipping config regeneration")
         return
 
@@ -139,17 +144,17 @@ def regenerate_config_and_restart(pipeline_id=None):
     generate_all_configs(config_dir)
 
     r = _get_redis()
-    source_idx = 0
+    all_devices = online_devices + file_devices
     for pipeline_id_key in PIPELINE_CONTAINERS:
-        pipeline_devices = [d for d in online_devices if d.deepstream_pipeline == pipeline_id_key]
-        for device in pipeline_devices:
+        pipeline_devices = [d for d in all_devices if d.deepstream_pipeline == pipeline_id_key]
+        sources_key = f"deepstream:sources:{pipeline_id_key}"
+        for idx, device in enumerate(pipeline_devices):
             uri = device.stream_uris.get(device.default_profile_token, "")
-            r.hset("deepstream:sources", str(source_idx), str(device.id))
-            r.hset("deepstream:sources", f"{source_idx}:camera_id", str(device.id))
-            r.hset("deepstream:sources", f"{source_idx}:url", uri)
-            source_idx += 1
+            r.hset(sources_key, str(idx), str(device.id))
+            r.hset(sources_key, f"{idx}:camera_id", str(device.id))
+            r.hset(sources_key, f"{idx}:url", uri)
 
-    logger.info("Configs regenerated for %d online devices across all pipelines", len(online_devices))
+    logger.info("Configs regenerated for %d devices across all pipelines", len(all_devices))
 
     if pipeline_id:
         restart_computer_vision(get_pipeline_container(pipeline_id))

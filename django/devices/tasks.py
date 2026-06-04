@@ -32,12 +32,23 @@ def _broadcast_device_status(device_id, online):
 @shared_task
 def orchestrate_cameras():
     r = _get_redis()
-    sources = r.hgetall("deepstream:sources")
+    sources = {}
+    for pipeline_id in ("main", "facerec", "yolov9"):
+        data = r.hgetall(f"deepstream:sources:{pipeline_id}")
+        for k, v in data.items():
+            if isinstance(k, bytes):
+                k = k.decode()
+            sources[k] = v
 
     need_restart = False
 
     for device in Device.objects.all():
         cid = str(device.id)
+
+        if device.source_type == "file":
+            device.is_online = True
+            Device.objects.filter(id=device.id).update(is_online=True)
+            continue
 
         if not device.username or not device.password:
             continue
@@ -97,7 +108,8 @@ def orchestrate_cameras():
                 break
 
         if device.is_online and source_id is not None:
-            fps = r.hget("deepstream:sources", f"{source_id}:fps")
+            fps_key = f"deepstream:sources:{device.deepstream_pipeline}"
+            fps = r.hget(fps_key, f"{source_id}:fps")
             current_fps = int(fps) if fps else 0
 
             if current_fps == 0:

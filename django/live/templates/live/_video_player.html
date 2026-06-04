@@ -23,6 +23,14 @@
         </div>
     </div>
     <div class="card-body p-0">
+        {% if is_file_source|default:False %}
+        <div id="noVideo{{ sfx }}" class="d-flex align-items-center justify-content-center text-muted" style="aspect-ratio: 16 / 9;">
+            <div class="text-center">
+                <i class="ti ti-file-video" style="font-size: 3rem;"></i>
+                <p class="mt-2 mb-0">Fuente de archivo &mdash; sin preview en vivo</p>
+            </div>
+        </div>
+        {% else %}
         <div id="videoContainer{{ sfx }}" style="position: relative; width: 100%; aspect-ratio: 16 / 9; display: {% if profile_token %}block{% else %}none{% endif %};">
             <iframe id="videoFrame{{ sfx }}"
                 src="{% if webrtc_url %}{{ webrtc_url }}{% endif %}"
@@ -46,6 +54,7 @@
                 <p class="mt-2 mb-0">{{ no_video_text|default:"Selecciona un perfil y presiona Live" }}</p>
             </div>
         </div>
+        {% endif %}
     </div>
 </div>
 <script>

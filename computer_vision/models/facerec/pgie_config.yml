@@ -1,14 +1,21 @@
-# FaceRec pipeline — PGIE: det_10g face/person detector
-# Used by pipeline1 (facerec). Cameras assigned via Device.deepstream_pipeline="facerec"
-# PGIE operates in process-mode=1 (primary, full-frame)
-# SGIE0 and SGIE1 operate in process-mode=2 (secondary, on face bboxes)
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 
 property:
   gpu-id: 0
   net-scale-factor: 0.00392156862745098
   model-color-format: 0
-  onnx-file: ../models/facerec/det_10g.onnx
-  labelfile-path: ../models/facerec/labels/labels.txt
+  onnx-file: resnet34_peoplenet_int8.onnx
+  model-engine-file: resnet34_peoplenet_int8.onnx_b3_gpu0_fp32.engine
+  labelfile-path: labels.txt
+  int8-calib-file: resnet34_peoplenet_int8.txt
   batch-size: 3
   network-mode: 0
   num-detected-classes: 3
@@ -20,10 +27,13 @@ property:
   maintain-aspect-ratio: 1
   symmetric-padding: 1
   infer-dims: 3;544;960
-  custom-lib-path: ../models/facerec/libnvds_retinaface_parser.so
-  parse-bbox-func-name: NvDsInferParseCustomRetinaFace
+  parse-bbox-func-name: NvDsInferParseBbox
 
 class-attrs-all:
-  pre-cluster-threshold: 0.25
-  topk: 300
-  nms-iou-threshold: 0.45
+  pre-cluster-threshold: 0.4
+  topk: 100
+  nms-iou-threshold: 0.4
+
+class-attrs-2:
+  pre-cluster-threshold: 0.4
+  nms-iou-threshold: 0.35

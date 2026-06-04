@@ -83,6 +83,18 @@
                                 <span class="nav-link-title">Dashboard</span>
                             </a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'identity_list' %}">
+                                <i class="ti ti-id-badge nav-link-icon"></i>
+                                <span class="nav-link-title">Identidades</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'detection_list' %}">
+                                <i class="ti ti-user-scan nav-link-icon"></i>
+                                <span class="nav-link-title">Rostros</span>
+                            </a>
+                        </li>
                     </ul>
                     {% if user.is_authenticated %}
                     <div class="mt-auto pt-3 border-top border-dark">

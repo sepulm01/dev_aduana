@@ -15,10 +15,45 @@
 #include <sstream>
 
 #include "gstnvdsmeta.h"
+#include "gstnvdsinfer.h"
 #include "nvds_yml_parser.h"
 #include "gst-nvmessage.h"
 #include "nvds_analytics_meta.h"
 #include "snapshot_sender.h"
+
+#include <vector>
+#include <netdb.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#define FACE_RECEIVER_HOST "face-receiver"
+#define FACE_RECEIVER_PORT 12348
+#define FACE_END_MARKER "END!"
+#define FACE_LANDMARKS_DIM 212
+#define FACE_EMBEDDING_DIM 512
+#define FACE_MIN_BBOX_PX   30
+
+#pragma pack(push, 1)
+struct FaceCropPacket {
+    uint32_t device_id;
+    uint64_t object_id;
+    float    quality_score;
+    float    bbox_left;
+    float    bbox_top;
+    float    bbox_width;
+    float    bbox_height;
+    uint64_t timestamp_ms;
+};
+#pragma pack(pop)
+
+struct FaceRegion { int start; int end; int min_pts; };
+static const FaceRegion KEY_REGIONS[4] = {
+    {68, 75, 1},
+    {76, 83, 1},
+    {53, 67, 1},
+    {84, 95, 2},
+};
 
 /*
  * Utility: check if a YAML config section exists by reading the file.
@@ -26,13 +61,13 @@
  */
 static gboolean yaml_has_section(const gchar* file, const gchar* section) {
     gchar key[256];
-    g_snprintf(key, sizeof(key), "[%s]", section);
+    g_snprintf(key, sizeof(key), "%s:", section);
     FILE* fp = fopen(file, "r");
     if (!fp) return FALSE;
     gchar line[512];
     gboolean found = FALSE;
     while (fgets(line, sizeof(line), fp)) {
-        if (strstr(line, key)) { found = TRUE; break; }
+        if (strncmp(line, key, strlen(key)) == 0) { found = TRUE; break; }
     }
     fclose(fp);
     return found;
@@ -65,6 +100,23 @@ static redisContext* pub_ctx = NULL;
 static int source_to_device[MAX_SOURCES];
 static guint64 frame_counts[MAX_SOURCES];
 static const char* g_labels[] = {"person", "bag", "face"};
+static const char* g_sources_key = "deepstream:sources:main";
+
+static NvDsObjEncCtxHandle g_face_enc_ctx = NULL;
+static int                 g_face_sock_fd  = -1;
+static bool                g_face_sock_ok  = false;
+static guint64             g_face_obj_ctr  = 0;
+
+struct FacePending {
+    NvDsObjectMeta* om;
+    NvDsFrameMeta*  fm;
+    int             dev_id;
+    float           quality;
+    float           landmarks[FACE_LANDMARKS_DIM];
+    float           embedding[FACE_EMBEDDING_DIM];
+    bool            has_lm;
+    bool            has_emb;
+};
 
 struct ProbeData {
     SnapshotSender* roi_snap;
@@ -117,6 +169,133 @@ static void redis_hset(const char* k, const char* f, const char* v)
     g_mutex_unlock(&redis_mutex);
 }
 
+static float compute_quality_score(const float* lm)
+{
+    for (int r = 0; r < 4; r++) {
+        int inside = 0;
+        for (int i = KEY_REGIONS[r].start; i <= KEY_REGIONS[r].end; i++) {
+            float x = lm[i * 2];
+            float y = lm[i * 2 + 1];
+            if (x >= 0.0f && x <= 1.0f && y >= 0.0f && y <= 1.0f)
+                inside++;
+        }
+        if (inside < KEY_REGIONS[r].min_pts) return 0.0f;
+    }
+    return 1.0f;
+}
+
+static bool extract_tensor_data(NvDsObjectMeta* obj, guint unique_id,
+                                 float* out, size_t max_elems)
+{
+    for (NvDsMetaList* lum = obj->obj_user_meta_list; lum; lum = lum->next) {
+        NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
+        if (!um || um->base_meta.meta_type != NVDSINFER_TENSOR_OUTPUT_META) continue;
+        NvDsInferTensorMeta* tm = (NvDsInferTensorMeta*)um->user_meta_data;
+        if (!tm || tm->unique_id != unique_id) continue;
+        size_t offset = 0;
+        for (guint l = 0; l < tm->num_output_layers && offset < max_elems; l++) {
+            if (!tm->out_buf_ptrs_host || !tm->out_buf_ptrs_host[l]) continue;
+            NvDsInferLayerInfo* layer = &tm->output_layers_info[l];
+            guint n = layer->inferDims.numElements;
+            if (n == 0 || n > 10000) continue;
+            float* buf = (float*)tm->out_buf_ptrs_host[l];
+            if (!buf) continue;
+            size_t copy = (offset + n <= max_elems) ? n : (max_elems - offset);
+            memcpy(out + offset, buf, copy * sizeof(float));
+            offset += copy;
+        }
+        return offset > 0;
+    }
+    return false;
+}
+
+static bool connect_face_receiver()
+{
+    if (g_face_sock_ok) return true;
+    if (g_face_sock_fd >= 0) { close(g_face_sock_fd); g_face_sock_fd = -1; }
+
+    struct addrinfo hints = {}, *res = NULL;
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    char port_str[8];
+    g_snprintf(port_str, sizeof(port_str), "%d", FACE_RECEIVER_PORT);
+    if (getaddrinfo(FACE_RECEIVER_HOST, port_str, &hints, &res) != 0 || !res) {
+        g_printerr("[Face] DNS lookup failed for %s\n", FACE_RECEIVER_HOST);
+        return false;
+    }
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0) { freeaddrinfo(res); return false; }
+    if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
+        close(fd);
+        freeaddrinfo(res);
+        g_printerr("[Face] connect to %s:%d failed\n", FACE_RECEIVER_HOST, FACE_RECEIVER_PORT);
+        return false;
+    }
+    freeaddrinfo(res);
+    g_face_sock_fd = fd;
+    g_face_sock_ok = true;
+    g_print("[Face] Connected to %s:%d\n", FACE_RECEIVER_HOST, FACE_RECEIVER_PORT);
+    return true;
+}
+
+static void close_face_socket()
+{
+    if (g_face_sock_fd >= 0) { close(g_face_sock_fd); g_face_sock_fd = -1; }
+    g_face_sock_ok = false;
+}
+
+static bool send_face_crop(const FacePending& fp)
+{
+    if (!g_face_sock_ok && !connect_face_receiver()) return false;
+
+    for (NvDsMetaList* lum = fp.om->obj_user_meta_list; lum; lum = lum->next) {
+        NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
+        if (!um || um->base_meta.meta_type != NVDS_CROP_IMAGE_META) continue;
+        NvDsObjEncOutParams* enc = (NvDsObjEncOutParams*)um->user_meta_data;
+        if (!enc || !enc->outBuffer || enc->outLen == 0) continue;
+
+        float fw = (float)MUXER_OUTPUT_WIDTH;
+        float fh = (float)MUXER_OUTPUT_HEIGHT;
+
+        FaceCropPacket pkt;
+        pkt.device_id    = (uint32_t)fp.dev_id;
+        pkt.object_id    = fp.om->object_id;
+        pkt.quality_score = fp.quality;
+        pkt.bbox_left    = fp.om->detector_bbox_info.org_bbox_coords.left   / fw;
+        pkt.bbox_top     = fp.om->detector_bbox_info.org_bbox_coords.top    / fh;
+        pkt.bbox_width   = fp.om->detector_bbox_info.org_bbox_coords.width  / fw;
+        pkt.bbox_height  = fp.om->detector_bbox_info.org_bbox_coords.height / fh;
+        pkt.timestamp_ms = (uint64_t)(time(nullptr) * 1000LL);
+
+        auto safe_send = [&](const void* data, size_t len) -> bool {
+            ssize_t s = send(g_face_sock_fd, data, len, MSG_NOSIGNAL);
+            if (s < 0) { close_face_socket(); return false; }
+            return true;
+        };
+
+        if (!safe_send(enc->outBuffer, enc->outLen)) return false;
+        if (!safe_send(FACE_END_MARKER, strlen(FACE_END_MARKER))) return false;
+        if (!safe_send(&pkt, sizeof(pkt))) return false;
+
+        if (fp.has_emb) {
+            if (!safe_send(fp.embedding, FACE_EMBEDDING_DIM * sizeof(float))) return false;
+        } else {
+            float zeros[FACE_EMBEDDING_DIM] = {};
+            if (!safe_send(zeros, sizeof(zeros))) return false;
+        }
+
+        if (fp.has_lm) {
+            if (!safe_send(fp.landmarks, FACE_LANDMARKS_DIM * sizeof(float))) return false;
+        } else {
+            float zeros[FACE_LANDMARKS_DIM] = {};
+            if (!safe_send(zeros, sizeof(zeros))) return false;
+        }
+
+        return true;
+    }
+    return false;
+}
+
 static GstPadProbeReturn tiler_src_pad_buffer_probe(GstPad* pad, GstPadProbeInfo* info,
                                                       gpointer u_data)
 {
@@ -148,7 +327,7 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
     guint64 now = g_get_monotonic_time();
 
     if (now - last_reload >= 5000000 && pub_ctx) {
-        redisReply* r = (redisReply*)redisCommand(pub_ctx, "HGETALL deepstream:sources");
+        redisReply* r = (redisReply*)redisCommand(pub_ctx, "HGETALL %s", g_sources_key);
         if (r && r->type == REDIS_REPLY_ARRAY) {
             g_mutex_lock(&redis_mutex);
             memset(source_to_device, -1, sizeof(source_to_device));
@@ -364,6 +543,71 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 }
             }
         }
+
+        if (g_face_enc_ctx) {
+            std::vector<FacePending> face_queue;
+
+            for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+                NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
+                if (om->class_id != 2) continue;
+                if (om->object_id == UNTRACKED_OBJECT_ID || om->object_id == 0) continue;
+
+                float w = om->detector_bbox_info.org_bbox_coords.width;
+                float h = om->detector_bbox_info.org_bbox_coords.height;
+                if (w < FACE_MIN_BBOX_PX || h < FACE_MIN_BBOX_PX) continue;
+
+                FacePending fp;
+                fp.om      = om;
+                fp.fm      = fm;
+                fp.dev_id  = dev_id;
+                fp.quality = 0.0f;
+                fp.has_lm  = false;
+                fp.has_emb = false;
+                memset(fp.landmarks, 0, sizeof(fp.landmarks));
+                memset(fp.embedding, 0, sizeof(fp.embedding));
+
+                fp.has_lm = extract_tensor_data(om, 2,
+                    fp.landmarks, FACE_LANDMARKS_DIM);
+                fp.has_emb = extract_tensor_data(om, 3,
+                    fp.embedding, FACE_EMBEDDING_DIM);
+
+                if (fp.has_lm) {
+                    fp.quality = compute_quality_score(fp.landmarks);
+                }
+
+                if (fp.quality < 1.0f) continue;
+
+                NvDsObjEncUsrArgs objData = {};
+                objData.saveImg      = FALSE;
+                objData.attachUsrMeta = TRUE;
+                objData.quality      = 80;
+                objData.objNum       = (int)(++g_face_obj_ctr);
+
+                GstMapInfo inmap = GST_MAP_INFO_INIT;
+                if (!gst_buffer_map(buf, &inmap, GST_MAP_READ)) continue;
+                NvBufSurface* surf = (NvBufSurface*)inmap.data;
+                if (surf) {
+                    nvds_obj_enc_process(g_face_enc_ctx, &objData,
+                                         surf, om, fm);
+                    face_queue.push_back(fp);
+                }
+                gst_buffer_unmap(buf, &inmap);
+            }
+
+            if (!face_queue.empty()) {
+                nvds_obj_enc_finish(g_face_enc_ctx);
+                for (auto& fp : face_queue) {
+                    if (!send_face_crop(fp)) {
+                        g_printerr("[Face] send failed for object %lu\n",
+                                   fp.om->object_id);
+                    } else {
+                        g_print("[Face] device=%d object=%lu quality=%.2f emb=%s\n",
+                                fp.dev_id, fp.om->object_id, fp.quality,
+                                fp.has_emb ? "yes" : "no");
+                    }
+                }
+            }
+        }
     }
 
     if (now - last_flush >= FLUSH_INTERVAL_US) last_flush = now;
@@ -376,7 +620,7 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 gchar k[32];
                 g_snprintf(k, sizeof(k), "%d:fps", i);
                 redisReply* r = (redisReply*)redisCommand(pub_ctx,
-                    "HSET deepstream:sources %s %d", k,
+                    "HSET %s %s %d", g_sources_key, k,
                     (int)(frame_counts[i] / elapsed + 0.5));
                 if (r) freeReplyObject(r);
                 frame_counts[i] = 0;
@@ -497,6 +741,9 @@ int main(int argc, char* argv[])
 
     const char* enable_display_env = getenv("ENABLE_DISPLAY");
     int show_display = enable_display_env ? atoi(enable_display_env) : 1;
+
+    const char* sources_key_env = getenv("DEEPSTREAM_SOURCES_KEY");
+    if (sources_key_env) g_sources_key = sources_key_env;
 
     if (argc < 2) {
         g_printerr("Usage: %s <yml file>\n", argv[0]);
@@ -700,6 +947,15 @@ int main(int argc, char* argv[])
     if (oc_ok) probe_data.oc_snap = &oc_snap;
     probe_data.last_snap_time = 0;
 
+    if (sgie0 || sgie1) {
+        g_face_enc_ctx = nvds_obj_enc_create_context(0);
+        if (g_face_enc_ctx)
+            g_print("[Face] Encoder context created\n");
+        else
+            g_printerr("[Face] Failed to create encoder context\n");
+        connect_face_receiver();
+    }
+
     if (probe_pad) {
         gst_pad_add_probe(probe_pad, GST_PAD_PROBE_TYPE_BUFFER,
                           analytics_pad_probe, &probe_data, NULL);
@@ -730,6 +986,12 @@ int main(int argc, char* argv[])
     roi_snap.stop();
     lc_snap.stop();
     oc_snap.stop();
+
+    close_face_socket();
+    if (g_face_enc_ctx) {
+        nvds_obj_enc_destroy_context(g_face_enc_ctx);
+        g_face_enc_ctx = NULL;
+    }
 
     if (pub_ctx) redisFree(pub_ctx);
     gst_object_unref(GST_OBJECT(pipeline));

@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Identidades{% endblock %}
+
+{% block content %}
+<div class="container-xl">
+  <div class="page-header d-print-none">
+    <div class="row align-items-center">
+      <div class="col">
+        <h2 class="page-title">
+          <i class="ti ti-id-badge me-2" style="color:#00c4cc;"></i>Identidades
+        </h2>
+        <div class="text-muted mt-1">
+          {{ page_obj.paginator.count }} identidad{{ page_obj.paginator.count|pluralize:"es" }} detectada{{ page_obj.paginator.count|pluralize:"s" }}
+        </div>
+      </div>
+      <div class="col-auto">
+        <form method="get" class="d-flex gap-2 align-items-center">
+          <select name="device" class="form-select form-select-sm" style="min-width:180px;" onchange="this.form.submit()">
+            <option value="">Todas las c&aacute;maras</option>
+            {% for d in devices %}
+            <option value="{{ d.id }}" {% if selected_device == d.id|stringformat:"s" %}selected{% endif %}>
+              {{ d.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {% if group_data %}
+  <div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-5 g-3 mt-1">
+    {% for gd in group_data %}
+    <div class="col">
+      <a href="{% url 'identity_detail' gd.group.pk %}" class="text-decoration-none">
+        <div class="card h-100 card-sm" style="border:1px solid #2d3748;">
+          <div class="position-relative">
+            {% if gd.first_det and gd.first_det.crop %}
+            <img src="{{ gd.first_det.crop.url }}" class="card-img-top" alt="Identidad {{ gd.group.pk }}"
+                 style="object-fit:cover;height:160px;background:#1a1f2e;">
+            {% else %}
+            <div class="d-flex align-items-center justify-content-center"
+                 style="height:160px;background:#1a1f2e;">
+              <i class="ti ti-user-off" style="font-size:2.5rem;color:#4a5568;"></i>
+            </div>
+            {% endif %}
+            <span class="badge bg-blue position-absolute top-0 end-0 m-1"
+                  style="font-size:0.75rem;">
+              {{ gd.group.detection_count }} visita{{ gd.group.detection_count|pluralize }}
+            </span>
+          </div>
+          <div class="card-body py-2 px-2">
+            <div class="fw-semibold small text-truncate">#{{ gd.group.pk }}</div>
+            <div class="text-muted small">
+              <i class="ti ti-clock me-1"></i>
+              {{ gd.group.last_seen|date:"d/m H:i" }}
+            </div>
+            <div class="text-muted small text-truncate">
+              <i class="ti ti-camera me-1"></i>
+              {% with dcount=gd.group.detections.values_list|dictsort:"device_id"|slice:":2" %}
+              {{ gd.group.detections.first.device.name|truncatechars:12 }}
+              {% endwith %}
+            </div>
+          </div>
+        </div>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if page_obj.has_other_pages %}
+  <div class="d-flex justify-content-center mt-4">
+    <ul class="pagination">
+      {% if page_obj.has_previous %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if selected_device %}&device={{ selected_device }}{% endif %}">
+          <i class="ti ti-chevron-left"></i>
+        </a>
+      </li>
+      {% endif %}
+      {% for num in page_obj.paginator.page_range %}
+        {% if page_obj.number == num %}
+        <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+        {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ num }}{% if selected_device %}&device={{ selected_device }}{% endif %}">{{ num }}</a>
+        </li>
+        {% endif %}
+      {% endfor %}
+      {% if page_obj.has_next %}
+      <li class="page-item">
+        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if selected_device %}&device={{ selected_device }}{% endif %}">
+          <i class="ti ti-chevron-right"></i>
+        </a>
+      </li>
+      {% endif %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="empty mt-4">
+    <div class="empty-icon">
+      <i class="ti ti-id-badge" style="font-size:3rem;color:#4a5568;"></i>
+    </div>
+    <p class="empty-title">Sin identidades</p>
+    <p class="empty-subtitle text-muted">
+      Al asignar una c&aacute;mara al pipeline <strong>Face Recognition</strong> y detectar rostros,
+      el sistema agrupar&aacute; detecciones por identidad autom&aacute;ticamente.
+    </p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
