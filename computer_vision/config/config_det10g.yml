@@ -1,0 +1,24 @@
+source-list:
+  list: "file:///opt/videos/prada.mp4;"
+
+streammux:
+  batch-size: 1
+  batched-push-timeout: 40000
+  width: 1920
+  height: 1080
+
+primary-gie:
+  plugin-type: 0
+  config-file-path: ../models/retinaface_det10g/pgie_config.yml
+
+osd:
+  process-mode: 0
+  display-text: 1
+
+tiler:
+  width: 1280
+  height: 720
+
+sink:
+  qos: 0
+  type: 4
