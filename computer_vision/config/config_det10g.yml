@@ -1,3 +1,5 @@
+face-class-id: 0
+
 source-list:
   list: "file:///opt/videos/prada.mp4;"
 
@@ -10,6 +12,14 @@ streammux:
 primary-gie:
   plugin-type: 0
   config-file-path: ../models/retinaface_det10g/pgie_config.yml
+
+secondary-gie0:
+  plugin-type: 0
+  config-file-path: ../models/facerec/sgie0_det10g.yml
+
+secondary-gie1:
+  plugin-type: 0
+  config-file-path: ../models/facerec/sgie1_det10g.yml
 
 osd:
   process-mode: 0
