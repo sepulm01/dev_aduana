@@ -6,21 +6,46 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 
 static const int NUM_STRIDES = 3;
 static const int STRIDES[NUM_STRIDES] = {8, 16, 32};
 static const int ANCHORS_PER_LOCATION = 2;
+static const int NUM_LANDMARKS = 5;
 
-// Estructura para holding información de un stride
 struct StrideTensor {
     const float* scores = nullptr;
     const float* bboxes = nullptr;
+    const float* kps    = nullptr;
     int feat_h = 0;
     int feat_w = 0;
     int num_anchors = 0;
 };
 
-// Variables estáticas para caching de debug flag
+// Landmarks de la última llamada al parser.
+// Layout: [det_idx][lm_idx] → {x, y} en píxeles absolutos del espacio de red (0-640).
+// El probe del pipeline lee esto y dibuja los círculos.
+struct Det10gLandmarks {
+    float pts[NUM_LANDMARKS][2];   // [0..4][x,y] en píxeles de red
+};
+
+static std::mutex              g_lm_mutex;
+static std::vector<Det10gLandmarks> g_landmarks;   // una entrada por detección del último frame
+
+extern "C" {
+    // Función pública para que el probe del pipeline lea los landmarks.
+    // Retorna el número de detecciones y copia los datos al buffer del caller.
+    // El caller debe llamar esta función desde el mismo thread del probe.
+    int Det10g_GetLandmarks(Det10gLandmarks* out, int max_count)
+    {
+        std::lock_guard<std::mutex> lk(g_lm_mutex);
+        int n = (int)g_landmarks.size();
+        if (n > max_count) n = max_count;
+        if (out && n > 0) memcpy(out, g_landmarks.data(), n * sizeof(Det10gLandmarks));
+        return n;
+    }
+}
+
 static bool g_debug = false;
 static bool g_debug_init = false;
 
@@ -30,87 +55,75 @@ extern "C" bool NvDsInferParseCustomDet10g(
     NvDsInferParseDetectionParams const& detectionParams,
     std::vector<NvDsInferObjectDetectionInfo>& objectList)
 {
-    // Inicializar debug flag una sola vez
     if (!g_debug_init) {
         g_debug = (std::getenv("DET10G_DEBUG") != nullptr);
         g_debug_init = true;
     }
-    
+
     if (g_debug) {
-        fprintf(stderr, "[Det10g] Parser invocado\n");
-        fprintf(stderr, "[Det10g] Network: %d x %d\n", networkInfo.width, networkInfo.height);
-        fprintf(stderr, "[Det10g] Output layers: %zu\n", outputLayersInfo.size());
+        fprintf(stderr, "[Det10g] Parser invocado. Output layers: %zu\n",
+                outputLayersInfo.size());
     }
 
-    // Inicializar estructuras
     StrideTensor tensors[NUM_STRIDES];
-    
+
     for (int si = 0; si < NUM_STRIDES; ++si) {
         int stride = STRIDES[si];
         int feat_h = (networkInfo.height + stride - 1) / stride;
-        int feat_w = (networkInfo.width + stride - 1) / stride;
-        tensors[si].feat_h = feat_h;
-        tensors[si].feat_w = feat_w;
+        int feat_w = (networkInfo.width  + stride - 1) / stride;
+        tensors[si].feat_h      = feat_h;
+        tensors[si].feat_w      = feat_w;
         tensors[si].num_anchors = feat_h * feat_w * ANCHORS_PER_LOCATION;
-        
-        if (g_debug) {
-            fprintf(stderr, "[Det10g] Stride %d: %d x %d = %d anchors\n",
-                    stride, feat_h, feat_w, tensors[si].num_anchors);
-        }
     }
 
-    // ONNX output order: 
-    // [0] 448: scores stride 8   [12800, 1]
-    // [1] 471: scores stride 16  [3200, 1]
-    // [2] 494: scores stride 32  [800, 1]
-    // [3] 451: bboxes stride 8   [12800, 4]
-    // [4] 474: bboxes stride 16  [3200, 4]
-    // [5] 497: bboxes stride 32  [800, 4]
-    // [6-8]: landmarks (no usados en este parser)
-    
-    if (outputLayersInfo.size() < 6) {
-        fprintf(stderr, "[Det10g] ERROR: Expected at least 6 output tensors, got %zu\n",
+    // ONNX output order (confirmed via trtexec --dumpLayerInfo):
+    // [0] 448: scores stride 8   [1, 12800, 1]
+    // [1] 471: scores stride 16  [1, 3200,  1]
+    // [2] 494: scores stride 32  [1, 800,   1]
+    // [3] 451: bboxes stride 8   [1, 12800, 4]
+    // [4] 474: bboxes stride 16  [1, 3200,  4]
+    // [5] 497: bboxes stride 32  [1, 800,   4]
+    // [6] 454: kps    stride 8   [1, 12800, 10]
+    // [7] 477: kps    stride 16  [1, 3200,  10]
+    // [8] 500: kps    stride 32  [1, 800,   10]
+    if (outputLayersInfo.size() < 9) {
+        fprintf(stderr, "[Det10g] ERROR: Expected 9 output tensors, got %zu\n",
                 outputLayersInfo.size());
         return false;
     }
 
-    // Matching por índice de salida (orden ONNX)
-    tensors[0].scores = static_cast<const float*>(outputLayersInfo[0].buffer);  // 448: stride 8 scores
-    tensors[1].scores = static_cast<const float*>(outputLayersInfo[1].buffer);  // 471: stride 16 scores
-    tensors[2].scores = static_cast<const float*>(outputLayersInfo[2].buffer);  // 494: stride 32 scores
-    
-    tensors[0].bboxes = static_cast<const float*>(outputLayersInfo[3].buffer);  // 451: stride 8 bboxes
-    tensors[1].bboxes = static_cast<const float*>(outputLayersInfo[4].buffer);  // 474: stride 16 bboxes
-    tensors[2].bboxes = static_cast<const float*>(outputLayersInfo[5].buffer);  // 497: stride 32 bboxes
-    
-    if (g_debug) {
-        fprintf(stderr, "[Det10g] Tensors assigned by ONNX output order\n");
-        for (int si = 0; si < NUM_STRIDES; ++si) {
-            fprintf(stderr, "[Det10g] Stride %d: scores=%p bboxes=%p\n",
-                    STRIDES[si], tensors[si].scores, tensors[si].bboxes);
-        }
-    }
+    tensors[0].scores = static_cast<const float*>(outputLayersInfo[0].buffer);
+    tensors[1].scores = static_cast<const float*>(outputLayersInfo[1].buffer);
+    tensors[2].scores = static_cast<const float*>(outputLayersInfo[2].buffer);
+
+    tensors[0].bboxes = static_cast<const float*>(outputLayersInfo[3].buffer);
+    tensors[1].bboxes = static_cast<const float*>(outputLayersInfo[4].buffer);
+    tensors[2].bboxes = static_cast<const float*>(outputLayersInfo[5].buffer);
+
+    tensors[0].kps = static_cast<const float*>(outputLayersInfo[6].buffer);
+    tensors[1].kps = static_cast<const float*>(outputLayersInfo[7].buffer);
+    tensors[2].kps = static_cast<const float*>(outputLayersInfo[8].buffer);
 
     float conf_threshold = 0.5f;
-    if (!detectionParams.perClassPreclusterThreshold.empty()) {
+    if (!detectionParams.perClassPreclusterThreshold.empty())
         conf_threshold = detectionParams.perClassPreclusterThreshold[0];
-    }
 
     const float input_w = static_cast<float>(networkInfo.width);
     const float input_h = static_cast<float>(networkInfo.height);
 
+    std::vector<Det10gLandmarks> new_landmarks;
     int total_detections = 0;
 
     for (int si = 0; si < NUM_STRIDES; ++si) {
         const StrideTensor& t = tensors[si];
-        int stride = STRIDES[si];
-        int feat_h = t.feat_h;
-        int feat_w = t.feat_w;
+        int stride    = STRIDES[si];
+        int feat_h    = t.feat_h;
+        int feat_w    = t.feat_w;
         int num_anchors = t.num_anchors;
-        int stride_detections = 0;
+        int stride_det  = 0;
 
-        if (!t.scores || !t.bboxes) {
-            fprintf(stderr, "[Det10g] ERROR: Null tensor pointers for stride %d\n", stride);
+        if (!t.scores || !t.bboxes || !t.kps) {
+            fprintf(stderr, "[Det10g] ERROR: Null tensor for stride %d\n", stride);
             continue;
         }
 
@@ -121,62 +134,62 @@ extern "C" bool NvDsInferParseCustomDet10g(
 
                 for (int a = 0; a < ANCHORS_PER_LOCATION; ++a) {
                     int idx = (y * feat_w + x) * ANCHORS_PER_LOCATION + a;
-                    if (idx >= num_anchors) {
-                        if (g_debug) {
-                            fprintf(stderr, "[Det10g] Index out of bounds: idx=%d >= %d\n", idx, num_anchors);
-                        }
-                        continue;
-                    }
+                    if (idx >= num_anchors) continue;
 
                     float score = t.scores[idx];
                     if (score < conf_threshold) continue;
 
-                    int bbox_base = idx * 4;
-                    if (bbox_base + 3 >= num_anchors * 4) {
-                        if (g_debug) {
-                            fprintf(stderr, "[Det10g] Bbox out of bounds: base=%d\n", bbox_base);
-                        }
-                        continue;
-                    }
+                    // Decodificar bbox (FCOS: l, t, r, b desde centro)
+                    int bb = idx * 4;
+                    if (bb + 3 >= num_anchors * 4) continue;
 
-                    // Decodificar bbox: FCOS format (l, t, r, b offsets from center)
-                    float l = t.bboxes[bbox_base + 0] * stride;
-                    float top = t.bboxes[bbox_base + 1] * stride;
-                    float r = t.bboxes[bbox_base + 2] * stride;
-                    float bottom = t.bboxes[bbox_base + 3] * stride;
-
-                    float x1 = cx - l;
-                    float y1 = cy - top;
-                    float x2 = cx + r;
-                    float y2 = cy + bottom;
-
-                    // Clip a límites de imagen
-                    x1 = std::max(0.0f, std::min(x1, input_w));
-                    y1 = std::max(0.0f, std::min(y1, input_h));
-                    x2 = std::max(0.0f, std::min(x2, input_w));
-                    y2 = std::max(0.0f, std::min(y2, input_h));
+                    float x1 = std::max(0.0f, std::min(cx - t.bboxes[bb + 0] * stride, input_w));
+                    float y1 = std::max(0.0f, std::min(cy - t.bboxes[bb + 1] * stride, input_h));
+                    float x2 = std::max(0.0f, std::min(cx + t.bboxes[bb + 2] * stride, input_w));
+                    float y2 = std::max(0.0f, std::min(cy + t.bboxes[bb + 3] * stride, input_h));
 
                     if (x2 <= x1 || y2 <= y1) continue;
 
-                    // CRÍTICO: DeepStream espera píxeles absolutos, NO normalizados
-                    NvDsInferObjectDetectionInfo det;
-                    det.classId = 0;
-                    det.detectionConfidence = score;
-                    det.left = x1;           // píxeles, no normalizado
-                    det.top = y1;            // píxeles, no normalizado
-                    det.width = x2 - x1;     // píxeles, no normalizado
-                    det.height = y2 - y1;    // píxeles, no normalizado
+                    // Decodificar 5 landmarks (FCOS: offset desde centro × stride)
+                    // Formato tensor: [idx*10 + lm*2 + 0/1] → dx/dy respecto al centro
+                    Det10gLandmarks lm;
+                    int kp_base = idx * 10;
+                    if (kp_base + 9 < num_anchors * 10) {
+                        for (int k = 0; k < NUM_LANDMARKS; ++k) {
+                            float px = cx + t.kps[kp_base + k * 2 + 0] * stride;
+                            float py = cy + t.kps[kp_base + k * 2 + 1] * stride;
+                            lm.pts[k][0] = std::max(0.0f, std::min(px, input_w));
+                            lm.pts[k][1] = std::max(0.0f, std::min(py, input_h));
+                        }
+                    } else {
+                        memset(&lm, 0, sizeof(lm));
+                    }
+                    new_landmarks.push_back(lm);
 
+                    NvDsInferObjectDetectionInfo det;
+                    det.classId            = 0;
+                    det.detectionConfidence = score;
+                    det.left   = x1;
+                    det.top    = y1;
+                    det.width  = x2 - x1;
+                    det.height = y2 - y1;
                     objectList.push_back(det);
-                    stride_detections++;
+
+                    stride_det++;
                     total_detections++;
                 }
             }
         }
 
         if (g_debug) {
-            fprintf(stderr, "[Det10g] Stride %d: %d detections\n", stride, stride_detections);
+            fprintf(stderr, "[Det10g] Stride %d: %d detections\n", stride, stride_det);
         }
+    }
+
+    // Publicar landmarks para que el probe los dibuje
+    {
+        std::lock_guard<std::mutex> lk(g_lm_mutex);
+        g_landmarks = std::move(new_landmarks);
     }
 
     if (g_debug) {

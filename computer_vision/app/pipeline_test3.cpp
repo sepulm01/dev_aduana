@@ -34,6 +34,14 @@
 #define FACE_EMBEDDING_DIM 512
 #define FACE_MIN_BBOX_PX   30
 
+// Det10g landmark struct — mirror of the one in nvdsparsebbox_det10g.cpp
+#define DET10G_NUM_LANDMARKS 5
+struct Det10gLandmarks {
+    float pts[DET10G_NUM_LANDMARKS][2];
+};
+// Populated by the custom parser after each frame; read here to draw circles on OSD.
+extern "C" int Det10g_GetLandmarks(Det10gLandmarks* out, int max_count);
+
 #pragma pack(push, 1)
 struct FaceCropPacket {
     uint32_t device_id;
@@ -296,21 +304,91 @@ static bool send_face_crop(const FacePending& fp)
     return false;
 }
 
+// Colors for each of the 5 face landmarks:
+// 0=left-eye, 1=right-eye, 2=nose, 3=mouth-left, 4=mouth-right
+static const NvOSD_ColorParams LM_COLORS[DET10G_NUM_LANDMARKS] = {
+    {0.0, 1.0, 0.0, 1.0},   // green  — left eye
+    {0.0, 0.0, 1.0, 1.0},   // blue   — right eye
+    {1.0, 0.0, 0.0, 1.0},   // red    — nose
+    {1.0, 1.0, 0.0, 1.0},   // yellow — mouth left
+    {1.0, 0.5, 0.0, 1.0},   // orange — mouth right
+};
+
 static GstPadProbeReturn tiler_src_pad_buffer_probe(GstPad* pad, GstPadProbeInfo* info,
                                                       gpointer u_data)
 {
     GstBuffer* buf = (GstBuffer*)info->data;
     NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
-    guint vehicle_count = 0, person_count = 0;
+    if (!batch_meta) return GST_PAD_PROBE_OK;
+
+    // Read landmarks published by the custom parser for this batch
+    static const int MAX_DETS = 256;
+    Det10gLandmarks lm_buf[MAX_DETS];
+    int num_lm = Det10g_GetLandmarks(lm_buf, MAX_DETS);
+    if (num_lm <= 0) return GST_PAD_PROBE_OK;
+
+    // Scale factors: network space (640x640) → muxer output (1920x1080)
+    float net_w = 640.0f;
+    float net_h = 640.0f;
+    float out_w = (float)MUXER_OUTPUT_WIDTH;
+    float out_h = (float)MUXER_OUTPUT_HEIGHT;
+    float sx = out_w / net_w;
+    float sy = out_h / net_h;
+
+    // Count total objects across frames to index into lm_buf
+    int det_idx = 0;
 
     for (NvDsMetaList* lf = batch_meta->frame_meta_list; lf; lf = lf->next) {
         NvDsFrameMeta* fm = (NvDsFrameMeta*)lf->data;
+
+        // Count objects in this frame so we know how many landmark slots to consume
+        int obj_count = 0;
         for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
-            NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
-            if (om->class_id == PGIE_CLASS_ID_VEHICLE) vehicle_count++;
-            if (om->class_id == PGIE_CLASS_ID_PERSON) person_count++;
+            (void)lo;
+            obj_count++;
         }
+        if (obj_count == 0) continue;
+
+        // Allocate display meta for this frame (up to 16 circles per object × 5 lm)
+        int circles_needed = obj_count * DET10G_NUM_LANDMARKS;
+        NvDsDisplayMeta* dm = nvds_acquire_display_meta_from_pool(batch_meta);
+        dm->num_circles = 0;
+
+        int frame_det_start = det_idx;
+        int frame_obj = 0;
+
+        for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+            (void)lo;
+            int di = frame_det_start + frame_obj;
+            if (di >= num_lm) break;
+
+            const Det10gLandmarks& lm = lm_buf[di];
+
+            for (int k = 0; k < DET10G_NUM_LANDMARKS; ++k) {
+                if (dm->num_circles >= MAX_ELEMENTS_IN_DISPLAY_META) {
+                    // Need a new display meta block
+                    nvds_add_display_meta_to_frame(fm, dm);
+                    dm = nvds_acquire_display_meta_from_pool(batch_meta);
+                    dm->num_circles = 0;
+                }
+
+                NvOSD_CircleParams* cp = &dm->circle_params[dm->num_circles++];
+                cp->xc     = (guint)(lm.pts[k][0] * sx);
+                cp->yc     = (guint)(lm.pts[k][1] * sy);
+                cp->radius = 4;
+                cp->circle_color = LM_COLORS[k];
+                cp->has_bg_color = 1;
+                cp->bg_color     = LM_COLORS[k];
+            }
+            frame_obj++;
+        }
+
+        if (dm->num_circles > 0)
+            nvds_add_display_meta_to_frame(fm, dm);
+
+        det_idx += frame_obj;
     }
+
     return GST_PAD_PROBE_OK;
 }
 
@@ -961,6 +1039,17 @@ int main(int argc, char* argv[])
                           analytics_pad_probe, &probe_data, NULL);
         g_print("[Pipeline] Analytics probe added on nvdsanalytics src\n");
         gst_object_unref(probe_pad);
+    }
+
+    // Add landmark drawing probe on the tiler src pad (runs before nvosd)
+    if (show_display && tiler) {
+        GstPad* tiler_src = gst_element_get_static_pad(tiler, "src");
+        if (tiler_src) {
+            gst_pad_add_probe(tiler_src, GST_PAD_PROBE_TYPE_BUFFER,
+                              tiler_src_pad_buffer_probe, NULL, NULL);
+            g_print("[Pipeline] Landmark probe added on tiler src\n");
+            gst_object_unref(tiler_src);
+        }
     }
 
     g_mutex_init(&redis_mutex);

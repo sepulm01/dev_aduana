@@ -19,6 +19,7 @@ property:
   infer-dims: 3;640;640
   parse-bbox-func-name: NvDsInferParseCustomDet10g
   custom-lib-path: /opt/computer_vision/models/retinaface_det10g/libnvdsparsebbox_det10g.so
+  output-tensor-meta: 1
 
 
 class-attrs-all:
