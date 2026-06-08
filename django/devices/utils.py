@@ -91,22 +91,26 @@ def _get_redis():
 def restart_computer_vision(container_name=None):
     if container_name is None:
         container_name = COMPUTER_VISION_CONTAINER
+    _docker_control(container_name, "restart")
+
+
+def _docker_control(container_name, action):
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(15)
         sock.connect("/var/run/docker.sock")
         conn = http.client.HTTPConnection("localhost")
         conn.sock = sock
-        conn.request("POST", f"/containers/{container_name}/restart")
+        conn.request("POST", f"/containers/{container_name}/{action}")
         resp = conn.getresponse()
         resp.read()
         conn.close()
-        if resp.status == 204:
-            logger.info("Container %s restarted successfully", container_name)
+        if resp.status in (204, 304):
+            logger.info("Container %s %s successfully", container_name, action)
         else:
-            logger.error("Docker restart returned status %d for %s", resp.status, container_name)
+            logger.error("Docker %s returned status %d for %s", action, resp.status, container_name)
     except Exception as e:
-        logger.error("Failed to restart computer-vision: %s", e)
+        logger.error("Failed to %s container %s: %s", action, container_name, e)
 
 
 def regenerate_config_and_restart(pipeline_id=None):
@@ -126,8 +130,12 @@ def regenerate_config_and_restart(pipeline_id=None):
         ).exclude(stream_uris={})
     )
 
-    if not online_devices and not file_devices:
-        logger.warning("No online devices with stream URIs, skipping config regeneration")
+    all_devices = online_devices + file_devices
+
+    if not all_devices:
+        logger.warning("No devices with stream URIs, stopping all pipeline containers")
+        for pid in PIPELINE_CONTAINERS:
+            _docker_control(PIPELINE_CONTAINERS[pid], "stop")
         return
 
     mtx = MediaMTXAPI()
@@ -151,20 +159,23 @@ def regenerate_config_and_restart(pipeline_id=None):
     generate_all_configs(config_dir)
 
     r = _get_redis()
-    all_devices = online_devices + file_devices
     for pipeline_id_key in PIPELINE_CONTAINERS:
         pipeline_devices = [d for d in all_devices if d.deepstream_pipeline == pipeline_id_key]
         sources_key = f"deepstream:sources:{pipeline_id_key}"
+        container_name = PIPELINE_CONTAINERS[pipeline_id_key]
+
+        r.delete(sources_key)
         for idx, device in enumerate(pipeline_devices):
             uri = device.stream_uris.get(device.default_profile_token, "")
             r.hset(sources_key, str(idx), str(device.id))
             r.hset(sources_key, f"{idx}:camera_id", str(device.id))
             r.hset(sources_key, f"{idx}:url", uri)
 
-    logger.info("Configs regenerated for %d devices across all pipelines", len(all_devices))
+        if pipeline_devices:
+            if pipeline_id and pipeline_id != pipeline_id_key:
+                continue
+            _docker_control(container_name, "restart")
+        else:
+            _docker_control(container_name, "stop")
 
-    if pipeline_id:
-        restart_computer_vision(get_pipeline_container(pipeline_id))
-    else:
-        for pipeline_id_key in PIPELINE_CONTAINERS:
-            restart_computer_vision(PIPELINE_CONTAINERS[pipeline_id_key])
+    logger.info("Configs regenerated for %d devices across all pipelines", len(all_devices))
