@@ -59,7 +59,6 @@ computer_vision/app/pipeline-test3
 *.jpg
 *.png
 *.log
-*.txt
 *.cache
 *.bak
 *.tmp

@@ -20,7 +20,7 @@ INSTALLED_APPS = [
     "devices.apps.DevicesConfig",
     "live",
     "ptz",
-    "detections",
+    "detections.apps.DetectionsConfig",
     "notifications.apps.NotificationsConfig",
     "incidents.apps.IncidentsConfig",
     "operadores.apps.OperadoresConfig",
