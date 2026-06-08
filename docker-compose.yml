@@ -1,4 +1,4 @@
-name: st-security
+name:  mediamtx-manager
 
 services:
   postgres:
@@ -45,7 +45,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models:ro
       - ./deepstream-service/app/config:/opt/deepstream-app/config:rw
       - ./django/media:/app/media
     depends_on:
@@ -81,7 +80,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,7 +96,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -286,29 +283,29 @@ services:
       - ./computer_vision/models:/opt/computer_vision/models:ro
     command: ["../app/pipeline-test3", "./config_det10g.yml"]
 
-  # # pipeline2: YOLO v9 — PGIE only, requires DeepStream-Yolo custom lib
-  # # Cameras assigned via Device.deepstream_pipeline="yolov9"
-  # computer-vision-yolov9:
-  #   build: ./computer_vision
-  #   restart: unless-stopped
-  #   runtime: nvidia
-  #   environment:
-  #     - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-  #     - DISPLAY=${DISPLAY}
-  #     - NVIDIA_VISIBLE_DEVICES=all
-  #     - NVIDIA_DRIVER_CAPABILITIES=all
-  #     - GST_DEBUG=1
-  #     - no_proxy=*
-  #     - NO_PROXY=*
-  #     - GIO_USE_PROXY_RESOLVER=none
-  #     - GIO_MODULE_DIR=/dev/null
-  #   volumes:
-  #     - /tmp/.X11-unix:/tmp/.X11-unix:rw
-  #     - /var/www/dev_security/videos:/opt/videos:ro
-  #     - /dev/dri:/dev/dri:rw
-  #     - ./computer_vision/config:/opt/computer_vision/config:rw
-  #     - ./computer_vision/models:/opt/computer_vision/models:ro
-  #   command: ["../app/pipeline-test3", "./config_yolov9.yml"]
+  # pipeline4: YOLO v9 — PGIE only, uses DeepStream-Yolo custom lib
+  computer-vision-yolov9:
+    build: ./computer_vision
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - GST_DEBUG=1
+      - no_proxy=*
+      - NO_PROXY=*
+      - GIO_USE_PROXY_RESOLVER=none
+      - GIO_MODULE_DIR=/dev/null
+      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:yolov9
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /var/www/dev_security/videos:/opt/videos:ro
+      - /dev/dri:/dev/dri:rw
+      - ./computer_vision/config:/opt/computer_vision/config:rw
+      - ./computer_vision/models:/opt/computer_vision/models:ro
+    command: ["../app/pipeline-test3", "./config_yolov9.yml"]
 
   nginx:
     image: nginx:alpine

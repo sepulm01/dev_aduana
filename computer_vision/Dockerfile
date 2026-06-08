@@ -7,6 +7,12 @@ RUN apt-get update && apt-get install -y \
     libhiredis-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN git clone https://github.com/marcoslucianops/DeepStream-Yolo.git \
+    /opt/nvidia/deepstream/deepstream/DeepStream-Yolo
+WORKDIR /opt/nvidia/deepstream/deepstream/DeepStream-Yolo
+ENV CUDA_VER=12.8
+RUN make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yolo
+
 COPY . /opt/computer_vision/
 
 RUN g++ -std=c++11 -shared -fPIC \

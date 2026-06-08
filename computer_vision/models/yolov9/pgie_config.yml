@@ -6,9 +6,9 @@ property:
   gpu-id: 0
   net-scale-factor: 0.0039215697906911373
   model-color-format: 0
-  onnx-file: ../models/yolov9/yolov9-e-converted.pt.onnx
-  model-engine-file: ../models/yolov9/model_b3_gpu0_fp32.engine
-  labelfile-path: ../models/yolov9/labels.txt
+  onnx-file: yolov9-e-converted.pt.onnx
+  model-engine-file: model_b3_gpu0_fp32.engine
+  labelfile-path: labels.txt
   batch-size: 3
   network-mode: 0
   num-detected-classes: 80

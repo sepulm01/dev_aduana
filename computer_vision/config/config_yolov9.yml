@@ -1,5 +1,5 @@
 source-list:
-  list: ""
+  list: "file:///opt/videos/lpr.mp4;"
 
 streammux:
   batch-size: 1
