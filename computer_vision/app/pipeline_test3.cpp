@@ -91,6 +91,28 @@ static int yaml_read_int(const gchar* file, const gchar* key, int default_val)
     return result;
 }
 
+static void yaml_read_labels(const gchar* file, std::vector<std::string>& out)
+{
+    FILE* fp = fopen(file, "r");
+    if (!fp) return;
+    gchar line[8192];
+    while (fgets(line, sizeof(line), fp)) {
+        if (strncmp(line, "labels:", 7) != 0) continue;
+        gchar* val = line + 7;
+        while (*val == ' ') val++;
+        gchar* end = val + strlen(val) - 1;
+        while (end > val && (*end == '\n' || *end == '\r')) end--;
+        *(end + 1) = '\0';
+        gchar* tok = strtok(val, ";");
+        while (tok) {
+            out.push_back(std::string(tok));
+            tok = strtok(NULL, ";");
+        }
+        break;
+    }
+    fclose(fp);
+}
+
 #define MAX_DISPLAY_LEN 64
 #define PGIE_CLASS_ID_VEHICLE 0
 #define PGIE_CLASS_ID_PERSON 2
@@ -113,12 +135,13 @@ static int yaml_read_int(const gchar* file, const gchar* key, int default_val)
 
 gchar pgie_classes_str[4][32] = {"Vehicle", "TwoWheeler", "Person", "RoadSign"};
 static int g_face_class_id = 2;
+static gboolean g_lpr_mode = FALSE;
 static gboolean PERF_MODE = FALSE;
 static GMutex redis_mutex;
 static redisContext* pub_ctx = NULL;
 static int source_to_device[MAX_SOURCES];
 static guint64 frame_counts[MAX_SOURCES];
-static const char* g_labels[] = {"person", "bag", "face"};
+static std::vector<std::string> g_labels;
 static const char* g_sources_key = "deepstream:sources:main";
 
 static NvDsObjEncCtxHandle g_face_enc_ctx = NULL;
@@ -408,8 +431,9 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 int rx2 = (int)((left + width) / fw * 1600);
                 int ry2 = (int)((top + height) / fh * 900);
 
-                const char* label = g_labels[om->class_id < 3 ? om->class_id : 0];
-                const char* id_field = (om->class_id == 0 || om->class_id == 2)
+                const char* label = om->class_id < (int)g_labels.size()
+                    ? g_labels[om->class_id].c_str() : "unknown";
+                const char* id_field = (strstr(label, "person") || strstr(label, "face"))
                     ? "HumamID" : "VehicleID";
 
                 off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
@@ -493,6 +517,20 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
 
                         off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
                             ",\"direction\":\"%s\"", aoi->dirStatus.c_str());
+                    }
+                }
+
+                if (g_lpr_mode) {
+                    for (NvDsMetaList* lc = om->classifier_meta_list; lc; lc = lc->next) {
+                        NvDsClassifierMeta* cm = (NvDsClassifierMeta*)lc->data;
+                        if (cm->unique_component_id != 3) continue;
+                        for (NvDsMetaList* ll = cm->label_info_list; ll; ll = ll->next) {
+                            NvDsLabelInfo* li = (NvDsLabelInfo*)ll->data;
+                            if (li->result_label && li->result_label[0]) {
+                                off += g_snprintf(json_buf + off, sizeof(json_buf) - off,
+                                    ",\"plate\":\"%s\"", li->result_label);
+                            }
+                        }
                     }
                 }
 
@@ -766,7 +804,10 @@ int main(int argc, char* argv[])
     }
 
     g_face_class_id = yaml_read_int(argv[1], "face-class-id", 2);
-    g_print("[Pipeline] Face class ID: %d\n", g_face_class_id);
+    g_lpr_mode = yaml_read_int(argv[1], "lpr-pipeline", 0) ? TRUE : FALSE;
+    yaml_read_labels(argv[1], g_labels);
+    g_print("[Pipeline] Face class ID: %d LPR mode: %s labels: %d\n",
+            g_face_class_id, g_lpr_mode ? "yes" : "no", (int)g_labels.size());
 
     pipeline = gst_pipeline_new("analytics-pipeline");
     streammux = gst_element_factory_make("nvstreammux", "stream-muxer");
@@ -958,12 +999,16 @@ int main(int argc, char* argv[])
     probe_data.last_snap_time = 0;
 
     if (sgie0 || sgie1) {
-        g_face_enc_ctx = nvds_obj_enc_create_context(0);
-        if (g_face_enc_ctx)
-            g_print("[Face] Encoder context created\n");
-        else
-            g_printerr("[Face] Failed to create encoder context\n");
-        connect_face_receiver();
+        if (g_lpr_mode) {
+            g_print("[LPR] SGIE pipeline detected, skipping face encoder\n");
+        } else {
+            g_face_enc_ctx = nvds_obj_enc_create_context(0);
+            if (g_face_enc_ctx)
+                g_print("[Face] Encoder context created\n");
+            else
+                g_printerr("[Face] Failed to create encoder context\n");
+            connect_face_receiver();
+        }
     }
 
     if (probe_pad) {

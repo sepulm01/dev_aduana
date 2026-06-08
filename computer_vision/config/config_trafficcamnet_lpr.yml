@@ -1,5 +1,7 @@
+lpr-pipeline: 1
+
 source-list:
-  list: ""
+  list: "file:///opt/videos/lpr.mp4;"
 
 streammux:
   batch-size: 1
@@ -7,19 +9,20 @@ streammux:
   width: 1920
   height: 1080
 
-labels: face
+labels: car;bicycle;person;road_sign
 
 primary-gie:
   plugin-type: 0
-  config-file-path: ../models/facerec/pgie_config.yml
+  config-file-path: ../models/trafficcamnet/pgie_config.yml
 
 secondary-gie0:
   plugin-type: 0
-  config-file-path: ../models/facerec/sgie0_config.yml
+  config-file-path: ../models/trafficcamnet/lpd/sgie_config.yml
 
 secondary-gie1:
   plugin-type: 0
-  config-file-path: ../models/facerec/sgie1_config.yml
+  config-file-path: ../models/trafficcamnet/lpr/sgie_config.yml
+
 analytics:
   enable: 1
   config-file: config_nvdsanalytics.txt

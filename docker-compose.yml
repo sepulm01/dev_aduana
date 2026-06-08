@@ -1,4 +1,4 @@
-name: mediamtx-manager
+name: st-security
 
 services:
   postgres:
@@ -45,6 +45,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
+      - ./computer_vision/models:/opt/computer_vision/models:ro
       - ./deepstream-service/app/config:/opt/deepstream-app/config:rw
       - ./django/media:/app/media
     depends_on:
@@ -80,6 +81,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
+      - ./computer_vision/models:/opt/computer_vision/models:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,6 +98,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
+      - ./computer_vision/models:/opt/computer_vision/models:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -234,6 +237,30 @@ services:
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models:ro
     command: ["../app/pipeline-test3", "./config_facerec.yml"]
+
+  # pipeline3: TrafficCamNet + LPD + LPR — License plate reading
+  computer-vision-lpr:
+    build: ./computer_vision
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - ENABLE_DISPLAY=1
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - GST_DEBUG=1
+      - no_proxy=*
+      - NO_PROXY=*
+      - GIO_USE_PROXY_RESOLVER=none
+      - GIO_MODULE_DIR=/dev/null
+      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:trafficcamnet_lpr
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /var/www/dev_security/videos:/opt/videos:ro
+      - /dev/dri:/dev/dri:rw
+      - ./computer_vision/config:/opt/computer_vision/config:rw
+      - ./computer_vision/models:/opt/computer_vision/models:rw
+    command: ["../app/pipeline-test3", "./config_trafficcamnet_lpr.yml"]
 
   # pipeline2: RetinaFace det_10g — PGIE only with custom bbox parser
   # Standalone face detection pipeline

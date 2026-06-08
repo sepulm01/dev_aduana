@@ -28,6 +28,7 @@ class Device(models.Model):
         ("main", "Peoplenet"),
         ("facerec", "Face Recognition"),
         ("yolov9", "YOLO v9"),
+        ("trafficcamnet_lpr", "TrafficCamNet + LPR"),
     ]
     deepstream_pipeline = models.CharField(
         max_length=20,

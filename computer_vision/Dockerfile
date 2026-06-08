@@ -9,6 +9,11 @@ RUN apt-get update && apt-get install -y \
 
 COPY . /opt/computer_vision/
 
+RUN g++ -std=c++11 -shared -fPIC \
+    -I/opt/nvidia/deepstream/deepstream/sources/includes \
+    -o /opt/computer_vision/models/trafficcamnet/lpr/libnvdsinfer_custom_impl_lpr.so \
+    /opt/computer_vision/models/trafficcamnet/lpr/nvinfer_custom_lpr_parser.cpp
+
 WORKDIR /opt/computer_vision/app
 ENV CUDA_VER=12.8
 RUN make

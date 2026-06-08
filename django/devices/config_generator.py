@@ -29,6 +29,20 @@ PIPELINE_CONFIGS = {
         "container": "mediamtx-manager-computer-vision-yolov9-1",
         "models_dir": "../models/yolov9",
     },
+    "trafficcamnet_lpr": {
+        "filename": "config_trafficcamnet_lpr.yml",
+        "container": "mediamtx-manager-computer-vision-lpr-1",
+        "models_dir": "../models/trafficcamnet",
+        "sgie_sections": (
+            "secondary-gie0:\n"
+            "  plugin-type: 0\n"
+            "  config-file-path: ../models/trafficcamnet/lpd/sgie_config.yml\n"
+            "\n"
+            "secondary-gie1:\n"
+            "  plugin-type: 0\n"
+            "  config-file-path: ../models/trafficcamnet/lpr/sgie_config.yml\n"
+        ),
+    },
 }
 
 
@@ -38,6 +52,14 @@ def get_pipeline_filename(pipeline_id):
 
 def get_pipeline_container(pipeline_id):
     return PIPELINE_CONFIGS[pipeline_id]["container"]
+
+
+def _read_labels(pipeline_id, config_dir):
+    pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
+    models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
+    labels_path = os.path.normpath(os.path.join(config_dir, models_dir, "labels.txt"))
+    with open(labels_path) as f:
+        return ";".join(line.strip() for line in f if line.strip())
 
 
 def _shapes_to_nvdsanalytics(shapes, stream_idx=0, prefix=""):
@@ -170,6 +192,7 @@ def generate_config(devices, output_path, pipeline_id="main"):
     pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
     models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
     sgie_sections = pipeline_cfg.get("sgie_sections", "")
+    labels = _read_labels(pipeline_id, config_dir)
 
     config_dir = os.path.dirname(output_path)
     os.makedirs(config_dir, exist_ok=True)
@@ -182,6 +205,8 @@ streammux:
   batched-push-timeout: 40000
   width: 1920
   height: 1080
+
+labels: {labels}
 
 primary-gie:
   plugin-type: 0
@@ -253,6 +278,8 @@ def write_empty_config(output_path, pipeline_id):
     config_dir = os.path.dirname(output_path)
     os.makedirs(config_dir, exist_ok=True)
 
+    labels = _read_labels(pipeline_id, config_dir)
+
     config = f"""source-list:
   list: ""
 
@@ -261,6 +288,8 @@ streammux:
   batched-push-timeout: 40000
   width: 1920
   height: 1080
+
+labels: {labels}
 
 primary-gie:
   plugin-type: 0

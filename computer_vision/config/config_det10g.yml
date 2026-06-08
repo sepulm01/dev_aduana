@@ -9,6 +9,8 @@ streammux:
   width: 1920
   height: 1080
 
+labels: face
+
 primary-gie:
   plugin-type: 0
   config-file-path: ../models/retinaface_det10g/pgie_config.yml

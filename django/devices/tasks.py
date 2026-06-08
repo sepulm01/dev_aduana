@@ -33,7 +33,7 @@ def _broadcast_device_status(device_id, online):
 def orchestrate_cameras():
     r = _get_redis()
     sources = {}
-    for pipeline_id in ("main", "facerec", "yolov9"):
+    for pipeline_id in ("main", "facerec", "yolov9", "trafficcamnet_lpr"):
         data = r.hgetall(f"deepstream:sources:{pipeline_id}")
         for k, v in data.items():
             if isinstance(k, bytes):
