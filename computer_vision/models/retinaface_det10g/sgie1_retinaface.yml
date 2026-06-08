@@ -1,5 +1,3 @@
-# det10g pipeline — SGIE1: ArcFace 512-d embedding (w600k_r50)
-# Operates on face bboxes (class_id=0) from PGIE det_10g
 property:
   gpu-id: 0
   onnx-file: w600k_r50.onnx

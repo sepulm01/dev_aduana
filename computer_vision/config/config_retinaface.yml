@@ -17,11 +17,11 @@ primary-gie:
 
 secondary-gie0:
   plugin-type: 0
-  config-file-path: ../models/facerec/sgie0_det10g.yml
+  config-file-path: ../models/retinaface_det10g/sgie0_retinaface.yml
 
 secondary-gie1:
   plugin-type: 0
-  config-file-path: ../models/facerec/sgie1_det10g.yml
+  config-file-path: ../models/retinaface_det10g/sgie1_retinaface.yml
 
 osd:
   process-mode: 0
@@ -33,4 +33,3 @@ tiler:
 
 sink:
   qos: 0
-  type: 4

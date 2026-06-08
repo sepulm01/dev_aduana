@@ -210,9 +210,8 @@ services:
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models:ro
 
-  # pipeline1: Face Recognition — det_10g PGIE + 2d106det SGIE0 + w600k_r50 SGIE1
-  # Cameras assigned via Device.deepstream_pipeline="facerec"
-  computer-vision-facerec:
+  # pipeline2: Face Recognition — retinaface_det10g PGIE + 2d106det SGIE0 + w600k_r50 SGIE1
+  computer-vision-retinaface:
     build: ./computer_vision
     restart: unless-stopped
     runtime: nvidia
@@ -233,7 +232,7 @@ services:
       - /dev/dri:/dev/dri:rw
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models:ro
-    command: ["../app/pipeline-test3", "./config_facerec.yml"]
+    command: ["../app/pipeline-test3", "./config_retinaface.yml"]
 
   # pipeline3: TrafficCamNet + LPD + LPR — License plate reading
   computer-vision-lpr:
@@ -258,30 +257,6 @@ services:
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models:rw
     command: ["../app/pipeline-test3", "./config_trafficcamnet_lpr.yml"]
-
-  # pipeline2: RetinaFace det_10g — PGIE only with custom bbox parser
-  # Standalone face detection pipeline
-  computer-vision-det10g:
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models:ro
-    command: ["../app/pipeline-test3", "./config_det10g.yml"]
 
   # pipeline4: YOLO v9 — PGIE only, uses DeepStream-Yolo custom lib
   computer-vision-yolov9:

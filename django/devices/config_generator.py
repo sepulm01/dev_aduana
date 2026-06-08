@@ -11,17 +11,18 @@ PIPELINE_CONFIGS = {
         "models_dir": "../models/peoplenet",
     },
     "facerec": {
-        "filename": "config_facerec.yml",
-        "container": "mediamtx-manager-computer-vision-facerec-1",
-        "models_dir": "../models/facerec",
+        "filename": "config_retinaface.yml",
+        "container": "mediamtx-manager-computer-vision-retinaface-1",
+        "models_dir": "../models/retinaface_det10g",
+        "extra_yaml": "face-class-id: 0\n",
         "sgie_sections": (
             "secondary-gie0:\n"
             "  plugin-type: 0\n"
-            "  config-file-path: ../models/facerec/sgie0_config.yml\n"
+            "  config-file-path: ../models/retinaface_det10g/sgie0_retinaface.yml\n"
             "\n"
             "secondary-gie1:\n"
             "  plugin-type: 0\n"
-            "  config-file-path: ../models/facerec/sgie1_config.yml\n"
+            "  config-file-path: ../models/retinaface_det10g/sgie1_retinaface.yml\n"
         ),
     },
     "yolov9": {
@@ -192,12 +193,13 @@ def generate_config(devices, output_path, pipeline_id="main"):
     pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
     models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
     sgie_sections = pipeline_cfg.get("sgie_sections", "")
+    extra_yaml = pipeline_cfg.get("extra_yaml", "")
     labels = _read_labels(pipeline_id, config_dir)
 
     config_dir = os.path.dirname(output_path)
     os.makedirs(config_dir, exist_ok=True)
 
-    config = f"""source-list:
+    config = f"""{extra_yaml}source-list:
   list: "{source_list}"
 
 streammux:
@@ -274,13 +276,14 @@ def write_empty_config(output_path, pipeline_id):
     pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
     models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
     sgie_sections = pipeline_cfg.get("sgie_sections", "")
+    extra_yaml = pipeline_cfg.get("extra_yaml", "")
 
     config_dir = os.path.dirname(output_path)
     os.makedirs(config_dir, exist_ok=True)
 
     labels = _read_labels(pipeline_id, config_dir)
 
-    config = f"""source-list:
+    config = f"""{extra_yaml}source-list:
   list: ""
 
 streammux:

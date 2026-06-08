@@ -15,7 +15,7 @@ COMPUTER_VISION_CONTAINER = "mediamtx-manager-computer-vision-1"
 
 PIPELINE_CONTAINERS = {
     "main": "mediamtx-manager-computer-vision-1",
-    "facerec": "mediamtx-manager-computer-vision-facerec-1",
+    "facerec": "mediamtx-manager-computer-vision-retinaface-1",
     "yolov9": "mediamtx-manager-computer-vision-yolov9-1",
     "trafficcamnet_lpr": "mediamtx-manager-computer-vision-lpr-1",
 }
