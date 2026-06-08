@@ -1,7 +1,5 @@
-lpr-pipeline: 1
-
 source-list:
-  list: "file:///opt/videos/lpr.mp4;"
+  list: ""
 
 streammux:
   batch-size: 1
@@ -22,7 +20,6 @@ secondary-gie0:
 secondary-gie1:
   plugin-type: 0
   config-file-path: ../models/trafficcamnet/lpr/sgie_config.yml
-
 analytics:
   enable: 1
   config-file: config_nvdsanalytics.txt
