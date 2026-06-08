@@ -7,8 +7,6 @@ streammux:
   width: 1920
   height: 1080
 
-labels: Person;Bag;Face
-
 primary-gie:
   plugin-type: 0
   config-file-path: ../models/peoplenet/pgie_config.yml

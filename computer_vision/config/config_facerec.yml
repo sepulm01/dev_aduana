@@ -7,8 +7,6 @@ streammux:
   width: 1920
   height: 1080
 
-labels: face
-
 primary-gie:
   plugin-type: 0
   config-file-path: ../models/facerec/pgie_config.yml
