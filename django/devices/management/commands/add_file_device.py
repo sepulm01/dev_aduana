@@ -12,8 +12,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--pipeline",
             type=str,
-            default="facerec",
-            choices=["main", "facerec", "yolov9"],
+            default="retinaface",
+            choices=["main", "retinaface", "yolov9"],
             help="DeepStream pipeline (default: facerec)",
         )
 

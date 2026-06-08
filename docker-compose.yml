@@ -26,6 +26,7 @@ services:
     image: bluenviron/mediamtx:latest-ffmpeg
     volumes:
       - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+      - /var/www/dev_security/videos:/opt/videos:ro
     ports:
       - "8554:8554"
       - "8889:8889"
@@ -45,6 +46,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
+      - ./computer_vision/models:/opt/computer_vision/models:ro
       - ./deepstream-service/app/config:/opt/deepstream-app/config:rw
       - ./django/media:/app/media
     depends_on:
@@ -80,6 +82,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
+      - ./computer_vision/models:/opt/computer_vision/models:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,6 +99,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
+      - ./computer_vision/models:/opt/computer_vision/models:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -225,7 +229,7 @@ services:
       - NO_PROXY=*
       - GIO_USE_PROXY_RESOLVER=none
       - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:facerec
+      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /var/www/dev_security/videos:/opt/videos:ro

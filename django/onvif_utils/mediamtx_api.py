@@ -186,3 +186,39 @@ class MediaMTXAPI:
                 existing.add(hw_name)
             except requests.RequestException as e:
                 print(f"Error adding path {hw_name}: {e}")
+
+    def ensure_file_stream(self, device):
+        """Publish an MP4 file as a continuous RTSP stream via MediaMTX.
+
+        The file is looped with ``-stream_loop -1`` and published to
+        ``cam_{device_id}_{token}``. Both DeepStream and WebRTC consume
+        this single source, keeping detections in sync with the preview.
+        """
+        token = device.default_profile_token or "main"
+        file_uri = device.stream_uris.get(token, "")
+        if not file_uri:
+            return
+
+        path_name = f"cam_{device.id}_{token}"
+        all_paths = self.list_paths()
+        existing = {p["name"] for p in all_paths}
+
+        if path_name in existing:
+            return
+
+        file_path = file_uri.replace("file://", "")
+        ffmpeg_cmd = (
+            f"ffmpeg -re -stream_loop -1 -i {file_path} "
+            f"-c:v libx264 -preset ultrafast -tune zerolatency -c:a aac "
+            f'-f rtsp "rtsp://127.0.0.1:8554/{path_name}"'
+        )
+
+        try:
+            self.add_path(
+                path_name,
+                source="publisher",
+                run_on_init=ffmpeg_cmd,
+                run_on_init_restart=True,
+            )
+        except requests.RequestException as e:
+            print(f"Error adding file path {path_name}: {e}")

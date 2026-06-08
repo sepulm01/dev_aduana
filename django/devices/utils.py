@@ -15,7 +15,7 @@ COMPUTER_VISION_CONTAINER = "mediamtx-manager-computer-vision-1"
 
 PIPELINE_CONTAINERS = {
     "main": "mediamtx-manager-computer-vision-1",
-    "facerec": "mediamtx-manager-computer-vision-retinaface-1",
+    "retinaface": "mediamtx-manager-computer-vision-retinaface-1",
     "yolov9": "mediamtx-manager-computer-vision-yolov9-1",
     "trafficcamnet_lpr": "mediamtx-manager-computer-vision-lpr-1",
 }
@@ -140,6 +140,12 @@ def regenerate_config_and_restart(pipeline_id=None):
                 )
             except Exception:
                 pass
+
+    for device in file_devices:
+        try:
+            mtx.ensure_file_stream(device)
+        except Exception:
+            pass
 
     config_dir = os.path.dirname(CONFIG_YML_PATH)
     generate_all_configs(config_dir)

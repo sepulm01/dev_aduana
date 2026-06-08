@@ -22,11 +22,12 @@ DEFAULT_CAMERA_SPECS = {
 def build_stream_context(device, profile_token, host_header=None):
     is_file_source = getattr(device, "source_type", "rtsp") == "file"
 
-    stream_name = f"cam_{device.id}_{profile_token}_hw" if profile_token and not is_file_source else ""
-    if profile_token and not is_file_source:
+    stream_name = ""
+    webrtc_url = ""
+    if profile_token:
+        suffix = "" if is_file_source else "_hw"
+        stream_name = f"cam_{device.id}_{profile_token}{suffix}"
         webrtc_url = f"/stream/{stream_name}/"
-    else:
-        webrtc_url = ""
 
     specs = {**DEFAULT_CAMERA_SPECS, **(device.camera_specs or {})}
 

@@ -10,7 +10,7 @@ PIPELINE_CONFIGS = {
         "container": "mediamtx-manager-computer-vision-1",
         "models_dir": "../models/peoplenet",
     },
-    "facerec": {
+    "retinaface": {
         "filename": "config_retinaface.yml",
         "container": "mediamtx-manager-computer-vision-retinaface-1",
         "models_dir": "../models/retinaface_det10g",
@@ -185,6 +185,9 @@ def generate_config(devices, output_path, pipeline_id="main"):
         uri = device.stream_uris.get(device.default_profile_token, "")
         if not uri:
             continue
+        if device.source_type == "file":
+            token = device.default_profile_token
+            uri = f"rtsp://mediamtx:8554/cam_{device.id}_{token}"
         uris.append(uri)
 
     source_list = ";".join(uris) + ";" if uris else ""
@@ -194,10 +197,11 @@ def generate_config(devices, output_path, pipeline_id="main"):
     models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
     sgie_sections = pipeline_cfg.get("sgie_sections", "")
     extra_yaml = pipeline_cfg.get("extra_yaml", "")
-    labels = _read_labels(pipeline_id, config_dir)
 
     config_dir = os.path.dirname(output_path)
     os.makedirs(config_dir, exist_ok=True)
+
+    labels = _read_labels(pipeline_id, config_dir)
 
     config = f"""{extra_yaml}source-list:
   list: "{source_list}"

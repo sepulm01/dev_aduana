@@ -1,7 +1,6 @@
 face-class-id: 0
-
 source-list:
-  list: "file:///opt/videos/prada.mp4;"
+  list: "rtsp://mediamtx:8554/cam_3_main;"
 
 streammux:
   batch-size: 1
@@ -22,6 +21,9 @@ secondary-gie0:
 secondary-gie1:
   plugin-type: 0
   config-file-path: ../models/retinaface_det10g/sgie1_retinaface.yml
+analytics:
+  enable: 1
+  config-file: config_nvdsanalytics.txt
 
 osd:
   process-mode: 0

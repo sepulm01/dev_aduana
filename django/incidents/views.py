@@ -109,6 +109,7 @@ def incident_ack(request, incident_id):
 @login_required
 def incident_dashboard(request):
     from live.views import build_stream_context
+    from devices.models import Device
 
     active_incidents = Incident.objects.filter(
         status="active"
@@ -127,8 +128,17 @@ def incident_dashboard(request):
             "webrtc_url": ctx.get("webrtc_url", ""),
         })
 
+    all_devices = Device.objects.all()
+    kpis = {
+        "total_cameras": all_devices.count(),
+        "online_cameras": all_devices.filter(is_online=True).count(),
+        "with_analytics": all_devices.exclude(deepstream_pipeline="").count(),
+        "active_incidents": active_incidents.count(),
+    }
+
     return render(request, "incidents/dashboard.html", {
         "incidents_data": incidents_data,
+        "kpis": kpis,
     })
 
 

@@ -2,8 +2,44 @@
 {% block title %}Dashboard de Incidentes{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h2 class="page-title"><i class="ti ti-alert-triangle me-2"></i>Incidentes Activos</h2>
+    <h2 class="page-title"><i class="ti ti-alert-triangle me-2"></i>Incidentes</h2>
 </div>
+
+<div class="row row-cards mb-3">
+    <div class="col-sm-6 col-lg-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">Cámaras totales</div>
+                <div class="h1 m-0">{{ kpis.total_cameras }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">En línea</div>
+                <div class="h1 m-0">{{ kpis.online_cameras }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">Con analítica</div>
+                <div class="h1 m-0">{{ kpis.with_analytics }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">Incidentes activos</div>
+                <div class="h1 m-0">{{ kpis.active_incidents }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% if incidents_data %}
 <div class="row">
     {% for item in incidents_data %}

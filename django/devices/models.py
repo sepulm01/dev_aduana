@@ -26,9 +26,10 @@ class Device(models.Model):
     deepstream_enabled = models.BooleanField(default=False)
     PIPELINE_CHOICES = [
         ("main", "Peoplenet"),
-        ("facerec", "Face Recognition"),
+        ("retinaface", "Face Recognition"),
         ("yolov9", "YOLO v9"),
         ("trafficcamnet_lpr", "TrafficCamNet + LPR"),
+        ("", "Sin pipeline"),
     ]
     deepstream_pipeline = models.CharField(
         max_length=20,
