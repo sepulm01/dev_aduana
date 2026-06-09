@@ -11,4 +11,5 @@ urlpatterns = [
     path("", include("incidents.urls")),
     path("", include("operadores.urls")),
     path("", include("detections.urls")),
+    path("monitoring/", include("monitoring.urls")),
 ]

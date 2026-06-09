@@ -110,4 +110,9 @@ urlpatterns = [
         views.edit_stream_uris,
         name="edit_stream_uris",
     ),
+    path(
+        "api/devices/<int:device_id>/configure-snmp/",
+        views.configure_snmp,
+        name="configure_snmp",
+    ),
 ]

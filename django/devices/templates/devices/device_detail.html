@@ -55,6 +55,22 @@
                             <option value="" {% if device.deepstream_pipeline == "" %}selected{% endif %}>Sin pipeline</option>
                         </select>
                     </dd>
+                    <dt>SNMP</dt>
+                    <dd>
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="snmpEnabled"
+                                    {% if device.snmp_enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="snmpEnabled">Habilitado</label>
+                            </div>
+                            <input type="text" class="form-control form-control-sm" id="snmpCommunity"
+                                value="{{ device.snmp_community|default:'public' }}" placeholder="community"
+                                style="max-width:100px">
+                            <input type="number" class="form-control form-control-sm" id="snmpPort"
+                                value="{{ device.snmp_port|default:161 }}" placeholder="161"
+                                style="max-width:70px">
+                        </div>
+                    </dd>
                 </dl>
             </div>
         </div>
@@ -513,6 +529,22 @@ document.getElementById('pipelineSelect').addEventListener('change', async funct
     });
     location.reload();
 });
+
+function saveSnmpConfig() {
+    fetch('/api/devices/' + DEVICE_ID + '/configure-snmp/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            snmp_enabled: document.getElementById('snmpEnabled').checked,
+            snmp_community: document.getElementById('snmpCommunity').value,
+            snmp_port: parseInt(document.getElementById('snmpPort').value) || 161,
+        }),
+    });
+}
+
+document.getElementById('snmpEnabled').addEventListener('change', saveSnmpConfig);
+document.getElementById('snmpCommunity').addEventListener('change', saveSnmpConfig);
+document.getElementById('snmpPort').addEventListener('change', saveSnmpConfig);
 
 renderCapabilities();
 loadProfiles();

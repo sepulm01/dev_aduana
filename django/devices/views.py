@@ -949,3 +949,17 @@ def edit_stream_uris(request, device_id):
         device.save(update_fields=["stream_uris"])
         return JsonResponse({"ok": True})
     return JsonResponse({"error": "POST required"}, status=405)
+
+
+@login_required
+@csrf_exempt
+def configure_snmp(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+    if request.method == "POST":
+        data = json.loads(request.body) if request.body else {}
+        device.snmp_enabled = data.get("snmp_enabled", False)
+        device.snmp_community = data.get("snmp_community", "public")
+        device.snmp_port = data.get("snmp_port", 161)
+        device.save(update_fields=["snmp_enabled", "snmp_community", "snmp_port"])
+        return JsonResponse({"ok": True})
+    return JsonResponse({"error": "POST required"}, status=405)

@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+{% block title %}Monitoreo{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2 class="page-title"><i class="ti ti-chart-bar me-2"></i>Monitoreo</h2>
+</div>
+
+<div class="row row-cards mb-3" id="kpiRow">
+    <div class="col-sm-6 col-lg-2">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">CPU</div>
+                <div class="h1 m-0" id="kpiCpu">-</div>
+                <div class="text-muted small" id="kpiCpuLoad">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-2">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">RAM</div>
+                <div class="h2 m-0" id="kpiRam">-</div>
+                <div class="text-muted small" id="kpiRamDetail">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-2">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">GPU</div>
+                <div class="h2 m-0" id="kpiGpuUtil">-</div>
+                <div class="text-muted small" id="kpiGpuMem">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-2">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">Disco</div>
+                <div class="h2 m-0" id="kpiDiskPct">-</div>
+                <div class="text-muted small" id="kpiDiskDetail">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-2">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">Streams</div>
+                <div class="h1 m-0" id="kpiStreams">-</div>
+                <div class="text-muted small" id="kpiReaders">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-2">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">RTP Loss</div>
+                <div class="h1 m-0" id="kpiLoss">-</div>
+                <div class="text-muted small" id="kpiJitter">-</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">CPU / RAM</h3></div>
+            <div class="card-body">
+                <canvas id="chartCpuRam" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">GPU</h3></div>
+            <div class="card-body">
+                <canvas id="chartGpu" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if latest_mediamtx %}
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Streams MediaMTX</h3>
+                <span class="text-muted small" id="streamsUpdated"></span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-vcenter card-table" id="streamsTable">
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Estado</th>
+                            <th>Tracks</th>
+                            <th>Readers</th>
+                            <th>Inbound</th>
+                            <th>Outbound</th>
+                            <th>Errores</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="row mb-3" id="snmpRow" style="display:none">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title"><i class="ti ti-network me-2"></i>Dispositivos SNMP</h3>
+                <span class="text-muted small" id="snmpUpdated"></span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-vcenter card-table" id="snmpTable">
+                    <thead>
+                        <tr>
+                            <th>Dispositivo</th>
+                            <th>Host</th>
+                            <th>SysName</th>
+                            <th>Uptime</th>
+                            <th>Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+<script>
+let chartCpuRam, chartGpu;
+
+function buildCharts() {
+    const dark = '#94a3b8';
+    const grid = 'rgba(148,163,184,0.1)';
+
+    chartCpuRam = new Chart(document.getElementById('chartCpuRam'), {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'CPU %', borderColor: '#4299e1', backgroundColor: 'rgba(66,153,225,0.1)',
+                    data: [], fill: true, tension: 0.3, pointRadius: 0
+                },
+                {
+                    label: 'RAM %', borderColor: '#f59f00', backgroundColor: 'rgba(245,159,0,0.1)',
+                    data: [], fill: true, tension: 0.3, pointRadius: 0
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                x: { ticks: { color: dark, maxTicksLimit: 10 }, grid: { color: grid } },
+                y: { min: 0, max: 100, ticks: { color: dark, callback: v => v + '%' }, grid: { color: grid } }
+            },
+            plugins: { legend: { labels: { color: dark } } }
+        }
+    });
+
+    chartGpu = new Chart(document.getElementById('chartGpu'), {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'GPU Util %', borderColor: '#2fb344', backgroundColor: 'rgba(47,179,68,0.1)',
+                    data: [], fill: true, tension: 0.3, pointRadius: 0
+                },
+                {
+                    label: 'VRAM %', borderColor: '#ae3ec9', backgroundColor: 'rgba(174,62,201,0.1)',
+                    data: [], fill: true, tension: 0.3, pointRadius: 0
+                },
+                {
+                    label: 'Temp °C', borderColor: '#d63939', backgroundColor: 'rgba(214,57,57,0.1)',
+                    data: [], fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                x: { ticks: { color: dark, maxTicksLimit: 10 }, grid: { color: grid } },
+                y: { min: 0, max: 100, ticks: { color: dark, callback: v => v + '%' }, grid: { color: grid } },
+                y1: { position: 'right', min: 0, max: 90, ticks: { color: '#d63939', callback: v => v + '°C' }, grid: { display: false } }
+            },
+            plugins: { legend: { labels: { color: dark } } }
+        }
+    });
+}
+
+buildCharts();
+
+async function fetchMetrics() {
+    try {
+        const r = await fetch('/monitoring/api/?source=system&limit=20');
+        const d = await r.json();
+        updateSystemKPIs(d.items);
+        updateSystemCharts(d.items);
+    } catch(e) { console.error('system api:', e); }
+
+    try {
+        const r = await fetch('/monitoring/api/?source=mediamtx&limit=1');
+        const d = await r.json();
+        updateMediaMTXKPIs(d.items);
+    } catch(e) { console.error('mediamtx api:', e); }
+
+    try {
+        const r = await fetch('/monitoring/api/?source=snmp&limit=1');
+        const d = await r.json();
+        updateSnmpTable(d.items);
+    } catch(e) { console.error('snmp api:', e); }
+}
+
+function updateSystemKPIs(items) {
+    if (!items.length) return;
+    const latest = items[items.length - 1].data;
+    if (!latest) return;
+
+    const cpu = latest.cpu || {};
+    const mem = latest.memory || {};
+    const gpu = latest.gpu || {};
+    const disk = latest.disk || {};
+    const rootDisk = (disk.partitions || []).find(p => p.mountpoint === '/') || (disk.partitions || [])[0] || {};
+
+    document.getElementById('kpiCpu').textContent = (cpu.percent ?? '-') + '%';
+    document.getElementById('kpiCpuLoad').textContent = 'load ' + (cpu.load_1m ?? '-');
+    document.getElementById('kpiRam').textContent = (mem.percent ?? '-') + '%';
+    document.getElementById('kpiRamDetail').textContent = (mem.used_mb ?? '-') + ' MB / ' + (mem.total_mb ?? '-') + ' MB';
+
+    if (gpu.available && gpu.gpus && gpu.gpus.length) {
+        const g = gpu.gpus[0];
+        document.getElementById('kpiGpuUtil').textContent = (g.gpu_utilization_pct ?? '-') + '%';
+        document.getElementById('kpiGpuMem').textContent = (g.memory_used_mb ?? '-') + ' MB / ' + (g.memory_total_mb ?? '-') + ' MB';
+    } else {
+        document.getElementById('kpiGpuUtil').textContent = 'N/A';
+        document.getElementById('kpiGpuMem').textContent = '';
+    }
+
+    document.getElementById('kpiDiskPct').textContent = (rootDisk.percent ?? '-') + '%';
+    document.getElementById('kpiDiskDetail').textContent = (rootDisk.free_gb ?? '-') + ' GB libre';
+}
+
+function updateSystemCharts(items) {
+    const labels = [];
+    const cpuData = [], ramData = [], gpuUtilData = [], vramData = [], tempData = [];
+
+    items.forEach(item => {
+        const d = item.data;
+        if (!d) return;
+        labels.push(new Date(item.ts).toLocaleTimeString('es-CL', {hour:'2-digit',minute:'2-digit',second:'2-digit'}));
+        cpuData.push(d.cpu?.percent ?? null);
+        ramData.push(d.memory?.percent ?? null);
+        if (d.gpu?.available && d.gpu.gpus?.length) {
+            gpuUtilData.push(d.gpu.gpus[0].gpu_utilization_pct ?? null);
+            vramData.push(d.gpu.gpus[0].memory_utilization_pct ?? null);
+            tempData.push(d.gpu.gpus[0].temperature_c ?? null);
+        }
+    });
+
+    chartCpuRam.data.labels = labels;
+    chartCpuRam.data.datasets[0].data = cpuData;
+    chartCpuRam.data.datasets[1].data = ramData;
+    chartCpuRam.update('none');
+
+    chartGpu.data.labels = labels;
+    chartGpu.data.datasets[0].data = gpuUtilData;
+    chartGpu.data.datasets[1].data = vramData;
+    chartGpu.data.datasets[2].data = tempData;
+    chartGpu.update('none');
+}
+
+function updateMediaMTXKPIs(items) {
+    if (!items.length) return;
+    const latest = items[items.length - 1].data;
+    if (!latest) return;
+
+    const paths = latest.paths || [];
+    const online = paths.filter(p => p.online);
+    const totalReaders = paths.reduce((s, p) => s + (p.readers_count || 0), 0);
+    let totalLost = 0, totalJitter = 0;
+    (latest.rtsp_sessions || []).concat(latest.webrtc_sessions || []).forEach(s => {
+        totalLost += s.rtp_packets_lost || 0;
+        totalJitter = Math.max(totalJitter, s.rtp_packets_jitter || 0);
+    });
+
+    document.getElementById('kpiStreams').textContent = online.length + '/' + paths.length;
+    document.getElementById('kpiReaders').textContent = totalReaders + ' readers';
+    document.getElementById('kpiLoss').textContent = totalLost.toLocaleString();
+    document.getElementById('kpiJitter').textContent = totalJitter.toFixed(0) + ' jitter';
+
+    const tbody = document.querySelector('#streamsTable tbody');
+    if (!tbody) return;
+    tbody.innerHTML = paths.map(p => {
+        const badge = p.online ? 'bg-green' : 'bg-red';
+        const status = p.online ? 'Online' : 'Offline';
+        return `<tr>
+            <td><strong>${p.name}</strong></td>
+            <td><span class="badge ${badge}">${status}</span></td>
+            <td>${(p.tracks||[]).join(', ') || '-'}</td>
+            <td>${p.readers_count}</td>
+            <td>${p.inbound_mb} MB</td>
+            <td>${p.outbound_mb} MB</td>
+            <td>${p.inbound_frames_in_error}</td>
+        </tr>`;
+    }).join('');
+    document.getElementById('streamsUpdated').textContent = 'actualizado ' + new Date().toLocaleTimeString('es-CL');
+}
+
+function updateSnmpTable(items) {
+    if (!items.length) return;
+    const latest = items[items.length - 1].data;
+    if (!latest || !latest.devices || !latest.devices.length) return;
+
+    const row = document.getElementById('snmpRow');
+    if (row) row.style.display = '';
+
+    const tbody = document.querySelector('#snmpTable tbody');
+    if (!tbody) return;
+    tbody.innerHTML = latest.devices.map(d => {
+        const uptime = d.uptime_seconds ? Math.floor(d.uptime_seconds / 3600) + 'h ' + Math.floor((d.uptime_seconds % 3600) / 60) + 'm' : '-';
+        const reachable = d.sys_name !== null;
+        const badge = reachable ? 'bg-green' : 'bg-red';
+        const status = reachable ? 'Online' : 'Sin respuesta';
+        const model = d.sys_descr ? ' title=\"' + d.sys_descr + '\"' : '';
+        return `<tr>
+            <td><strong>${d.device_name}</strong></td>
+            <td>${d.host}</td>
+            <td${model}>${d.sys_name || '-'}</td>
+            <td>${uptime}</td>
+            <td><span class="badge ${badge}">${status}</span></td>
+        </tr>`;
+    }).join('');
+    document.getElementById('snmpUpdated').textContent = 'actualizado ' + new Date().toLocaleTimeString('es-CL');
+}
+
+fetchMetrics();
+setInterval(fetchMetrics, 30000);
+</script>
+{% endblock %}

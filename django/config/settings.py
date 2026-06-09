@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     "notifications.apps.NotificationsConfig",
     "incidents.apps.IncidentsConfig",
     "operadores.apps.OperadoresConfig",
+    "monitoring.apps.MonitoringConfig",
 ]
 
 MIDDLEWARE = [
@@ -91,6 +92,18 @@ CELERY_BEAT_SCHEDULE = {
     "incident-manager-every-5s": {
         "task": "incidents.tasks.incident_manager",
         "schedule": 5.0,
+    },
+    "monitoring-system-every-30s": {
+        "task": "monitoring.tasks.collect_system",
+        "schedule": 30.0,
+    },
+    "monitoring-mediamtx-every-30s": {
+        "task": "monitoring.tasks.collect_mediamtx",
+        "schedule": 30.0,
+    },
+    "monitoring-snmp-every-60s": {
+        "task": "monitoring.tasks.collect_snmp",
+        "schedule": 60.0,
     },
 }
 
