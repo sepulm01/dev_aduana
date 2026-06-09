@@ -209,7 +209,8 @@ class MediaMTXAPI:
         file_path = file_uri.replace("file://", "")
         ffmpeg_cmd = (
             f"ffmpeg -re -stream_loop -1 -i {file_path} "
-            f"-c:v libx264 -preset ultrafast -tune zerolatency -c:a aac "
+            f"-c:v libx264 -preset ultrafast -tune zerolatency -bf 0 -g 30 "
+            f"-c:a aac -b:a 128k "
             f'-f rtsp "rtsp://127.0.0.1:8554/{path_name}"'
         )
 

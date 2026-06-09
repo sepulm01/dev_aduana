@@ -202,34 +202,44 @@ window.addEventListener('beforeunload', function() {
 });
 
 const wsScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(wsScheme + '//' + window.location.host + '/ws/device/' + DEVICE_ID + '/');
-ws.onopen = function() {
-    console.log('WS connected for device', DEVICE_ID);
-    ws.send(JSON.stringify({type: 'ping'}));
-};
-ws.onmessage = function(e) {
-    try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'pong') return;
+let ws = null;
 
-        if (msg.type === 'ivs') {
-            handleIVSEvent(msg);
-        } else if (msg.type === 'motion') {
-            handleMotionEvent(msg);
-        }
-    } catch (err) {
-        console.error('WS parse error:', err);
+function connectWS() {
+    if (ws) {
+        try { ws.close(); } catch(e) {}
     }
-};
-ws.onclose = function() {
-    console.log('WS disconnected for device', DEVICE_ID);
-    setTimeout(function() {
-        location.reload();
-    }, 5000);
-};
-ws.onerror = function(e) {
-    console.error('WS error for device', DEVICE_ID, e);
-};
+    ws = new WebSocket(wsScheme + '//' + window.location.host + '/ws/device/' + DEVICE_ID + '/');
+    ws.onopen = function() {
+        console.log('WS connected for device', DEVICE_ID);
+        ws.send(JSON.stringify({type: 'ping'}));
+    };
+    ws.onmessage = function(e) {
+        try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'pong') return;
+
+            if (msg.type === 'ivs') {
+                handleIVSEvent(msg);
+            } else if (msg.type === 'motion') {
+                handleMotionEvent(msg);
+            }
+        } catch (err) {
+            console.error('WS parse error:', err);
+        }
+    };
+    ws.onclose = function() {
+        console.log('WS disconnected for device', DEVICE_ID, '- reconnecting in 3s');
+        if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = setTimeout(function() {
+            connectWS();
+        }, 3000);
+    };
+    ws.onerror = function(e) {
+        console.error('WS error for device', DEVICE_ID, e);
+    };
+}
+
+connectWS();
 
 let activeEvents = {};
 let eventLogItems = [];
