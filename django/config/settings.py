@@ -105,6 +105,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "monitoring.tasks.collect_snmp",
         "schedule": 60.0,
     },
+    "patrol-controller-every-10s": {
+        "task": "devices.tasks.patrol_controller",
+        "schedule": 10.0,
+    },
 }
 
 AUTH_PASSWORD_VALIDATORS = []

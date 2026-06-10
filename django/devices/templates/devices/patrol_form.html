@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}{% if patrol %}Editar{% else %}Nuevo{% endif %} Patrullaje - {{ device.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-reset">Dispositivos</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'device_detail' device.id %}" class="text-reset">{{ device.name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'patrol_list' device.id %}" class="text-reset">Patrullaje</a></li>
+        <li class="breadcrumb-item active">{% if patrol %}Editar{% else %}Nuevo{% endif %}</li>
+    </ol>
+</nav>
+
+<div class="page-header">
+    <h2 class="page-title"><i class="ti ti-repeat me-2"></i>{% if patrol %}Editar{% else %}Nuevo{% endif %} patrullaje</h2>
+</div>
+
+<div class="row">
+    <div class="col-lg-7">
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title">Configuracion</h3>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Nombre</label>
+                    <input type="text" class="form-control" id="patrolName"
+                        value="{{ patrol.name|default:'' }}" placeholder="Ej: Ronda diurna">
+                </div>
+
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="patrolActive"
+                            {% if not patrol or patrol.is_active %}checked{% endif %}>
+                        <label class="form-check-label" for="patrolActive">Activo</label>
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Pausa en preset (segundos)</label>
+                        <input type="number" class="form-control" id="dwellSeconds"
+                            value="{{ patrol.dwell_seconds|default:10 }}" min="1" max="3600">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Velocidad de movimiento</label>
+                        <select class="form-select" id="patrolSpeed">
+                            <option value="0.25" {% if patrol.speed == 0.25 %}selected{% endif %}>0.25 (lento)</option>
+                            <option value="0.50" {% if patrol.speed == 0.50 %}selected{% endif %}>0.50</option>
+                            <option value="0.75" {% if patrol.speed == 0.75 %}selected{% endif %}>0.75</option>
+                            <option value="1.00" {% if patrol.speed == 1.0 or not patrol %}selected{% endif %}>1.00 (normal)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Vigencia desde</label>
+                        <input type="date" class="form-control" id="validFrom"
+                            value="{{ patrol.valid_from|date:'Y-m-d'|default:'' }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Vigencia hasta</label>
+                        <input type="date" class="form-control" id="validUntil"
+                            value="{{ patrol.valid_until|date:'Y-m-d'|default:'' }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title">Orden de presets</h3>
+                <span class="text-muted small">Arrastra para reordenar el recorrido</span>
+            </div>
+            <div class="card-body">
+                <div id="presetOrderContainer" style="min-height:60px">
+                    {% if presets %}
+                    <div class="list-group" id="presetList">
+                    </div>
+                    {% else %}
+                    <div class="text-muted small">No hay presets disponibles. Guarda presets desde la pagina Live de este dispositivo.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card mb-3">
+            <div class="card-header">
+                <h3 class="card-title">Horario semanal</h3>
+                <div class="card-actions">
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary" onclick="quickFill('mon-fri')">Lun-Vie 08-18</button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="quickFill('all-day')">Todo el dia</button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="quickFill('clear')">Limpiar</button>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body p-2">
+                <div id="scheduleGrid"></div>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-between">
+            <button type="button" class="btn btn-outline-danger" id="deleteBtn" style="display:{% if patrol %}inline-block{% else %}none{% endif %}"
+                onclick="deletePatrol()">
+                <i class="ti ti-trash me-1"></i>Eliminar
+            </button>
+            <button type="button" class="btn btn-primary" onclick="savePatrol()">
+                <i class="ti ti-device-floppy me-1"></i>Guardar
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script id="schedule-data" type="application/json">{{ schedule_json|safe }}</script>
+<script id="preset-order-data" type="application/json">{{ preset_order_json|safe }}</script>
+<script>
+const DEVICE_ID = {{ device.id }};
+const PATROL_ID = {{ patrol.id|default:'null' }};
+
+const DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
+const DAY_NAMES = ["Lun","Mar","Mie","Jue","Vie","Sab","Dom"];
+
+function renderGrid(schedule) {
+    var container = document.getElementById('scheduleGrid');
+    container.innerHTML = '';
+    DAYS.forEach(function(day, i) {
+        var blocks = schedule[day] || [];
+        var row = document.createElement('div');
+        row.className = 'schedule-day d-flex align-items-center py-1 border-bottom border-secondary';
+        row.setAttribute('data-day', day);
+        row.innerHTML =
+            '<div style="width:50px;font-weight:600;">' + DAY_NAMES[i] + '</div>' +
+            '<div id="blocks-' + day + '" class="d-flex flex-wrap gap-1 align-items-center flex-grow-1"></div>' +
+            '<button type="button" class="btn btn-sm btn-ghost-primary" onclick="addBlock(\'' + day + '\')">+ bloque</button>';
+        container.appendChild(row);
+
+        var blocksDiv = document.getElementById('blocks-' + day);
+        blocks.forEach(function(b) { addBlock(day, b[0], b[1]); });
+    });
+}
+
+function addBlock(day, from, to) {
+    var div = document.getElementById('blocks-' + day);
+    var block = document.createElement('div');
+    block.className = 'schedule-block d-inline-flex align-items-center gap-1';
+    block.innerHTML =
+        '<input type="time" class="form-control form-control-sm time-from" value="' + (from || '08:00') + '" style="width:110px">' +
+        '<span class="text-muted">&rarr;</span>' +
+        '<input type="time" class="form-control form-control-sm time-to" value="' + (to || '18:00') + '" style="width:110px">' +
+        '<button type="button" class="btn btn-sm btn-ghost-danger" onclick="this.parentElement.remove()">&times;</button>';
+    div.appendChild(block);
+}
+
+function quickFill(mode) {
+    var schedule = {};
+    if (mode === 'clear') {
+        DAYS.forEach(function(d) { schedule[d] = []; });
+    } else if (mode === 'mon-fri') {
+        DAYS.forEach(function(d, i) { schedule[d] = i < 5 ? [["08:00","18:00"]] : []; });
+    } else if (mode === 'all-day') {
+        DAYS.forEach(function(d) { schedule[d] = [["00:00","23:59"]]; });
+    }
+    renderGrid(schedule);
+}
+
+function buildSchedule() {
+    var schedule = {};
+    document.querySelectorAll('.schedule-day').forEach(function(row) {
+        var day = row.getAttribute('data-day');
+        var blocks = [];
+        row.querySelectorAll('.schedule-block').forEach(function(block) {
+            var from = block.querySelector('.time-from').value;
+            var to = block.querySelector('.time-to').value;
+            if (from && to) blocks.push([from, to]);
+        });
+        if (blocks.length) schedule[day] = blocks;
+    });
+    return schedule;
+}
+
+function buildPresetOrder() {
+    var order = [];
+    document.querySelectorAll('#presetList .preset-item').forEach(function(el) {
+        order.push(el.getAttribute('data-token'));
+    });
+    return order;
+}
+
+var presetData = {{ presets|safe|default:"[]" }};
+var selectedOrder = JSON.parse(document.getElementById('preset-order-data').textContent || '[]');
+
+function renderPresets() {
+    var list = document.getElementById('presetList');
+    if (!list) return;
+    var ordered = [];
+    var remaining = [];
+    presetData.forEach(function(p) {
+        if (selectedOrder.includes(p.token)) {
+            ordered.push({token: p.token, name: p.name, selected: true});
+        } else {
+            remaining.push({token: p.token, name: p.name, selected: false});
+        }
+    });
+    ordered.sort(function(a, b) {
+        return selectedOrder.indexOf(a.token) - selectedOrder.indexOf(b.token);
+    });
+    var all = ordered.concat(remaining);
+
+    list.innerHTML = all.map(function(p) {
+        return '<div class="list-group-item d-flex align-items-center preset-item' + (p.selected ? '' : ' text-muted') + '" data-token="' + p.token + '">' +
+            '<i class="ti ti-grip-vertical me-2 text-muted" style="cursor:grab"></i>' +
+            (p.selected ? '<span class="badge bg-blue me-2">' + (selectedOrder.indexOf(p.token) + 1) + '</span>' : '') +
+            '<span>' + (p.name || p.token) + '</span>' +
+            '<div class="ms-auto">' +
+            (p.selected
+                ? '<button type="button" class="btn btn-sm btn-ghost-danger" onclick="togglePreset(\'' + p.token + '\')"><i class="ti ti-x"></i></button>'
+                : '<button type="button" class="btn btn-sm btn-ghost-success" onclick="togglePreset(\'' + p.token + '\')"><i class="ti ti-plus"></i></button>') +
+            '</div></div>';
+    }).join('');
+}
+
+function togglePreset(token) {
+    if (selectedOrder.includes(token)) {
+        selectedOrder = selectedOrder.filter(function(t) { return t !== token; });
+    } else {
+        selectedOrder.push(token);
+    }
+    renderPresets();
+}
+
+function savePatrol() {
+    var payload = {
+        name: document.getElementById('patrolName').value.trim(),
+        is_active: document.getElementById('patrolActive').checked,
+        dwell_seconds: parseInt(document.getElementById('dwellSeconds').value) || 10,
+        speed: parseFloat(document.getElementById('patrolSpeed').value) || 1.0,
+        valid_from: document.getElementById('validFrom').value || null,
+        valid_until: document.getElementById('validUntil').value || null,
+        schedule: buildSchedule(),
+        preset_order: buildPresetOrder(),
+    };
+
+    if (!payload.name) { alert('El nombre es obligatorio'); return; }
+
+    var url = '/api/devices/' + DEVICE_ID + '/patrols/save/';
+    if (PATROL_ID) url += PATROL_ID + '/';
+
+    fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) { window.location.href = '/devices/' + DEVICE_ID + '/patrols/'; }
+        else { alert('Error: ' + (d.error || 'desconocido')); }
+    }).catch(function(e) { alert('Error de red'); });
+}
+
+function deletePatrol() {
+    if (!PATROL_ID) return;
+    if (!confirm('Eliminar este patrullaje?')) return;
+    fetch('/api/devices/' + DEVICE_ID + '/patrols/delete/' + PATROL_ID + '/', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) { window.location.href = '/devices/' + DEVICE_ID + '/patrols/'; }
+    });
+}
+
+var scheduleData = JSON.parse(document.getElementById('schedule-data').textContent || '{}');
+if (typeof scheduleData === 'object' && scheduleData !== null) {
+    renderGrid(scheduleData);
+} else {
+    renderGrid({});
+}
+
+renderPresets();
+</script>
+{% endblock %}

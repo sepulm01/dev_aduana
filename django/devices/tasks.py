@@ -176,6 +176,96 @@ def orchestrate_cameras():
 
 
 @shared_task
+def patrol_controller():
+    from devices.models import Patrol
+    from django.utils import timezone
+
+    r = _get_redis()
+    now = timezone.localtime()
+
+    for patrol in Patrol.objects.filter(is_active=True).select_related("device"):
+        if not patrol.preset_order:
+            continue
+
+        if not _patrol_in_schedule(patrol, now):
+            r.delete(f"patrol:{patrol.id}:index")
+            continue
+
+        device = patrol.device
+        if not device.is_online or not device.username:
+            continue
+
+        specs = device.camera_specs or {}
+        if not specs.get("ptz_caps"):
+            continue
+
+        cid = str(device.id)
+        lock_key = f"patrol:lock:{cid}"
+        lock = r.set(lock_key, str(patrol.id), nx=True, ex=15)
+        if not lock:
+            continue
+
+        try:
+            token = device.default_profile_token
+            if not token:
+                continue
+
+            from onvif_utils.client import OnvifClient
+            from onvif_utils.ptz import PTZService
+
+            client = OnvifClient(device.host, device.port, device.username, device.password)
+            ptz = PTZService(client)
+
+            if ptz.is_moving(token):
+                r.setex(f"patrol:{cid}:moving", 30, "1")
+                continue
+
+            r.delete(f"patrol:{cid}:moving")
+
+            presets = patrol.preset_order
+            index_key = f"patrol:{patrol.id}:index"
+            current_idx = int(r.get(index_key) or 0) % len(presets)
+
+            next_move_key = f"patrol:{patrol.id}:next_move"
+            next_move = r.get(next_move_key)
+            if next_move and float(next_move) > time.time():
+                continue
+
+            preset_token = presets[current_idx]
+            ptz.goto_preset(token, preset_token, patrol.speed)
+
+            next_idx = (current_idx + 1) % len(presets)
+            r.set(index_key, str(next_idx))
+            r.setex(next_move_key, patrol.dwell_seconds + 60, str(time.time() + patrol.dwell_seconds))
+
+            logger.info(
+                "Patrol %s device=%s preset=%s (%d/%d) dwell=%ds",
+                patrol.name, device.id, preset_token,
+                current_idx + 1, len(presets), patrol.dwell_seconds,
+            )
+        except Exception as e:
+            logger.warning("patrol_controller %s: %s", patrol.name, e)
+        finally:
+            r.delete(lock_key)
+
+
+def _patrol_in_schedule(patrol, now):
+    if patrol.valid_from and now < patrol.valid_from:
+        return False
+    if patrol.valid_until and now > patrol.valid_until:
+        return False
+    if patrol.schedule:
+        today = now.strftime("%a").lower()[:3]
+        blocks = patrol.schedule.get(today, [])
+        if not blocks:
+            return False
+        t = now.strftime("%H:%M")
+        if not any(start <= t < end for start, end in blocks):
+            return False
+    return True
+
+
+@shared_task
 def refresh_device_streams(device_id):
     try:
         device = Device.objects.get(id=device_id)

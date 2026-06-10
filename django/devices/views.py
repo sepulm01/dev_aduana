@@ -9,7 +9,7 @@ from django.shortcuts import render, get_object_or_404
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
-from devices.models import Device, IVSRule, AnalyticsPreset
+from devices.models import Device, IVSRule, AnalyticsPreset, Patrol
 from live.views import DEFAULT_CAMERA_SPECS
 from onvif_utils.client import OnvifClient
 from onvif_utils.discovery import DeviceDiscovery
@@ -962,4 +962,120 @@ def configure_snmp(request, device_id):
         device.snmp_port = data.get("snmp_port", 161)
         device.save(update_fields=["snmp_enabled", "snmp_community", "snmp_port"])
         return JsonResponse({"ok": True})
+    return JsonResponse({"error": "POST required"}, status=405)
+
+
+@login_required
+def patrol_list(request, device_id):
+    device = get_object_or_404(Device, id=device_id)
+    patrols = device.patrols.all()
+
+    from onvif_utils.ptz import PTZService
+    from onvif_utils.client import OnvifClient
+
+    presets = []
+    ptz_supported = bool(device.camera_specs.get("ptz_caps"))
+    if ptz_supported:
+        try:
+            client = OnvifClient(device.host, device.port, device.username, device.password)
+            ptz = PTZService(client)
+            presets = ptz.get_presets(device.default_profile_token)
+        except Exception:
+            ptz_supported = False
+
+    return render(
+        request,
+        "devices/patrol_list.html",
+        {
+            "device": device,
+            "patrols": patrols,
+            "presets": presets,
+            "ptz_supported": ptz_supported,
+        },
+    )
+
+
+@login_required
+def patrol_form(request, device_id, patrol_id=None):
+    device = get_object_or_404(Device, id=device_id)
+    patrol = None
+    if patrol_id:
+        patrol = get_object_or_404(Patrol, id=patrol_id, device=device)
+
+    from onvif_utils.ptz import PTZService
+    from onvif_utils.client import OnvifClient
+
+    presets = []
+    try:
+        client = OnvifClient(device.host, device.port, device.username, device.password)
+        ptz = PTZService(client)
+        presets = ptz.get_presets(device.default_profile_token)
+    except Exception:
+        pass
+
+    return render(
+        request,
+        "devices/patrol_form.html",
+        {
+            "device": device,
+            "patrol": patrol,
+            "presets": presets,
+            "schedule_json": json.dumps(patrol.schedule) if patrol else "{}",
+            "preset_order_json": json.dumps(patrol.preset_order) if patrol else "[]",
+        },
+    )
+
+
+@login_required
+@csrf_exempt
+def patrol_save(request, device_id, patrol_id=None):
+    device = get_object_or_404(Device, id=device_id)
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    data = json.loads(request.body) if request.body else {}
+
+    name = data.get("name", "").strip()
+    if not name:
+        return JsonResponse({"error": "name required"}, status=400)
+
+    if patrol_id:
+        patrol = get_object_or_404(Patrol, id=patrol_id, device=device)
+    else:
+        patrol = Patrol(device=device)
+
+    patrol.name = name
+    patrol.is_active = data.get("is_active", True)
+    patrol.valid_from = data.get("valid_from") or None
+    patrol.valid_until = data.get("valid_until") or None
+    patrol.schedule = data.get("schedule", {})
+    patrol.dwell_seconds = data.get("dwell_seconds", 10)
+    patrol.speed = float(data.get("speed", 1.0))
+    patrol.preset_order = data.get("preset_order", [])
+    patrol.save()
+
+    return JsonResponse({"ok": True, "patrol_id": patrol.id})
+
+
+@login_required
+@csrf_exempt
+def patrol_delete(request, device_id, patrol_id):
+    device = get_object_or_404(Device, id=device_id)
+    patrol = get_object_or_404(Patrol, id=patrol_id, device=device)
+    if request.method == "POST":
+        patrol.delete()
+        return JsonResponse({"ok": True})
+    return JsonResponse({"error": "POST required"}, status=405)
+
+
+@login_required
+@csrf_exempt
+def patrol_toggle(request, device_id, patrol_id):
+    device = get_object_or_404(Device, id=device_id)
+    patrol = get_object_or_404(Patrol, id=patrol_id, device=device)
+    if request.method == "POST":
+        data = json.loads(request.body) if request.body else {}
+        patrol.is_active = data.get("is_active", not patrol.is_active)
+        patrol.save(update_fields=["is_active"])
+        return JsonResponse({"ok": True, "is_active": patrol.is_active})
     return JsonResponse({"error": "POST required"}, status=405)

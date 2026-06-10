@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Patrullaje - {{ device.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-reset">Dispositivos</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'device_detail' device.id %}" class="text-reset">{{ device.name }}</a></li>
+        <li class="breadcrumb-item active">Patrullaje</li>
+    </ol>
+</nav>
+
+<div class="page-header d-flex justify-content-between align-items-center">
+    <h2 class="page-title"><i class="ti ti-repeat me-2"></i>Patrullajes de {{ device.name }}</h2>
+    {% if ptz_supported %}
+    <a href="{% url 'patrol_add' device.id %}" class="btn btn-primary">
+        <i class="ti ti-plus me-1"></i>Nuevo patrullaje
+    </a>
+    {% endif %}
+</div>
+
+{% if not ptz_supported %}
+<div class="alert alert-warning">
+    <i class="ti ti-alert-triangle me-1"></i>Este dispositivo no tiene soporte PTZ. El patrullaje requiere una camara con movimiento.
+</div>
+{% elif patrols %}
+<div class="row">
+    {% for p in patrols %}
+    <div class="col-lg-6 mb-3">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>{{ p.name }}</strong>
+                    <span class="badge ms-2 {% if p.is_active %}bg-green{% else %}bg-secondary{% endif %}">
+                        {{ p.is_active|yesno:"Activo,Inactivo" }}
+                    </span>
+                </div>
+                <div>
+                    <a href="{% url 'patrol_edit' device.id p.id %}" class="btn btn-sm btn-ghost-primary">
+                        <i class="ti ti-pencil"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="card-body py-2">
+                <dl class="dl-row mb-0 small">
+                    <dt>Presets</dt>
+                    <dd>{{ p.preset_order|length }} en recorrido</dd>
+                    <dt>Pausa</dt>
+                    <dd>{{ p.dwell_seconds }}s por preset</dd>
+                    <dt>Velocidad</dt>
+                    <dd>{{ p.speed }}</dd>
+                    <dt>Horario</dt>
+                    <dd>
+                        {% if p.schedule %}
+                        {% for day, blocks in p.schedule.items %}
+                        {% if blocks %}{{ day|capfirst }}: {% for b in blocks %}{{ b.0 }}-{{ b.1 }}{% if not forloop.last %}, {% endif %}{% endfor %}<br>{% endif %}
+                        {% endfor %}
+                        {% else %}
+                        Sin restriccion
+                        {% endif %}
+                    </dd>
+                    {% if p.valid_from or p.valid_until %}
+                    <dt>Vigencia</dt>
+                    <dd>{{ p.valid_from|date:"d/m/Y"|default:"-" }} → {{ p.valid_until|date:"d/m/Y"|default:"-" }}</dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty">
+    <div class="empty-icon"><i class="ti ti-repeat-off"></i></div>
+    <p class="empty-title">Sin patrullajes</p>
+    <p class="empty-subtitle text-muted">Crea un patrullaje para que la camara recorra automaticamente sus presets.</p>
+</div>
+{% endif %}
+{% endblock %}

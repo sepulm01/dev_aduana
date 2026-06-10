@@ -133,3 +133,25 @@ class AnalyticsPreset(models.Model):
 
     def __str__(self):
         return f"{self.device.name} - {self.preset_name or self.preset_token}"
+
+
+class Patrol(models.Model):
+    device = models.ForeignKey(
+        Device, on_delete=models.CASCADE, related_name="patrols"
+    )
+    name = models.CharField(max_length=120)
+    is_active = models.BooleanField(default=True)
+    valid_from = models.DateTimeField(null=True, blank=True)
+    valid_until = models.DateTimeField(null=True, blank=True)
+    schedule = models.JSONField(blank=True, default=dict)
+    dwell_seconds = models.IntegerField(default=10)
+    speed = models.FloatField(default=1.0)
+    preset_order = models.JSONField(blank=True, default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["device", "name"]
+
+    def __str__(self):
+        return f"{self.device.name} - {self.name}"

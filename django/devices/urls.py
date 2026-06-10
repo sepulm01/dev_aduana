@@ -115,4 +115,39 @@ urlpatterns = [
         views.configure_snmp,
         name="configure_snmp",
     ),
+    path(
+        "devices/<int:device_id>/patrols/",
+        views.patrol_list,
+        name="patrol_list",
+    ),
+    path(
+        "devices/<int:device_id>/patrols/add/",
+        views.patrol_form,
+        name="patrol_add",
+    ),
+    path(
+        "devices/<int:device_id>/patrols/edit/<int:patrol_id>/",
+        views.patrol_form,
+        name="patrol_edit",
+    ),
+    path(
+        "api/devices/<int:device_id>/patrols/save/",
+        views.patrol_save,
+        name="patrol_save",
+    ),
+    path(
+        "api/devices/<int:device_id>/patrols/save/<int:patrol_id>/",
+        views.patrol_save,
+        name="patrol_save_edit",
+    ),
+    path(
+        "api/devices/<int:device_id>/patrols/delete/<int:patrol_id>/",
+        views.patrol_delete,
+        name="patrol_delete",
+    ),
+    path(
+        "api/devices/<int:device_id>/patrols/toggle/<int:patrol_id>/",
+        views.patrol_toggle,
+        name="patrol_toggle",
+    ),
 ]
