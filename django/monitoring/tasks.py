@@ -44,6 +44,18 @@ def collect_snmp():
         logger.warning("collect_snmp error: %s", e)
 
 
+@shared_task
+def collect_deepstream():
+    try:
+        from monitoring.collectors.deepstream import collect_deepstream_metrics
+
+        data = collect_deepstream_metrics()
+        MetricSnapshot.objects.create(source="deepstream", data=data)
+        _prune("deepstream")
+    except Exception as e:
+        logger.warning("collect_deepstream error: %s", e)
+
+
 def _prune(source):
     cutoff = (
         MetricSnapshot.objects.filter(source=source)

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Monitoreo{% endblock %}
+{% block title %}Hardware Monitor{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h2 class="page-title"><i class="ti ti-chart-bar me-2"></i>Monitoreo</h2>
+    <h2 class="page-title"><i class="ti ti-chart-bar me-2"></i>Hardware Monitor</h2>
 </div>
 
 <div class="row row-cards mb-3" id="kpiRow">
@@ -62,6 +62,45 @@
     </div>
 </div>
 
+<div class="row row-cards mb-3">
+    <div class="col-sm-6 col-lg-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">DeepStream FPS</div>
+                <div class="h2 m-0" id="kpiDsFps">-</div>
+                <div class="text-muted small" id="kpiDsSources">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">Containers</div>
+                <div class="h2 m-0" id="kpiDsContainers">-</div>
+                <div class="text-muted small" id="kpiDsState">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">CPU Pipelines</div>
+                <div class="h2 m-0" id="kpiDsCpu">-</div>
+                <div class="text-muted small" id="kpiDsMem">-</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="subheader">Network In</div>
+                <div class="h2 m-0" id="kpiDsNet">-</div>
+                <div class="text-muted small" id="kpiDsPids">-</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row mb-3">
     <div class="col-lg-6">
         <div class="card">
@@ -76,6 +115,40 @@
             <div class="card-header"><h3 class="card-title">GPU</h3></div>
             <div class="card-body">
                 <canvas id="chartGpu" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">DeepStream FPS por pipeline</h3></div>
+            <div class="card-body">
+                <canvas id="chartDsFps" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">DeepStream Container Stats</h3>
+                <span class="text-muted small" id="dsUpdated"></span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-vcenter card-table" id="dsTable">
+                    <thead>
+                        <tr>
+                            <th>Pipeline</th>
+                            <th>Estado</th>
+                            <th>CPU</th>
+                            <th>RAM</th>
+                            <th>FPS</th>
+                            <th>Net In</th>
+                            <th>PIDs</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -141,7 +214,7 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 <script>
-let chartCpuRam, chartGpu;
+let chartCpuRam, chartGpu, chartDsFps;
 
 function buildCharts() {
     const dark = '#94a3b8';
@@ -164,6 +237,7 @@ function buildCharts() {
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             scales: {
                 x: { ticks: { color: dark, maxTicksLimit: 10 }, grid: { color: grid } },
                 y: { min: 0, max: 100, ticks: { color: dark, callback: v => v + '%' }, grid: { color: grid } }
@@ -193,6 +267,7 @@ function buildCharts() {
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             scales: {
                 x: { ticks: { color: dark, maxTicksLimit: 10 }, grid: { color: grid } },
                 y: { min: 0, max: 100, ticks: { color: dark, callback: v => v + '%' }, grid: { color: grid } },
@@ -201,6 +276,39 @@ function buildCharts() {
             plugins: { legend: { labels: { color: dark } } }
         }
     });
+
+    const canvasDs = document.getElementById('chartDsFps');
+    if (canvasDs) {
+        chartDsFps = new Chart(canvasDs, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'main fps', borderColor: '#4299e1', data: [], fill: false, tension: 0.3, pointRadius: 0
+                },
+                {
+                    label: 'retinaface fps', borderColor: '#2fb344', data: [], fill: false, tension: 0.3, pointRadius: 0
+                },
+                {
+                    label: 'yolov9 fps', borderColor: '#f59f00', data: [], fill: false, tension: 0.3, pointRadius: 0
+                },
+                {
+                    label: 'lpr fps', borderColor: '#ae3ec9', data: [], fill: false, tension: 0.3, pointRadius: 0
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { ticks: { color: dark, maxTicksLimit: 10 }, grid: { color: grid } },
+                y: { min: 0, ticks: { color: dark, callback: v => v + ' fps' }, grid: { color: grid } }
+            },
+            plugins: { legend: { labels: { color: dark } } }
+        }
+    });
+    }
 }
 
 buildCharts();
@@ -224,6 +332,13 @@ async function fetchMetrics() {
         const d = await r.json();
         updateSnmpTable(d.items);
     } catch(e) { console.error('snmp api:', e); }
+
+    try {
+        const r = await fetch('/monitoring/api/?source=deepstream&limit=20');
+        const d = await r.json();
+        updateDeepstreamKPIs(d.items);
+        updateDeepstreamChart(d.items);
+    } catch(e) { console.error('deepstream api:', e); }
 }
 
 function updateSystemKPIs(items) {
@@ -346,6 +461,83 @@ function updateSnmpTable(items) {
         </tr>`;
     }).join('');
     document.getElementById('snmpUpdated').textContent = 'actualizado ' + new Date().toLocaleTimeString('es-CL');
+}
+
+function updateDeepstreamKPIs(items) {
+    if (!items.length) return;
+    const latest = items[items.length - 1].data;
+    if (!latest) return;
+
+    const fps = latest.fps || {};
+    let totalFps = 0, totalSources = 0;
+    Object.values(fps).forEach(function(p) {
+        totalFps += p.total_fps || 0;
+        totalSources += p.source_count || 0;
+    });
+
+    document.getElementById('kpiDsFps').textContent = totalFps + ' fps';
+    document.getElementById('kpiDsSources').textContent = totalSources + ' sources';
+
+    const containers = latest.containers || {};
+    const names = Object.keys(containers);
+    const running = names.filter(function(n) { return containers[n].running; });
+    let totalCpu = 0, totalMem = 0, totalNet = 0, totalPids = 0;
+    names.forEach(function(n) {
+        const c = containers[n];
+        totalCpu += c.cpu_percent || 0;
+        totalMem += c.memory_mb || 0;
+        totalNet += c.network_rx_mb || 0;
+        totalPids += c.pids || 0;
+    });
+
+    document.getElementById('kpiDsContainers').textContent = running.length + '/' + names.length;
+    document.getElementById('kpiDsState').textContent = names.length - running.length + ' detenidos';
+    document.getElementById('kpiDsCpu').textContent = totalCpu.toFixed(1) + '%';
+    document.getElementById('kpiDsMem').textContent = totalMem.toFixed(0) + ' MB RAM';
+    document.getElementById('kpiDsNet').textContent = totalNet.toFixed(0) + ' MB';
+    document.getElementById('kpiDsPids').textContent = totalPids + ' procesos';
+
+    const tbody = document.querySelector('#dsTable tbody');
+    if (!tbody) return;
+    tbody.innerHTML = names.map(function(pipeline) {
+        const c = containers[pipeline];
+        const badge = c.running ? 'bg-green' : 'bg-red';
+        const state = c.running ? 'Running' : c.state;
+        const pfps = (fps[pipeline] || {}).total_fps || 0;
+        return `<tr>
+            <td><strong>${pipeline}</strong></td>
+            <td><span class="badge ${badge}">${state}</span></td>
+            <td>${c.cpu_percent}%</td>
+            <td>${c.memory_mb} MB</td>
+            <td>${pfps} fps</td>
+            <td>${c.network_rx_mb} MB</td>
+            <td>${c.pids}</td>
+        </tr>`;
+    }).join('');
+    document.getElementById('dsUpdated').textContent = 'actualizado ' + new Date().toLocaleTimeString('es-CL');
+}
+
+function updateDeepstreamChart(items) {
+    if (!chartDsFps) return;
+    const labels = [];
+    const datasets = {main: [], retinaface: [], yolov9: [], trafficcamnet_lpr: []};
+
+    items.forEach(function(item) {
+        const d = item.data;
+        if (!d) return;
+        labels.push(new Date(item.ts).toLocaleTimeString('es-CL', {hour:'2-digit',minute:'2-digit',second:'2-digit'}));
+        const fps = d.fps || {};
+        Object.keys(datasets).forEach(function(name) {
+            datasets[name].push((fps[name] || {}).total_fps ?? null);
+        });
+    });
+
+    chartDsFps.data.labels = labels;
+    chartDsFps.data.datasets[0].data = datasets.main;
+    chartDsFps.data.datasets[1].data = datasets.retinaface;
+    chartDsFps.data.datasets[2].data = datasets.yolov9;
+    chartDsFps.data.datasets[3].data = datasets.trafficcamnet_lpr;
+    chartDsFps.update('none');
 }
 
 fetchMetrics();

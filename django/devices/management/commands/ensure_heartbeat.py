@@ -23,5 +23,49 @@ class Command(BaseCommand):
         else:
             self.stdout.write("Orchestrator already exists")
 
+        schedule_30, _ = IntervalSchedule.objects.get_or_create(
+            every=30,
+            period=IntervalSchedule.SECONDS,
+        )
+        for task_name, task_path in [
+            ("monitoring-system-every-30s", "monitoring.tasks.collect_system"),
+            ("monitoring-mediamtx-every-30s", "monitoring.tasks.collect_mediamtx"),
+            ("monitoring-deepstream-every-30s", "monitoring.tasks.collect_deepstream"),
+        ]:
+            PeriodicTask.objects.update_or_create(
+                name=task_name,
+                defaults={
+                    "interval": schedule_30,
+                    "task": task_path,
+                    "enabled": True,
+                },
+            )
+
+        schedule_60, _ = IntervalSchedule.objects.get_or_create(
+            every=60,
+            period=IntervalSchedule.SECONDS,
+        )
+        PeriodicTask.objects.update_or_create(
+            name="monitoring-snmp-every-60s",
+            defaults={
+                "interval": schedule_60,
+                "task": "monitoring.tasks.collect_snmp",
+                "enabled": True,
+            },
+        )
+
+        schedule_10, _ = IntervalSchedule.objects.get_or_create(
+            every=10,
+            period=IntervalSchedule.SECONDS,
+        )
+        PeriodicTask.objects.update_or_create(
+            name="patrol-controller-every-10s",
+            defaults={
+                "interval": schedule_10,
+                "task": "devices.tasks.patrol_controller",
+                "enabled": True,
+            },
+        )
+
         PeriodicTask.objects.filter(name="heartbeat-deepstream-streams").delete()
         PeriodicTask.objects.filter(name="deepstream-heartbeat-every-30s").delete()
