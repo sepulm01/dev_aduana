@@ -1,3 +1,65 @@
+# Devices App
+
+## Multi-instance DeepStream Pipelines
+
+### Overview
+
+Soporta hasta `MAX_INSTANCES = 4` contenedores por pipeline (16 total en docker-compose).
+Los dispositivos se distribuyen round-robin entre las instancias disponibles.
+Las instancias sin dispositivos se apagan automaticamente (on-demand).
+
+### Configuracion por pipeline
+
+| Pipeline | `max_streammux_batch` | `max_devices_per_instance` | Engine max batch |
+|----------|----------------------|---------------------------|-----------------|
+| main | 3 | 3 | `_b3_` |
+| retinaface | 1 | 1 | 1 (cableado en ONNX) |
+| yolov9 | 3 | 3 | `_b3_` |
+| trafficcamnet_lpr | 1 | 1 | `_b1_` |
+
+### Distribucion de dispositivos
+
+Ejemplo: 2 camaras en retinaface con `max_devices_per_instance=1`:
+
+```
+instances_needed = ceil(2 / 1) = 2
+
+retinaface-1 → camara 109 (config_retinaface.yml)
+retinaface-2 → camara 108 (config_retinaface_2.yml)
+retinaface-3 → empty (stopped)
+retinaface-4 → empty (stopped)
+```
+
+### Config files per instance
+
+| Instancia | Config | Redis sources key |
+|-----------|--------|-------------------|
+| 1 | `config_{pipeline}.yml` | `deepstream:sources:{pipeline}:1` |
+| N (2-4) | `config_{pipeline}_{N}.yml` | `deepstream:sources:{pipeline}:{N}` |
+
+### Container naming
+
+| Pipeline | Instance 1 | Instance 2 |
+|----------|-----------|-----------|
+| main | `mediamtx-manager-computer-vision-1` | `computer-vision-2-1` |
+| retinaface | `-retinaface-1` | `-retinaface-2-1` |
+| yolov9 | `-yolov9-1` | `-yolov9-2-1` |
+| lpr | `-lpr-1` | `-lpr-2-1` |
+
+### Escalamiento a 100 camaras
+
+- Batch = 1 pipelines (retinaface, lpr): ~100 contenedores si `max_devices_per_instance=1`
+- Batch > 1 pipelines (main, yolov9): ~13 contenedores con batch=8 tras recompilar ONNX
+- Ruta de escalamiento: re-exportar ONNX con batch dinamico → Swarm/K8s multi-host
+
+### Batch-size protection (doble capa)
+
+1. **Django** (`config_generator.py`): `max_streammux_batch` capea el streammux al max batch del engine
+2. **C++** (`pipeline_test3.cpp:912`): `MIN(pgie_batch_size, num_sources)` capea el PGIE en runtime
+Ambas capas deben coincidir para evitar segfaults de TensorRT.
+
+---
+
 # Patrullaje PTZ
 
 ## Overview
