@@ -11,9 +11,10 @@ celery-beat (cada 30s/60s)
   +-- collect_system    -> psutil (CPU/RAM/disk) + pynvml (GPU)
   +-- collect_mediamtx  -> REST API /v3/paths + /v3/rtspsessions + /v3/webrtcsessions
   +-- collect_snmp      -> pysnmp v2c async a Device.snmp_enabled=True
+  +-- collect_deepstream -> Redis FPS + Docker API container stats
 
 MetricSnapshot (PostgreSQL, JSONField)
-  +-- source: "system" | "mediamtx" | "snmp"
+  +-- source: "system" | "mediamtx" | "snmp" | "deepstream"
   +-- data: JSON con estructura libre por collector
   +-- prune: max 200 snapshots por source
 
@@ -50,7 +51,7 @@ Chart.js 4.4.9 (CDN)
 
 | Field | Type | Notes |
 |-------|------|-------|
-| source | CharField(50) | "system", "mediamtx", "snmp" |
+| source | CharField(50) | "system", "mediamtx", "snmp", "deepstream" |
 | device_id | IntegerField (null) | FK a Device (opcional) |
 | data | JSONField | Collector-specific payload |
 | created_at | DateTimeField | auto_now_add, indexed |
@@ -96,6 +97,54 @@ Campos en `data`:
 }
 ```
 
+## Collector: DeepStream
+
+Usa el socket Unix de Docker (`/var/run/docker.sock`) + Redis para medir los pipelines.
+
+### Fuentes de datos
+
+| Metrica | Origen | Metodo |
+|---------|--------|--------|
+| FPS por pipeline | Redis `deepstream:sources:{pipeline}` -> `{source_id}:fps` | `redis.hgetall()` |
+| CPU container | Docker API `GET /containers/{name}/stats?stream=false` | Unix socket HTTP |
+| RAM container | Docker API stats -> `memory_stats.usage/limit` | Unix socket HTTP |
+| Network RX/TX | Docker API stats -> `networks.eth0.rx_bytes/tx_bytes` | Unix socket HTTP |
+| PIDs | Docker API stats -> `pids_stats.current` | Unix socket HTTP |
+| Estado | Docker API `GET /containers/{name}/json` -> `State.Running/Status` | Unix socket HTTP |
+
+### Pipelines monitoreados
+
+```python
+PIPELINES = {
+    "main": "mediamtx-manager-computer-vision-1",
+    "retinaface": "mediamtx-manager-computer-vision-retinaface-1",
+    "yolov9": "mediamtx-manager-computer-vision-yolov9-1",
+    "trafficcamnet_lpr": "mediamtx-manager-computer-vision-lpr-1",
+}
+```
+
+### Campos en `data`
+
+```json
+{
+  "fps": {
+    "main": {"total_fps": 60, "source_count": 2, "avg_fps": 30.0, ...},
+    ...
+  },
+  "containers": {
+    "main": {"running": true, "cpu_percent": 15.8, "memory_mb": 440.3, ...},
+    ...
+  },
+  "collected_at": 1718035200.0
+}
+```
+
+### Dashboard section
+
+- KPI row: DeepStream FPS, Containers running/total, CPU pipelines, Network in
+- Chart.js: FPS por pipeline (4 lineas)
+- Table: Pipeline, Estado (badge), CPU%, RAM MB, FPS, Net In MB, PIDs
+
 ## Celery Beat Schedule
 
 ```python
@@ -103,6 +152,7 @@ CELERY_BEAT_SCHEDULE = {
     "monitoring-system-every-30s": {"task": "monitoring.tasks.collect_system", "schedule": 30.0},
     "monitoring-mediamtx-every-30s": {"task": "monitoring.tasks.collect_mediamtx", "schedule": 30.0},
     "monitoring-snmp-every-60s": {"task": "monitoring.tasks.collect_snmp", "schedule": 60.0},
+    "monitoring-deepstream-every-30s": {"task": "monitoring.tasks.collect_deepstream", "schedule": 30.0},
 }
 ```
 
@@ -110,6 +160,9 @@ CELERY_BEAT_SCHEDULE = {
 
 - `pynvml` requiere `runtime: nvidia` en celery-worker (docker-compose). Sin acceso GPU, `gpu.available = false`.
 - `pysnmp` 7.x rompio la API sincrona tradicional. Se usa `hlapi.v1arch` con `asyncio` via `ThreadPoolExecutor`.
+- El collector DeepStream requiere montar `/var/run/docker.sock` en celery-worker (ya montado).
+- Los containers detenidos (yolov9, lpr) reportan `cpu_percent=0, memory_mb=0, running=false`.
 - La tabla de streams MediaMTX solo aparece si hay al menos un snapshot en la DB.
 - La tabla SNMP se oculta por defecto y se muestra cuando el collector reporta dispositivos.
 - `sysName` OID retorna `(none)` en muchas camaras Dahua. El collector usa `sysDescr` como fallback.
+- El `CELERY_BEAT_SCHEDULE` en `settings.py` es solo referencia. Las tareas se registran en DB via `ensure_heartbeat` (usa `DatabaseScheduler`).
