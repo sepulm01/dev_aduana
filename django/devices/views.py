@@ -133,7 +133,11 @@ def delete_device(request, device_id):
         device = get_object_or_404(Device, id=device_id)
         mtx = MediaMTXAPI()
         mtx.delete_camera_paths(device.id)
+        pipeline = device.deepstream_pipeline
         device.delete()
+        from devices.utils import regenerate_config_and_restart
+
+        regenerate_config_and_restart()
         return JsonResponse({"ok": True})
     return JsonResponse({"error": "POST required"}, status=405)
 

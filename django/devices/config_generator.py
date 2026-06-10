@@ -9,11 +9,13 @@ PIPELINE_CONFIGS = {
         "filename": "config.yml",
         "container": "mediamtx-manager-computer-vision-1",
         "models_dir": "../models/peoplenet",
+        "max_streammux_batch": 3,
     },
     "retinaface": {
         "filename": "config_retinaface.yml",
         "container": "mediamtx-manager-computer-vision-retinaface-1",
         "models_dir": "../models/retinaface_det10g",
+        "max_streammux_batch": 1,
         "extra_yaml": "face-class-id: 0\n",
         "sgie_sections": (
             "secondary-gie0:\n"
@@ -29,11 +31,13 @@ PIPELINE_CONFIGS = {
         "filename": "config_yolov9.yml",
         "container": "mediamtx-manager-computer-vision-yolov9-1",
         "models_dir": "../models/yolov9",
+        "max_streammux_batch": 3,
     },
     "trafficcamnet_lpr": {
         "filename": "config_trafficcamnet_lpr.yml",
         "container": "mediamtx-manager-computer-vision-lpr-1",
         "models_dir": "../models/trafficcamnet",
+        "max_streammux_batch": 1,
         "sgie_sections": (
             "secondary-gie0:\n"
             "  plugin-type: 0\n"
@@ -191,9 +195,12 @@ def generate_config(devices, output_path, pipeline_id="main"):
         uris.append(uri)
 
     source_list = ";".join(uris) + ";" if uris else ""
-    batch_size = len(uris) or 1
+    raw_batch_size = len(uris) or 1
 
     pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
+    max_batch = pipeline_cfg.get("max_streammux_batch", raw_batch_size)
+    batch_size = min(raw_batch_size, max_batch)
+
     models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
     sgie_sections = pipeline_cfg.get("sgie_sections", "")
     extra_yaml = pipeline_cfg.get("extra_yaml", "")

@@ -186,8 +186,16 @@
                 </div>
             </div>
         </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-body">
+                <button class="btn btn-danger w-100" onclick="deleteDevice()">
+                    <i class="ti ti-trash me-1"></i>Eliminar dispositivo
+                </button>
+            </div>
+        </div>
     </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
@@ -562,5 +570,16 @@ document.getElementById('snmpPort').addEventListener('change', saveSnmpConfig);
 renderCapabilities();
 loadProfiles();
 loadPtzProfiles();
+
+function deleteDevice() {
+    if (!confirm('Eliminar {{ device.name|escapejs }}? Se perderan todos los datos.')) return;
+    fetch('/devices/{{ device.id }}/delete/', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) window.location.href = '/';
+            else alert('Error: ' + (d.error || 'desconocido'));
+        })
+        .catch(e => alert('Error de red'));
+}
 </script>
 {% endblock %}

@@ -58,6 +58,10 @@
                     <a class="btn btn-outline-success" href="/live/{{ d.id }}/">
                         <i class="ti ti-player-play me-1"></i>Live
                     </a>
+                    <button class="btn btn-outline-danger btn-icon ms-auto"
+                        onclick="deleteDevice({{ d.id }}, '{{ d.name|escapejs }}')" title="Eliminar">
+                        <i class="ti ti-trash"></i>
+                    </button>
                 </div>
             </div>
         </div>
@@ -78,4 +82,18 @@
     </div>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function deleteDevice(id, name) {
+    if (!confirm('Eliminar ' + name + '?')) return;
+    try {
+        const r = await fetch('/devices/' + id + '/delete/', {method: 'POST'});
+        const d = await r.json();
+        if (d.ok) location.reload();
+        else alert('Error: ' + (d.error || 'desconocido'));
+    } catch(e) { alert('Error de red'); }
+}
+</script>
 {% endblock %}

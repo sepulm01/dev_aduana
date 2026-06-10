@@ -908,8 +908,10 @@ int main(int argc, char* argv[])
         RETURN_ON_PARSER_ERROR(nvds_parse_streammux(streammux, argv[1], "streammux"));
         RETURN_ON_PARSER_ERROR(nvds_parse_gie(pgie, argv[1], "primary-gie"));
         g_object_get(G_OBJECT(pgie), "batch-size", &pgie_batch_size, NULL);
-        if (pgie_batch_size != num_sources && num_sources > 0)
-            g_object_set(G_OBJECT(pgie), "batch-size", num_sources, NULL);
+        if (num_sources > 0) {
+            guint target = MIN(pgie_batch_size, num_sources);
+            g_object_set(G_OBJECT(pgie), "batch-size", target, NULL);
+        }
         g_object_set(G_OBJECT(nvtracker),
                      "tracker-width", 640,
                      "tracker-height", 384,
