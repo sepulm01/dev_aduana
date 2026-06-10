@@ -62,3 +62,7 @@ computer_vision/app/pipeline-test3
 *.cache
 *.bak
 *.tmp
+
+# Generated DeepStream configs (contain credentials)
+computer_vision/config/config*.yml
+computer_vision/config/config_nvdsanalytics.txt

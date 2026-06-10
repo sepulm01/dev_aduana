@@ -4,18 +4,19 @@ NVDSANALYTICS_CONFIG_FILE = "config_nvdsanalytics.txt"
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
+MAX_INSTANCES = 4
+
 PIPELINE_CONFIGS = {
     "main": {
-        "filename": "config.yml",
-        "container": "mediamtx-manager-computer-vision-1",
         "models_dir": "../models/peoplenet",
         "max_streammux_batch": 3,
+        "max_devices_per_instance": 3,
+        "filename_template": "",
     },
     "retinaface": {
-        "filename": "config_retinaface.yml",
-        "container": "mediamtx-manager-computer-vision-retinaface-1",
         "models_dir": "../models/retinaface_det10g",
         "max_streammux_batch": 1,
+        "max_devices_per_instance": 1,
         "extra_yaml": "face-class-id: 0\n",
         "sgie_sections": (
             "secondary-gie0:\n"
@@ -28,16 +29,14 @@ PIPELINE_CONFIGS = {
         ),
     },
     "yolov9": {
-        "filename": "config_yolov9.yml",
-        "container": "mediamtx-manager-computer-vision-yolov9-1",
         "models_dir": "../models/yolov9",
         "max_streammux_batch": 3,
+        "max_devices_per_instance": 3,
     },
     "trafficcamnet_lpr": {
-        "filename": "config_trafficcamnet_lpr.yml",
-        "container": "mediamtx-manager-computer-vision-lpr-1",
         "models_dir": "../models/trafficcamnet",
         "max_streammux_batch": 1,
+        "max_devices_per_instance": 1,
         "sgie_sections": (
             "secondary-gie0:\n"
             "  plugin-type: 0\n"
@@ -50,13 +49,43 @@ PIPELINE_CONFIGS = {
     },
 }
 
+CONTAINER_BASE = "mediamtx-manager-computer-vision"
+PIPELINE_CONTAINER_SUFFIX = {
+    "main": "computer-vision",
+    "retinaface": "computer-vision-retinaface",
+    "yolov9": "computer-vision-yolov9",
+    "trafficcamnet_lpr": "computer-vision-lpr",
+}
 
-def get_pipeline_filename(pipeline_id):
-    return PIPELINE_CONFIGS[pipeline_id]["filename"]
+
+def get_pipeline_filename(pipeline_id, instance=1):
+    basename = PIPELINE_CONFIGS[pipeline_id].get("filename_template", pipeline_id)
+    if basename:
+        base = f"config_{basename}"
+    else:
+        base = "config"
+    if instance == 1:
+        return f"{base}.yml"
+    return f"{base}_{instance}.yml"
+
+
+def get_default_filename(pipeline_id):
+    return get_pipeline_filename(pipeline_id, instance=1)
+
+
+def get_pipeline_containers(pipeline_id):
+    suffix = PIPELINE_CONTAINER_SUFFIX[pipeline_id]
+    names = []
+    for n in range(1, MAX_INSTANCES + 1):
+        if n == 1:
+            names.append(f"mediamtx-manager-{suffix}-1")
+        else:
+            names.append(f"mediamtx-manager-{suffix}-{n}-1")
+    return names
 
 
 def get_pipeline_container(pipeline_id):
-    return PIPELINE_CONFIGS[pipeline_id]["container"]
+    return get_pipeline_containers(pipeline_id)[0]
 
 
 def _read_labels(pipeline_id, config_dir):
@@ -273,14 +302,25 @@ def generate_all_configs(config_dir=None):
                 source_type="file",
             ).exclude(stream_uris={})
         )
-        filename = PIPELINE_CONFIGS[pipeline_id]["filename"]
-        output_path = os.path.join(config_dir, filename)
 
-        if devices:
-            generate_config(devices, output_path, pipeline_id)
-            generate_nvdsanalytics_config(devices, config_dir)
-        else:
-            write_empty_config(output_path, pipeline_id)
+        pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
+        max_per_instance = pipeline_cfg["max_devices_per_instance"]
+        instances_needed = min(
+            max((len(devices) + max_per_instance - 1) // max_per_instance, 1),
+            MAX_INSTANCES,
+        )
+
+        for n in range(1, MAX_INSTANCES + 1):
+            filename = get_pipeline_filename(pipeline_id, instance=n)
+            output_path = os.path.join(config_dir, filename)
+
+            if n <= instances_needed and devices:
+                my_devices = devices[(n - 1) :: instances_needed]
+                generate_config(my_devices, output_path, pipeline_id)
+            else:
+                write_empty_config(output_path, pipeline_id)
+
+        generate_nvdsanalytics_config(devices, config_dir)
 
 
 def write_empty_config(output_path, pipeline_id):

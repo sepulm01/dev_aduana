@@ -13,11 +13,31 @@ CONFIG_YML_PATH = os.environ.get(
 )
 COMPUTER_VISION_CONTAINER = "mediamtx-manager-computer-vision-1"
 
-PIPELINE_CONTAINERS = {
-    "main": "mediamtx-manager-computer-vision-1",
-    "retinaface": "mediamtx-manager-computer-vision-retinaface-1",
-    "yolov9": "mediamtx-manager-computer-vision-yolov9-1",
-    "trafficcamnet_lpr": "mediamtx-manager-computer-vision-lpr-1",
+PIPELINE_INSTANCES = {
+    "main": [
+        "mediamtx-manager-computer-vision-1",
+        "mediamtx-manager-computer-vision-2-1",
+        "mediamtx-manager-computer-vision-3-1",
+        "mediamtx-manager-computer-vision-4-1",
+    ],
+    "retinaface": [
+        "mediamtx-manager-computer-vision-retinaface-1",
+        "mediamtx-manager-computer-vision-retinaface-2-1",
+        "mediamtx-manager-computer-vision-retinaface-3-1",
+        "mediamtx-manager-computer-vision-retinaface-4-1",
+    ],
+    "yolov9": [
+        "mediamtx-manager-computer-vision-yolov9-1",
+        "mediamtx-manager-computer-vision-yolov9-2-1",
+        "mediamtx-manager-computer-vision-yolov9-3-1",
+        "mediamtx-manager-computer-vision-yolov9-4-1",
+    ],
+    "trafficcamnet_lpr": [
+        "mediamtx-manager-computer-vision-lpr-1",
+        "mediamtx-manager-computer-vision-lpr-2-1",
+        "mediamtx-manager-computer-vision-lpr-3-1",
+        "mediamtx-manager-computer-vision-lpr-4-1",
+    ],
 }
 
 
@@ -114,7 +134,12 @@ def _docker_control(container_name, action):
 
 
 def regenerate_config_and_restart(pipeline_id=None):
-    from devices.config_generator import generate_all_configs, get_pipeline_container
+    from devices.config_generator import (
+        MAX_INSTANCES,
+        PIPELINE_CONFIGS,
+        generate_all_configs,
+        get_pipeline_filename,
+    )
     from onvif_utils.mediamtx_api import MediaMTXAPI
 
     Device = apps.get_model("devices", "Device")
@@ -134,8 +159,9 @@ def regenerate_config_and_restart(pipeline_id=None):
 
     if not all_devices:
         logger.warning("No devices with stream URIs, stopping all pipeline containers")
-        for pid in PIPELINE_CONTAINERS:
-            _docker_control(PIPELINE_CONTAINERS[pid], "stop")
+        for pid in PIPELINE_INSTANCES:
+            for container_name in PIPELINE_INSTANCES[pid]:
+                _docker_control(container_name, "stop")
         return
 
     mtx = MediaMTXAPI()
@@ -159,23 +185,38 @@ def regenerate_config_and_restart(pipeline_id=None):
     generate_all_configs(config_dir)
 
     r = _get_redis()
-    for pipeline_id_key in PIPELINE_CONTAINERS:
-        pipeline_devices = [d for d in all_devices if d.deepstream_pipeline == pipeline_id_key]
-        sources_key = f"deepstream:sources:{pipeline_id_key}"
-        container_name = PIPELINE_CONTAINERS[pipeline_id_key]
+    for pipeline_id_key in PIPELINE_INSTANCES:
+        pipeline_devices = [
+            d for d in all_devices if d.deepstream_pipeline == pipeline_id_key
+        ]
+        pipeline_cfg = PIPELINE_CONFIGS[pipeline_id_key]
+        max_per_instance = pipeline_cfg["max_devices_per_instance"]
+        instances_needed = min(
+            max((len(pipeline_devices) + max_per_instance - 1) // max_per_instance, 1),
+            MAX_INSTANCES,
+        )
 
-        r.delete(sources_key)
-        for idx, device in enumerate(pipeline_devices):
-            uri = device.stream_uris.get(device.default_profile_token, "")
-            r.hset(sources_key, str(idx), str(device.id))
-            r.hset(sources_key, f"{idx}:camera_id", str(device.id))
-            r.hset(sources_key, f"{idx}:url", uri)
+        for n in range(MAX_INSTANCES):
+            instance = n + 1
+            container_name = PIPELINE_INSTANCES[pipeline_id_key][n]
+            sources_key = f"deepstream:sources:{pipeline_id_key}:{instance}"
 
-        if pipeline_devices:
-            if pipeline_id and pipeline_id != pipeline_id_key:
-                continue
-            _docker_control(container_name, "restart")
-        else:
-            _docker_control(container_name, "stop")
+            r.delete(sources_key)
+
+            if instance <= instances_needed and pipeline_devices:
+                my_devices = pipeline_devices[n :: instances_needed]
+                for idx, device in enumerate(my_devices):
+                    uri = device.stream_uris.get(device.default_profile_token, "")
+                    r.hset(sources_key, str(idx), str(device.id))
+                    r.hset(sources_key, f"{idx}:camera_id", str(device.id))
+                    r.hset(sources_key, f"{idx}:url", uri)
+
+                if pipeline_id and pipeline_id != pipeline_id_key:
+                    continue
+                _docker_control(container_name, "restart")
+            else:
+                _docker_control(container_name, "stop")
+
+    logger.info("Configs regenerated for %d devices across all pipelines", len(all_devices))
 
     logger.info("Configs regenerated for %d devices across all pipelines", len(all_devices))

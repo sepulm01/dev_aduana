@@ -12,18 +12,40 @@ REDIS_HOST = "redis"
 REDIS_PORT = 6379
 
 PIPELINES = {
-    "main": "mediamtx-manager-computer-vision-1",
-    "retinaface": "mediamtx-manager-computer-vision-retinaface-1",
-    "yolov9": "mediamtx-manager-computer-vision-yolov9-1",
-    "trafficcamnet_lpr": "mediamtx-manager-computer-vision-lpr-1",
+    "main": [
+        "mediamtx-manager-computer-vision-1",
+        "mediamtx-manager-computer-vision-2-1",
+        "mediamtx-manager-computer-vision-3-1",
+        "mediamtx-manager-computer-vision-4-1",
+    ],
+    "retinaface": [
+        "mediamtx-manager-computer-vision-retinaface-1",
+        "mediamtx-manager-computer-vision-retinaface-2-1",
+        "mediamtx-manager-computer-vision-retinaface-3-1",
+        "mediamtx-manager-computer-vision-retinaface-4-1",
+    ],
+    "yolov9": [
+        "mediamtx-manager-computer-vision-yolov9-1",
+        "mediamtx-manager-computer-vision-yolov9-2-1",
+        "mediamtx-manager-computer-vision-yolov9-3-1",
+        "mediamtx-manager-computer-vision-yolov9-4-1",
+    ],
+    "trafficcamnet_lpr": [
+        "mediamtx-manager-computer-vision-lpr-1",
+        "mediamtx-manager-computer-vision-lpr-2-1",
+        "mediamtx-manager-computer-vision-lpr-3-1",
+        "mediamtx-manager-computer-vision-lpr-4-1",
+    ],
 }
 
-REDIS_SOURCES_KEYS = {
+REDIS_SOURCES_PREFIX = {
     "main": "deepstream:sources:main",
     "retinaface": "deepstream:sources:retinaface",
     "yolov9": "deepstream:sources:yolov9",
     "trafficcamnet_lpr": "deepstream:sources:trafficcamnet_lpr",
 }
+
+MAX_INSTANCES = 4
 
 DOCKER_SOCK = "/var/run/docker.sock"
 
@@ -33,38 +55,74 @@ def collect_deepstream_metrics():
     fps_data = _collect_fps(r)
 
     container_stats = {}
-    for pipeline_id, container_name in PIPELINES.items():
-        container_stats[pipeline_id] = _container_stats(container_name)
+    instances_detail = {}
+    for pipeline_id, containers in PIPELINES.items():
+        aggregated = {
+            "name": f"{pipeline_id} (aggregated)",
+            "running": False,
+            "state": "stopped",
+            "cpu_percent": 0.0,
+            "memory_mb": 0,
+            "memory_limit_mb": 0,
+            "memory_percent": 0.0,
+            "network_rx_mb": 0,
+            "network_tx_mb": 0,
+            "pids": 0,
+            "started_at": None,
+            "instance_count": 0,
+            "running_count": 0,
+        }
+        inst_list = []
+        for n, container_name in enumerate(containers):
+            cstats = _container_stats(container_name)
+            cstats["instance"] = n + 1
+            cstats["pipeline"] = pipeline_id
+            inst_list.append(cstats)
+            if cstats["running"]:
+                aggregated["running"] = True
+                aggregated["state"] = "running"
+                aggregated["cpu_percent"] = round(aggregated["cpu_percent"] + cstats["cpu_percent"], 1)
+                aggregated["memory_mb"] = round(aggregated["memory_mb"] + cstats["memory_mb"], 1)
+                aggregated["network_rx_mb"] = round(aggregated["network_rx_mb"] + cstats["network_rx_mb"], 1)
+                aggregated["pids"] += cstats["pids"]
+                aggregated["running_count"] += 1
+            aggregated["instance_count"] += 1
+
+        container_stats[pipeline_id] = aggregated
+        instances_detail[pipeline_id] = inst_list
 
     return {
         "fps": fps_data,
         "containers": container_stats,
+        "instances": instances_detail,
         "collected_at": time.time(),
     }
 
 
 def _collect_fps(r):
     sources = {}
-    for pipeline_id, redis_key in REDIS_SOURCES_KEYS.items():
-        raw = r.hgetall(redis_key)
+    for pipeline_id, prefix in REDIS_SOURCES_PREFIX.items():
         fps_entries = []
-        for k, v in raw.items():
-            if isinstance(k, bytes):
-                k = k.decode()
-            if isinstance(v, bytes):
-                v = v.decode()
-            if k.endswith(":fps"):
-                source_id = k.replace(":fps", "")
-                device_id = raw.get(source_id, raw.get(source_id.encode(), "?"))
-                if isinstance(device_id, bytes):
-                    device_id = device_id.decode()
-                fps_entries.append(
-                    {
-                        "source_id": source_id,
-                        "device_id": device_id,
-                        "fps": int(v) if v.isdigit() else 0,
-                    }
-                )
+        for n in range(1, MAX_INSTANCES + 1):
+            redis_key = f"{prefix}:{n}"
+            raw = r.hgetall(redis_key)
+            for k, v in raw.items():
+                if isinstance(k, bytes):
+                    k = k.decode()
+                if isinstance(v, bytes):
+                    v = v.decode()
+                if k.endswith(":fps"):
+                    source_id = k.replace(":fps", "")
+                    device_id = raw.get(source_id, raw.get(source_id.encode(), "?"))
+                    if isinstance(device_id, bytes):
+                        device_id = device_id.decode()
+                    fps_entries.append(
+                        {
+                            "source_id": source_id,
+                            "device_id": device_id,
+                            "fps": int(v) if v.isdigit() else 0,
+                        }
+                    )
         total = sum(e["fps"] for e in fps_entries)
         count = len(fps_entries)
         avg = round(total / count, 1) if count else 0

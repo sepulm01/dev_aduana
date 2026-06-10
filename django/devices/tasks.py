@@ -32,13 +32,16 @@ def _broadcast_device_status(device_id, online):
 @shared_task
 def orchestrate_cameras():
     r = _get_redis()
+    from devices.config_generator import MAX_INSTANCES, PIPELINE_CONFIGS
+
     sources = {}
     for pipeline_id in ("main", "retinaface", "yolov9", "trafficcamnet_lpr"):
-        data = r.hgetall(f"deepstream:sources:{pipeline_id}")
-        for k, v in data.items():
-            if isinstance(k, bytes):
-                k = k.decode()
-            sources[k] = v
+        for n in range(1, MAX_INSTANCES + 1):
+            data = r.hgetall(f"deepstream:sources:{pipeline_id}:{n}")
+            for k, v in data.items():
+                if isinstance(k, bytes):
+                    k = k.decode()
+                sources[k] = v
 
     need_restart = False
 
@@ -108,9 +111,13 @@ def orchestrate_cameras():
                 break
 
         if device.is_online and source_id is not None and device.deepstream_pipeline:
-            fps_key = f"deepstream:sources:{device.deepstream_pipeline}"
-            fps = r.hget(fps_key, f"{source_id}:fps")
-            current_fps = int(fps) if fps else 0
+            pipeline = device.deepstream_pipeline
+            current_fps = 0
+            for n in range(1, MAX_INSTANCES + 1):
+                fps = r.hget(f"deepstream:sources:{pipeline}:{n}", f"{source_id}:fps")
+                if fps:
+                    current_fps = int(fps)
+                    break
 
             if current_fps == 0:
                 key = f"device:{cid}:fps_zero"
