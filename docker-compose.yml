@@ -204,6 +204,7 @@ services:
         condition: service_healthy
 
   computer-vision:
+    image: mediamtx-manager-computer-vision:latest
     build: ./computer_vision
     restart: unless-stopped
     runtime: nvidia
@@ -227,6 +228,7 @@ services:
 
   # pipeline2: Face Recognition — retinaface_det10g PGIE + 2d106det SGIE0 + w600k_r50 SGIE1
   computer-vision-retinaface:
+    image: mediamtx-manager-computer-vision-retinaface:latest
     build: ./computer_vision
     restart: unless-stopped
     runtime: nvidia
@@ -251,6 +253,7 @@ services:
 
   # pipeline3: TrafficCamNet + LPD + LPR — License plate reading
   computer-vision-lpr:
+    image: mediamtx-manager-computer-vision-lpr:latest
     build: ./computer_vision
     restart: unless-stopped
     runtime: nvidia
@@ -275,6 +278,7 @@ services:
 
   # pipeline4: YOLO v9 — PGIE only, uses DeepStream-Yolo custom lib
   computer-vision-yolov9:
+    image: mediamtx-manager-computer-vision-yolov9:latest
     build: ./computer_vision
     restart: unless-stopped
     runtime: nvidia
