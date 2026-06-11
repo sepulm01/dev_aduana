@@ -26,16 +26,14 @@ struct StrideTensor {
 // Layout: [det_idx][lm_idx] → {x, y} en píxeles absolutos del espacio de red (0-640).
 // El probe del pipeline lee esto y dibuja los círculos.
 struct Det10gLandmarks {
-    float pts[NUM_LANDMARKS][2];   // [0..4][x,y] en píxeles de red
+    float pts[NUM_LANDMARKS][2];
+    float cx, cy;
 };
 
 static std::mutex              g_lm_mutex;
-static std::vector<Det10gLandmarks> g_landmarks;   // una entrada por detección del último frame
+static std::vector<Det10gLandmarks> g_landmarks;
 
 extern "C" {
-    // Función pública para que el probe del pipeline lea los landmarks.
-    // Retorna el número de detecciones y copia los datos al buffer del caller.
-    // El caller debe llamar esta función desde el mismo thread del probe.
     int Det10g_GetLandmarks(Det10gLandmarks* out, int max_count)
     {
         std::lock_guard<std::mutex> lk(g_lm_mutex);
@@ -44,10 +42,56 @@ extern "C" {
         if (out && n > 0) memcpy(out, g_landmarks.data(), n * sizeof(Det10gLandmarks));
         return n;
     }
+
+    int Det10g_FindLandmarks(float bx, float by, float bw, float bh,
+                             Det10gLandmarks* out)
+    {
+        std::lock_guard<std::mutex> lk(g_lm_mutex);
+        float best_d = 1e9f;
+        int best = -1;
+        float tcx = bx + bw * 0.5f;
+        float tcy = by + bh * 0.5f;
+        for (int i = 0; i < (int)g_landmarks.size(); i++) {
+            float dx = g_landmarks[i].cx - tcx;
+            float dy = g_landmarks[i].cy - tcy;
+            float d = dx * dx + dy * dy;
+            if (d < best_d) { best_d = d; best = i; }
+        }
+        if (best >= 0 && out) {
+            *out = g_landmarks[best];
+            return 1;
+        }
+        return 0;
+    }
 }
 
 static bool g_debug = false;
 static bool g_debug_init = false;
+
+// Frontal-face filter thresholds — adjustable via environment variables.
+// Set in docker-compose.yml under the retinaface service environment: block.
+static float g_yaw_proxy_max     = 0.40f;
+static float g_asym_max          = 0.50f;
+static float g_roll_max          = 30.0f;
+static float g_eye_w_min         = 15.0f;
+static float g_nose_mouth_dy_min = 8.0f;
+
+static void load_env_thresholds()
+{
+    if (g_debug_init) return;
+    g_debug_init = true;
+    g_debug = (std::getenv("DET10G_DEBUG") != nullptr);
+    const char* s;
+    if ((s = std::getenv("DET10G_YAW_PROXY_MAX")))      g_yaw_proxy_max     = (float)atof(s);
+    if ((s = std::getenv("DET10G_ASYM_MAX")))           g_asym_max          = (float)atof(s);
+    if ((s = std::getenv("DET10G_ROLL_MAX")))           g_roll_max          = (float)atof(s);
+    if ((s = std::getenv("DET10G_EYE_W_MIN")))          g_eye_w_min         = (float)atof(s);
+    if ((s = std::getenv("DET10G_NOSE_MOUTH_DY_MIN"))) g_nose_mouth_dy_min = (float)atof(s);
+    if (g_debug) {
+        fprintf(stderr, "[Det10g] Thresholds: yaw_proxy=%.2f asym=%.2f roll=%.1f eye_w=%.1f nose_mouth_dy=%.1f\n",
+                g_yaw_proxy_max, g_asym_max, g_roll_max, g_eye_w_min, g_nose_mouth_dy_min);
+    }
+}
 
 extern "C" bool NvDsInferParseCustomDet10g(
     std::vector<NvDsInferLayerInfo> const& outputLayersInfo,
@@ -55,10 +99,7 @@ extern "C" bool NvDsInferParseCustomDet10g(
     NvDsInferParseDetectionParams const& detectionParams,
     std::vector<NvDsInferObjectDetectionInfo>& objectList)
 {
-    if (!g_debug_init) {
-        g_debug = (std::getenv("DET10G_DEBUG") != nullptr);
-        g_debug_init = true;
-    }
+    load_env_thresholds();
 
     if (g_debug) {
         fprintf(stderr, "[Det10g] Parser invocado. Output layers: %zu\n",
@@ -164,7 +205,41 @@ extern "C" bool NvDsInferParseCustomDet10g(
                     } else {
                         memset(&lm, 0, sizeof(lm));
                     }
+                    lm.cx = (x1 + x2) * 0.5f;
+                    lm.cy = (y1 + y2) * 0.5f;
                     new_landmarks.push_back(lm);
+
+                    float re_x = lm.pts[0][0], re_y = lm.pts[0][1];
+                    float le_x = lm.pts[1][0], le_y = lm.pts[1][1];
+                    float no_x = lm.pts[2][0], no_y = lm.pts[2][1];
+
+                    float eye_dx = le_x - re_x;
+                    float eye_dy = le_y - re_y;
+                    float eye_w  = sqrtf(eye_dx * eye_dx + eye_dy * eye_dy);
+
+                    // eye-to-eye distance too small → landmarks collapsed, face is profile
+                    if (eye_w < g_eye_w_min) continue;
+
+                    float eye_cx = (re_x + le_x) * 0.5f;
+                    float yaw_proxy = fabsf(no_x - eye_cx) / eye_w;
+
+                    float d_r = fabsf(no_x - re_x);
+                    float d_l = fabsf(no_x - le_x);
+                    float asym = fabsf(d_r - d_l) / (d_r + d_l + 1e-5f);
+
+                    float roll_deg = fabsf(atan2f(eye_dy, eye_dx) * 57.29578f);
+
+                    float mr_y = lm.pts[3][1];
+                    float ml_y = lm.pts[4][1];
+                    float mouth_mid_y = (mr_y + ml_y) * 0.5f;
+                    float nose_mouth_dy = fabsf(no_y - mouth_mid_y);
+
+                    // nose and mouth at same vertical level → profile face
+                    if (nose_mouth_dy < g_nose_mouth_dy_min) continue;
+
+                    if (yaw_proxy > g_yaw_proxy_max || asym > g_asym_max || roll_deg > g_roll_max) {
+                        continue;
+                    }
 
                     NvDsInferObjectDetectionInfo det;
                     det.classId            = 0;

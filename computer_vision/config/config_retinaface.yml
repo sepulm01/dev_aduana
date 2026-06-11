@@ -1,6 +1,6 @@
 face-class-id: 0
 source-list:
-  list: "rtsp://mediamtx:8554/cam_3_main;"
+  list: "rtsp://sepulm01:Aeropuerto51@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif;"
 
 streammux:
   batch-size: 1
@@ -14,13 +14,6 @@ primary-gie:
   plugin-type: 0
   config-file-path: ../models/retinaface_det10g/pgie_config.yml
 
-secondary-gie0:
-  plugin-type: 0
-  config-file-path: ../models/retinaface_det10g/sgie0_retinaface.yml
-
-secondary-gie1:
-  plugin-type: 0
-  config-file-path: ../models/retinaface_det10g/sgie1_retinaface.yml
 analytics:
   enable: 1
   config-file: config_nvdsanalytics.txt

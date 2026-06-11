@@ -197,6 +197,7 @@ services:
       - "127.0.0.1:12348:12348"
     volumes:
       - ./django/media:/app/media
+      - ./computer_vision/models:/opt/computer_vision/models:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -313,6 +314,11 @@ services:
       - GIO_USE_PROXY_RESOLVER=none
       - GIO_MODULE_DIR=/dev/null
       - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface:1
+      - DET10G_YAW_PROXY_MAX=0.40
+      - DET10G_ASYM_MAX=0.50
+      - DET10G_ROLL_MAX=30.0
+      - DET10G_EYE_W_MIN=15.0
+      - DET10G_NOSE_MOUTH_DY_MIN=8.0
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /var/www/dev_security/videos:/opt/videos:ro
@@ -337,6 +343,11 @@ services:
       - GIO_USE_PROXY_RESOLVER=none
       - GIO_MODULE_DIR=/dev/null
       - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface:2
+      - DET10G_YAW_PROXY_MAX=0.40
+      - DET10G_ASYM_MAX=0.50
+      - DET10G_ROLL_MAX=30.0
+      - DET10G_EYE_W_MIN=15.0
+      - DET10G_NOSE_MOUTH_DY_MIN=8.0
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /var/www/dev_security/videos:/opt/videos:ro
@@ -361,6 +372,11 @@ services:
       - GIO_USE_PROXY_RESOLVER=none
       - GIO_MODULE_DIR=/dev/null
       - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface:3
+      - DET10G_YAW_PROXY_MAX=0.40
+      - DET10G_ASYM_MAX=0.50
+      - DET10G_ROLL_MAX=30.0
+      - DET10G_EYE_W_MIN=15.0
+      - DET10G_NOSE_MOUTH_DY_MIN=8.0
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /var/www/dev_security/videos:/opt/videos:ro
@@ -385,6 +401,11 @@ services:
       - GIO_USE_PROXY_RESOLVER=none
       - GIO_MODULE_DIR=/dev/null
       - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface:4
+      - DET10G_YAW_PROXY_MAX=0.40
+      - DET10G_ASYM_MAX=0.50
+      - DET10G_ROLL_MAX=30.0
+      - DET10G_EYE_W_MIN=15.0
+      - DET10G_NOSE_MOUTH_DY_MIN=8.0
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /var/www/dev_security/videos:/opt/videos:ro

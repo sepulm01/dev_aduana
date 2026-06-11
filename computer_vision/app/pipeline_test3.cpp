@@ -32,7 +32,9 @@
 #define FACE_END_MARKER "END!"
 #define FACE_LANDMARKS_DIM 212
 #define FACE_EMBEDDING_DIM 512
+#define FACE_KPS_COUNT 5
 #define FACE_MIN_BBOX_PX   30
+#define FACE_MAX_FPS       10
 
 #pragma pack(push, 1)
 struct FaceCropPacket {
@@ -44,6 +46,7 @@ struct FaceCropPacket {
     float    bbox_width;
     float    bbox_height;
     uint64_t timestamp_ms;
+    float    kps[FACE_KPS_COUNT * 2];
 };
 #pragma pack(pop)
 
@@ -154,8 +157,7 @@ struct FacePending {
     NvDsFrameMeta*  fm;
     int             dev_id;
     float           quality;
-    float           landmarks[FACE_LANDMARKS_DIM];
-    float           embedding[FACE_EMBEDDING_DIM];
+    float           kps[FACE_KPS_COUNT * 2];
     bool            has_lm;
     bool            has_emb;
 };
@@ -167,6 +169,15 @@ struct ProbeData {
     guint64 last_snap_time;
 };
 #define SNAP_COOLDOWN_US 3000000
+
+extern "C" {
+    struct Det10gLandmarks {
+        float pts[FACE_KPS_COUNT][2];
+        float cx, cy;
+    };
+    int Det10g_GetLandmarks(Det10gLandmarks*, int);
+    int Det10g_FindLandmarks(float, float, float, float, Det10gLandmarks*);
+}
 
 static std::string parse_analytics_frame_meta(NvDsFrameMeta* fm)
 {
@@ -308,6 +319,7 @@ static bool send_face_crop(const FacePending& fp)
         pkt.bbox_width   = fp.om->detector_bbox_info.org_bbox_coords.width  / fw;
         pkt.bbox_height  = fp.om->detector_bbox_info.org_bbox_coords.height / fh;
         pkt.timestamp_ms = (uint64_t)(time(nullptr) * 1000LL);
+        memcpy(pkt.kps, fp.kps, sizeof(pkt.kps));
 
         auto safe_send = [&](const void* data, size_t len) -> bool {
             ssize_t s = send(g_face_sock_fd, data, len, MSG_NOSIGNAL);
@@ -318,20 +330,6 @@ static bool send_face_crop(const FacePending& fp)
         if (!safe_send(enc->outBuffer, enc->outLen)) return false;
         if (!safe_send(FACE_END_MARKER, strlen(FACE_END_MARKER))) return false;
         if (!safe_send(&pkt, sizeof(pkt))) return false;
-
-        if (fp.has_emb) {
-            if (!safe_send(fp.embedding, FACE_EMBEDDING_DIM * sizeof(float))) return false;
-        } else {
-            float zeros[FACE_EMBEDDING_DIM] = {};
-            if (!safe_send(zeros, sizeof(zeros))) return false;
-        }
-
-        if (fp.has_lm) {
-            if (!safe_send(fp.landmarks, FACE_LANDMARKS_DIM * sizeof(float))) return false;
-        } else {
-            float zeros[FACE_LANDMARKS_DIM] = {};
-            if (!safe_send(zeros, sizeof(zeros))) return false;
-        }
 
         return true;
     }
@@ -587,68 +585,71 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                     pd->last_snap_time = now;
                 }
             }
-        }
 
-        if (g_face_enc_ctx) {
-            std::vector<FacePending> face_queue;
+            if (g_face_enc_ctx) {
+                static guint64 last_face_sent = 0;
+                guint64 face_interval = 1000000 / FACE_MAX_FPS;
+                std::vector<FacePending> face_queue;
 
-            for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
-                NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
-                if (om->class_id != g_face_class_id) continue;
-                if (om->object_id == UNTRACKED_OBJECT_ID || om->object_id == 0) continue;
+                for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+                    NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
+                    if (om->class_id != g_face_class_id) continue;
 
-                float w = om->detector_bbox_info.org_bbox_coords.width;
-                float h = om->detector_bbox_info.org_bbox_coords.height;
-                if (w < FACE_MIN_BBOX_PX || h < FACE_MIN_BBOX_PX) continue;
+                    float w = om->detector_bbox_info.org_bbox_coords.width;
+                    float h = om->detector_bbox_info.org_bbox_coords.height;
+                    if (w < FACE_MIN_BBOX_PX || h < FACE_MIN_BBOX_PX) continue;
 
-                FacePending fp;
-                fp.om      = om;
-                fp.fm      = fm;
-                fp.dev_id  = dev_id;
-                fp.quality = 0.0f;
-                fp.has_lm  = false;
-                fp.has_emb = false;
-                memset(fp.landmarks, 0, sizeof(fp.landmarks));
-                memset(fp.embedding, 0, sizeof(fp.embedding));
+                    if (now - last_face_sent < face_interval) continue;
 
-                fp.has_lm = extract_tensor_data(om, 2,
-                    fp.landmarks, FACE_LANDMARKS_DIM);
-                fp.has_emb = extract_tensor_data(om, 3,
-                    fp.embedding, FACE_EMBEDDING_DIM);
+                    FacePending fp;
+                    fp.om      = om;
+                    fp.fm      = fm;
+                    fp.dev_id  = dev_id;
+                    fp.quality = 1.0f;
+                    fp.has_lm  = false;
+                    fp.has_emb = false;
+                    memset(fp.kps, 0, sizeof(fp.kps));
 
-                if (fp.has_lm) {
-                    fp.quality = compute_quality_score(fp.landmarks);
+                    float left = om->detector_bbox_info.org_bbox_coords.left;
+                    float top  = om->detector_bbox_info.org_bbox_coords.top;
+
+                    Det10gLandmarks lm;
+                    if (Det10g_FindLandmarks(left, top, w, h, &lm)) {
+                        for (int k = 0; k < FACE_KPS_COUNT; k++) {
+                            fp.kps[k * 2]     = lm.pts[k][0];
+                            fp.kps[k * 2 + 1] = lm.pts[k][1];
+                        }
+                        fp.has_lm = true;
+                    }
+
+                    NvDsObjEncUsrArgs objData = {};
+                    objData.saveImg      = FALSE;
+                    objData.attachUsrMeta = TRUE;
+                    objData.quality      = 80;
+                    objData.objNum       = (int)(++g_face_obj_ctr);
+
+                    GstMapInfo inmap = GST_MAP_INFO_INIT;
+                    if (!gst_buffer_map(buf, &inmap, GST_MAP_READ)) continue;
+                    NvBufSurface* surf = (NvBufSurface*)inmap.data;
+                    if (surf) {
+                        nvds_obj_enc_process(g_face_enc_ctx, &objData,
+                                             surf, om, fm);
+                        face_queue.push_back(fp);
+                    }
+                    gst_buffer_unmap(buf, &inmap);
+                    last_face_sent = now;
                 }
 
-                if (fp.quality < 1.0f) continue;
-
-                NvDsObjEncUsrArgs objData = {};
-                objData.saveImg      = FALSE;
-                objData.attachUsrMeta = TRUE;
-                objData.quality      = 80;
-                objData.objNum       = (int)(++g_face_obj_ctr);
-
-                GstMapInfo inmap = GST_MAP_INFO_INIT;
-                if (!gst_buffer_map(buf, &inmap, GST_MAP_READ)) continue;
-                NvBufSurface* surf = (NvBufSurface*)inmap.data;
-                if (surf) {
-                    nvds_obj_enc_process(g_face_enc_ctx, &objData,
-                                         surf, om, fm);
-                    face_queue.push_back(fp);
-                }
-                gst_buffer_unmap(buf, &inmap);
-            }
-
-            if (!face_queue.empty()) {
-                nvds_obj_enc_finish(g_face_enc_ctx);
-                for (auto& fp : face_queue) {
-                    if (!send_face_crop(fp)) {
-                        g_printerr("[Face] send failed for object %lu\n",
-                                   fp.om->object_id);
-                    } else {
-                        g_print("[Face] device=%d object=%lu quality=%.2f emb=%s\n",
-                                fp.dev_id, fp.om->object_id, fp.quality,
-                                fp.has_emb ? "yes" : "no");
+                if (!face_queue.empty()) {
+                    nvds_obj_enc_finish(g_face_enc_ctx);
+                    for (auto& fp : face_queue) {
+                        if (!send_face_crop(fp)) {
+                            g_printerr("[Face] send failed for object %lu\n",
+                                       fp.om->object_id);
+                        } else {
+                            g_print("[Face] device=%d object=%lu\n",
+                                    fp.dev_id, fp.om->object_id);
+                        }
                     }
                 }
             }
@@ -1000,7 +1001,7 @@ int main(int argc, char* argv[])
     if (oc_ok) probe_data.oc_snap = &oc_snap;
     probe_data.last_snap_time = 0;
 
-    if (sgie0 || sgie1) {
+    if (sgie0 || sgie1 || g_face_class_id >= 0) {
         if (g_lpr_mode) {
             g_print("[LPR] SGIE pipeline detected, skipping face encoder\n");
         } else {

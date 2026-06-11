@@ -18,15 +18,6 @@ PIPELINE_CONFIGS = {
         "max_streammux_batch": 1,
         "max_devices_per_instance": 1,
         "extra_yaml": "face-class-id: 0\n",
-        "sgie_sections": (
-            "secondary-gie0:\n"
-            "  plugin-type: 0\n"
-            "  config-file-path: ../models/retinaface_det10g/sgie0_retinaface.yml\n"
-            "\n"
-            "secondary-gie1:\n"
-            "  plugin-type: 0\n"
-            "  config-file-path: ../models/retinaface_det10g/sgie1_retinaface.yml\n"
-        ),
     },
     "yolov9": {
         "models_dir": "../models/yolov9",
