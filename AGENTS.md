@@ -85,7 +85,7 @@ All services connect via Docker DNS `redis://redis:6379` — never hardcode `127
 | `celery-worker` | Async tasks (camera orchestrator + incident manager) |
 | `celery-beat` | Scheduler (orchestrate_cameras + incident_manager every 5s) |
 | `redis-event-bridge` | Redis `device:*:events` → Channels |
-| `face-receiver` | TCP :12348, face crops/embeddings → `Detection` records |
+| `face-receiver` | TCP :12348, pose estimation + alignment + embedding + face matching → `Detection` records |
 | `mediamtx` | RTSP:8554, WebRTC:8889, API:9997 |
 | `event-stream-service` | Dahua event streaming |
 | `notification-bridge` | Redis pubsub → evalúa NotificationRules → envía Telegram/Webhook |
@@ -154,7 +154,7 @@ Device.username/password (ONVIF)
 - NVIDIA DeepStream 8.0, CUDA 12.8, binary `/opt/computer_vision/app/pipeline-test3` (C, single file)
 - Model switch: `MODEL=<profile>` env var, `entrypoint-model.sh` symlinks `/opt/models/active/` to profile
 - Container: `computer-vision` (runtime: nvidia), config at `/opt/computer_vision/config/config.yml`
-- `people-facerec` uses det_10g as PGIE with custom RetinaFace parser (`libnvds_retinaface_parser.so`): SGIE0=`2d106det.onnx` (106-pt landmarks, 3×192×192), SGIE1=`w600k_r50.onnx` (ArcFace 512-d, 3×112×112). Both classifier mode, operate on face bboxes (class_id=0). Redis output format: `Faces[object_id, quality_score, landmarks(212 floats), embedding(512 floats)]`. Quality gate: % of 106 landmark points within [0,1] normalized region.
+- `retinaface` pipeline uses det_10g as PGIE with custom RetinaFace parser (`libnvdsparsebbox_det10g.so`). No SGIE in DeepStream — only PGIE produces 5 facial keypoints (eyes, nose, mouth corners). PGIE crops are sent via TCP to Python `face-receiver` which runs pose estimation (1k3d68), face alignment (w600k_r50 with similarity transform from 5 kps), and cosine-distance face matching against `Detection` records. FPS limited to 10 via `FACE_MAX_FPS`.
 
 ### Pipeline
 ```
@@ -222,11 +222,22 @@ Analytics probe on `nvdslogger src` works in both modes. Display mode (X11 windo
 ## Detections / Face Recognition
 
 - `detections.Detection` uses pgvector `VectorField(dimensions=512)`, `IvfflatIndex` with `vector_cosine_ops`.
-- Face receiver (TCP :12348): JPEG crop → `END!` marker → `FaceCropPacket` struct (40 bytes) → 512d embedding → 212d landmarks. Crops saved to `detections/crops/YYYY/MM/DD/`.
-- `FaceBuffer` keeps best-scoring crop per `(device_id, object_id)` for 10s, flushed on disappearance.
-- `FACE_MATCH_COOLDOWN_SECONDS = 30` — same-person detections within cooldown are skipped.
+- Face receiver (TCP :12348): JPEG crop → `END!` marker → `FaceCropPacket` struct (80 bytes, includes 5 keypoints as `float[10]`).
+- Pipeline: JPEG decode → PoseEstimator (1k3d68.onnx, yaw filter) → FaceAligner (w600k_r50.onnx, similarity transform from 5 kps → 112×112) → 512d embedding.
+- `EMBEDDING_NORM_MIN/MAX = [3.0, 25.0]` — w600k_r50 produces high-norm embeddings (mean ~14.5) due to `mean=(1,1,1), std=(127.5,127.5,127.5)` preprocessing.
+- Instant processing: only processes a crop if its `width×height` is larger than the last seen crop for that `(device_id, object_id)`. Stale entries swept every 100 frames with 5-min TTL.
+- `MATCH_DISTANCE_THRESHOLD = 0.35` — cosine distance for same-identity match.
+- `FACE_MATCH_COOLDOWN_SECONDS = 10` — same-person match suppression window (configurable via `settings.FACE_MATCH_COOLDOWN_SECONDS`).
 - WebSocket: broadcasts `"new_face"` (first seen), `"face_match"` with `matched_id`+`distance` (re-id).
-- DeepStream C++: `redis_bridge.cpp` crop socket auto-reconnects if `face-receiver` restarts.
+- DeepStream C++: `pipeline_test3.cpp` sends JPEG+kps+ID to face-receiver, auto-reconnects on socket failure.
+- Frontal-face filter (C++ parser, pre-NMS) — 5 parametric thresholds via environment variables:
+  - `DET10G_YAW_PROXY_MAX` (0.40) — nose horizontal offset / eye width
+  - `DET10G_ASYM_MAX` (0.50) — asymmetry of nose distances to L/R eyes
+  - `DET10G_ROLL_MAX` (30.0) — head tilt in degrees
+  - `DET10G_EYE_W_MIN` (15.0) — minimum eye-to-eye distance in pixels (catches collapsed landmarks on profile faces)
+  - `DET10G_NOSE_MOUTH_DY_MIN` (8.0) — minimum vertical nose-mouth separation (catches profile faces with overlapping landmarks)
+  - Set in `docker-compose.yml` under `computer-vision-retinaface*` → `environment:` block.
+  - Adjust without recompiling: edit `docker-compose.yml` and `docker-compose up -d`. Parser reads env vars on each batch.
 
 ## Notes
 
