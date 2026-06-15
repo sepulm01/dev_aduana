@@ -52,7 +52,6 @@ DOCKER_SOCK = "/var/run/docker.sock"
 
 def collect_deepstream_metrics():
     r = _get_redis()
-    fps_data = _collect_fps(r)
 
     container_stats = {}
     instances_detail = {}
@@ -91,6 +90,8 @@ def collect_deepstream_metrics():
         container_stats[pipeline_id] = aggregated
         instances_detail[pipeline_id] = inst_list
 
+    fps_data = _collect_fps(r, container_stats)
+
     return {
         "fps": fps_data,
         "containers": container_stats,
@@ -99,9 +100,20 @@ def collect_deepstream_metrics():
     }
 
 
-def _collect_fps(r):
+def _collect_fps(r, container_stats=None):
     sources = {}
     for pipeline_id, prefix in REDIS_SOURCES_PREFIX.items():
+        if container_stats:
+            cs = container_stats.get(pipeline_id, {})
+            if cs.get("running_count", 0) == 0:
+                sources[pipeline_id] = {
+                    "entries": [],
+                    "total_fps": 0,
+                    "source_count": 0,
+                    "avg_fps": 0,
+                }
+                continue
+
         fps_entries = []
         for n in range(1, MAX_INSTANCES + 1):
             redis_key = f"{prefix}:{n}"

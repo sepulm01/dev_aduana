@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -605,6 +606,52 @@ def analytics_snapshot(request, device_id):
         return HttpResponse(resp.content, content_type="image/jpeg")
     except Exception as e:
         logger.warning("Failed to get snapshot for device %s: %s", device_id, e)
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@login_required
+@csrf_exempt
+def analytics_capture_snapshot(request, device_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    device = get_object_or_404(Device, id=device_id)
+
+    data = json.loads(request.body or "{}")
+    preset_token = data.get("preset_token") or request.GET.get("preset_token", "")
+    profile_token = data.get("profile_token") or device.default_profile_token
+
+    if not preset_token:
+        return JsonResponse({"error": "preset_token required"}, status=400)
+    if not profile_token:
+        return JsonResponse({"error": "profile_token required"}, status=400)
+
+    rtsp_uri = device.stream_uris.get(profile_token, "")
+    if not rtsp_uri:
+        return JsonResponse({"error": f"No stream URI for profile {profile_token}"}, status=400)
+
+    try:
+        from onvif_utils.snapshot import capture_frame_rtsp
+
+        frame_bytes = capture_frame_rtsp(rtsp_uri, timeout=10)
+        snapshot_b64 = base64.b64encode(frame_bytes).decode()
+
+        preset = AnalyticsPreset.objects.filter(
+            device=device, preset_token=preset_token
+        ).first()
+        if preset:
+            preset.snapshot = snapshot_b64
+            preset.save()
+        else:
+            AnalyticsPreset.objects.create(
+                device=device,
+                preset_token=preset_token,
+                snapshot=snapshot_b64,
+            )
+
+        return JsonResponse({"snapshot": snapshot_b64})
+    except Exception as e:
+        logger.warning("Snapshot capture failed for device %s: %s", device_id, e)
         return JsonResponse({"error": str(e)}, status=500)
 
 

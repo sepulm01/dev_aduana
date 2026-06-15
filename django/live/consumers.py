@@ -27,43 +27,12 @@ class DeviceConsumer(AsyncWebsocketConsumer):
         if msg_type == "ping":
             await self.send(text_data=json.dumps({"type": "pong"}))
 
-    async def motion_event(self, event):
-        await self.send(
-            text_data=json.dumps(
-                {
-                    "type": "motion",
-                    "device_id": event["device_id"],
-                    "timestamp": event["timestamp"],
-                    "metadata": event.get("metadata", {}),
-                }
-            )
-        )
-
-    async def device_status(self, event):
-        await self.send(
-            text_data=json.dumps(
-                {
-                    "type": "status",
-                    "device_id": event["device_id"],
-                    "online": event.get("online", False),
-                }
-            )
-        )
-
-    async def ivs_event(self, event):
-        await self.send(
-            text_data=json.dumps(
-                {
-                    "type": "ivs",
-                    "device_id": event["device_id"],
-                    "code": event.get("code", ""),
-                    "action": event.get("action", ""),
-                    "data": event.get("data", {}),
-                    "timestamp": event.get("timestamp", ""),
-                    "active_preset": event.get("active_preset"),
-                }
-            )
-        )
+    async def dispatch(self, message):
+        msg_type = message.get("type", "")
+        if msg_type.startswith("websocket."):
+            await super().dispatch(message)
+        else:
+            await self.send(text_data=json.dumps(message))
 
 
 class IncidentConsumer(AsyncWebsocketConsumer):

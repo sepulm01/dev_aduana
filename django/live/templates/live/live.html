@@ -218,10 +218,8 @@ function connectWS() {
             const msg = JSON.parse(e.data);
             if (msg.type === 'pong') return;
 
-            if (msg.type === 'ivs') {
+            if (msg.type === 'ivs_event') {
                 handleIVSEvent(msg);
-            } else if (msg.type === 'motion') {
-                handleMotionEvent(msg);
             }
         } catch (err) {
             console.error('WS parse error:', err);
@@ -281,13 +279,6 @@ function handleIVSEvent(msg) {
     log.innerHTML = eventLogItems.slice(0, 10).map(function(e) {
         return '<div class="text-muted small py-1 border-bottom border-secondary"><span class="text-danger">' + e.code + '</span> <span class="text-secondary">' + e.action + '</span> <span class="text-info">' + e.ts + '</span></div>';
     }).join('');
-}
-
-function handleMotionEvent(msg) {
-    const badge = document.getElementById('ivsEventBadge');
-    if (msg.metadata && msg.metadata.motion_active) {
-        badge.innerHTML = '<span class="badge bg-warning"><i class="ti ti-motion me-1"></i>Movimiento</span>';
-    }
 }
 
 function drawIVSOverlay(objects) {

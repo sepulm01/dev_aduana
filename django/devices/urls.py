@@ -61,6 +61,11 @@ urlpatterns = [
         name="analytics_snapshot",
     ),
     path(
+        "api/devices/<int:device_id>/analytics/capture-snapshot/",
+        views.analytics_capture_snapshot,
+        name="analytics_capture_snapshot",
+    ),
+    path(
         "api/devices/<int:device_id>/analytics/presets/",
         views.analytics_presets,
         name="analytics_presets",

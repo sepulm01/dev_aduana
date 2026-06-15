@@ -48,6 +48,12 @@
                 <div class="collapse navbar-collapse" id="navbar-menu">
                     <ul class="navbar-nav pt-lg-3">
                         <li class="nav-item">
+                            <a class="nav-link" href="{% url 'incident_dashboard' %}">
+                                <i class="ti ti-alert-triangle nav-link-icon" style="color:#ef4444;"></i>
+                                <span class="nav-link-title">Dashboard</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link" href="/">
                                 <i class="ti ti-layout-grid nav-link-icon"></i>
                                 <span class="nav-link-title">Dispositivos</span>
@@ -83,12 +89,7 @@
                                 <span class="nav-link-title">Operadores</span>
                             </a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'incident_dashboard' %}">
-                                <i class="ti ti-alert-triangle nav-link-icon" style="color:#ef4444;"></i>
-                                <span class="nav-link-title">Dashboard</span>
-                            </a>
-                        </li>
+
                         <li class="nav-item">
                             <a class="nav-link" href="{% url 'monitoring_dashboard' %}">
                                 <i class="ti ti-chart-bar nav-link-icon"></i>

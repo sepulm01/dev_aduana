@@ -64,6 +64,9 @@
                 <button class="btn btn-sm btn-outline-success w-100 mb-2" id="btnSavePreset" onclick="saveCurrentPreset()">
                     <i class="ti ti-check me-1"></i>Guardar preset
                 </button>
+                <button class="btn btn-sm btn-outline-warning w-100 mb-2" id="btnCaptureSnapshot" onclick="captureSnapshot()">
+                    <i class="ti ti-camera me-1"></i>Capturar snapshot
+                </button>
                 <button class="btn btn-sm btn-outline-info w-100" id="btnApplyIA" onclick="applyToIA()">
                     <i class="ti ti-rocket me-1"></i>Aplicar a IA
                 </button>
@@ -113,6 +116,7 @@ const CANVAS_H = 480;
 const HAS_PTZ = {{ has_ptz|yesno:"true,false" }};
 const API_PRESETS = '/api/devices/' + DEVICE_ID + '/analytics/presets/?profile_token={{ default_profile }}';
 const API_SHAPES = '/api/devices/' + DEVICE_ID + '/analytics/';
+const API_CAPTURE_SNAPSHOT = '/api/devices/' + DEVICE_ID + '/analytics/capture-snapshot/';
 const API_GOTO_APPLY = '/api/devices/' + DEVICE_ID + '/analytics/goto-apply/';
 
 let shapes = [];
@@ -418,9 +422,11 @@ function setDrawingEnabled(enabled) {
     drawingEnabled = enabled;
     const btnSave = document.getElementById('btnSavePreset');
     const btnApply = document.getElementById('btnApplyIA');
+    const btnCapture = document.getElementById('btnCaptureSnapshot');
     const footer = document.getElementById('controlsFooter');
     if (btnSave) btnSave.disabled = !enabled;
     if (btnApply) btnApply.disabled = !enabled;
+    if (btnCapture) btnCapture.disabled = !enabled;
     if (footer) footer.style.opacity = enabled ? '1' : '0.4';
 }
 
@@ -644,6 +650,47 @@ async function saveCurrentPreset() {
         status.innerHTML = '<span class="text-danger">Error de red</span>';
     }
 
+    setTimeout(() => { status.style.display = 'none'; }, 3000);
+}
+
+async function captureSnapshot() {
+    if (!currentPresetToken) return;
+
+    const status = document.getElementById('saveStatus');
+    const btn = document.getElementById('btnCaptureSnapshot');
+    status.style.display = 'block';
+    status.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Capturando snapshot...';
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Capturando...';
+    }
+
+    try {
+        const resp = await fetch(API_CAPTURE_SNAPSHOT, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                preset_token: currentPresetToken,
+                profile_token: '{{ default_profile }}',
+            })
+        });
+        const data = await resp.json();
+        if (data.snapshot) {
+            loadBgImage('data:image/jpeg;base64,' + data.snapshot);
+            status.innerHTML = '<span class="text-success"><i class="ti ti-check me-1"></i>Snapshot capturado y guardado</span>';
+        } else {
+            status.innerHTML = '<span class="text-danger">Error: ' + (data.error || 'desconocido') + '</span>';
+        }
+    } catch (e) {
+        console.error('Capture snapshot error:', e);
+        status.innerHTML = '<span class="text-danger">Error de red</span>';
+    }
+
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="ti ti-camera me-1"></i>Capturar snapshot';
+    }
     setTimeout(() => { status.style.display = 'none'; }, 3000);
 }
 
