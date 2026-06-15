@@ -277,6 +277,8 @@ def generate_all_configs(config_dir=None):
             os.environ.get("CONFIG_YML_PATH", "/opt/computer_vision/config/config.yml")
         )
 
+    all_analytics_devices = []
+
     for pipeline_id in PIPELINE_CONFIGS:
         devices = list(
             Device.objects.filter(
@@ -293,6 +295,8 @@ def generate_all_configs(config_dir=None):
                 source_type="file",
             ).exclude(stream_uris={})
         )
+
+        all_analytics_devices.extend(devices)
 
         pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
         max_per_instance = pipeline_cfg["max_devices_per_instance"]
@@ -311,7 +315,7 @@ def generate_all_configs(config_dir=None):
             else:
                 write_empty_config(output_path, pipeline_id)
 
-        generate_nvdsanalytics_config(devices, config_dir)
+    generate_nvdsanalytics_config(all_analytics_devices, config_dir)
 
 
 def write_empty_config(output_path, pipeline_id):
