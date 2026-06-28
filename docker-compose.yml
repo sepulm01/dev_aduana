@@ -629,6 +629,12 @@ services:
       - django-asgi
       - mediamtx
 
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.23.0.0/16
+
 volumes:
   postgres_data:
   redis_data:
