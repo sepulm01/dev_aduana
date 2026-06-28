@@ -128,7 +128,7 @@ static void yaml_read_labels(const gchar* file, std::vector<std::string>& out)
 #define TILED_OUTPUT_HEIGHT 720
 #define GST_CAPS_FEATURES_NVMM "memory:NVMM"
 #define MAX_SOURCES 128
-#define FLUSH_INTERVAL_US 1000000
+#define FLUSH_INTERVAL_US 200000
 
 #define RETURN_ON_PARSER_ERROR(parse_expr) \
     if (NVDS_YAML_PARSER_SUCCESS != parse_expr) { \

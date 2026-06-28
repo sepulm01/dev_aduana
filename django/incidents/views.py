@@ -1,4 +1,4 @@
-import json
+import json as _json
 import logging
 
 from django.shortcuts import render, get_object_or_404
@@ -12,6 +12,26 @@ from devices.models import Device
 logger = logging.getLogger(__name__)
 
 
+def _broadcast_incident_status(incident_id, device_id, status):
+    try:
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                "incidents",
+                {
+                    "type": "incident_status",
+                    "incident_id": incident_id,
+                    "device_id": device_id,
+                    "status": status,
+                },
+            )
+    except Exception:
+        pass
+
+
 @login_required
 def incident_type_list(request):
     types = IncidentType.objects.all()
@@ -23,8 +43,8 @@ def incident_type_list(request):
 def incident_type_create(request):
     if request.method == "POST":
         try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
+            data = _json.loads(request.body)
+        except _json.JSONDecodeError:
             return JsonResponse({"error": "JSON invalido"}, status=400)
         name = data.get("name", "").strip()
         if not name:
@@ -48,8 +68,8 @@ def incident_type_edit(request, type_id):
     itype = get_object_or_404(IncidentType, id=type_id)
     if request.method == "POST":
         try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
+            data = _json.loads(request.body)
+        except _json.JSONDecodeError:
             return JsonResponse({"error": "JSON invalido"}, status=400)
         itype.name = data.get("name", itype.name)
         itype.description = data.get("description", itype.description)
@@ -88,7 +108,7 @@ def incident_ack(request, incident_id):
             return JsonResponse({"error": "Incident not active"}, status=400)
         from datetime import datetime, timezone
 
-        data = json.loads(request.body) if request.body else {}
+        data = _json.loads(request.body) if request.body else {}
         by_whom = data.get("by", "api")
         now = datetime.now(timezone.utc)
         incident.status = "acknowledged"
@@ -102,6 +122,7 @@ def incident_ack(request, incident_id):
             action="acknowledged",
             detail={"by": by_whom},
         )
+        _broadcast_incident_status(incident.id, incident.device_id, "acknowledged")
         return JsonResponse({"ok": True})
     return JsonResponse({"error": "POST required"}, status=405)
 
@@ -109,24 +130,45 @@ def incident_ack(request, incident_id):
 @login_required
 def incident_dashboard(request):
     from live.views import build_stream_context
-    from devices.models import Device
 
     active_incidents = Incident.objects.filter(
         status="active"
     ).select_related("incident_type", "device").order_by("-created_at")
 
     hosts = request.get_host()
-    incidents_data = []
+
+    active_incidents_data = []
     for inc in active_incidents:
         device = inc.device
         profile_token = device.default_profile_token or ""
-        ctx = {}
-        if profile_token:
-            ctx = build_stream_context(device, profile_token, hosts)
-        incidents_data.append({
-            "incident": inc,
+        ctx = build_stream_context(device, profile_token, hosts) if profile_token else {}
+        active_incidents_data.append({
+            "id": inc.id,
+            "device_id": device.id,
+            "device_name": device.name,
+            "incident_type": inc.incident_type.name,
+            "level": inc.current_level,
             "webrtc_url": ctx.get("webrtc_url", ""),
+            "lat": device.latitude,
+            "lon": device.longitude,
         })
+
+    devices_online = Device.objects.filter(
+        is_online=True, stream_uris__isnull=False, source_type="rtsp"
+    ).exclude(stream_uris={}).exclude(default_profile_token="")
+
+    devices_for_rotation = []
+    for dev in devices_online:
+        profile_token = dev.default_profile_token
+        ctx = build_stream_context(dev, profile_token, hosts)
+        if ctx.get("webrtc_url"):
+            devices_for_rotation.append({
+                "id": dev.id,
+                "name": dev.name,
+                "webrtc_url": ctx["webrtc_url"],
+                "lat": dev.latitude,
+                "lon": dev.longitude,
+            })
 
     all_devices = Device.objects.all()
     kpis = {
@@ -137,7 +179,11 @@ def incident_dashboard(request):
     }
 
     return render(request, "incidents/dashboard.html", {
-        "incidents_data": incidents_data,
+        "active_incidents_data": active_incidents_data,
+        "devices_for_rotation": devices_for_rotation,
+        "active_incidents_json": _json.dumps(active_incidents_data),
+        "devices_json": _json.dumps(devices_for_rotation),
+        "first_incident_json": _json.dumps(active_incidents_data[0]) if active_incidents_data else "null",
         "kpis": kpis,
     })
 

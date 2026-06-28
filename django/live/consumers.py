@@ -65,3 +65,11 @@ class IncidentConsumer(AsyncWebsocketConsumer):
             "incident_type": event.get("incident_type", ""),
             "level": event.get("level", 1),
         }))
+
+    async def incident_status(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "incident_status",
+            "incident_id": event["incident_id"],
+            "device_id": event["device_id"],
+            "status": event["status"],
+        }))

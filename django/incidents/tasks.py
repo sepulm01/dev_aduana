@@ -216,6 +216,7 @@ def _log_escalated(incident, from_level, to_level):
 
 def _expire(incident):
     from incidents.models import IncidentLog
+    from incidents.views import _broadcast_incident_status
 
     now = datetime.now(timezone.utc)
     incident.status = "expired"
@@ -227,10 +228,12 @@ def _expire(incident):
         action="expired",
         detail={"reason": "no more levels"},
     )
+    _broadcast_incident_status(incident.id, incident.device_id, "expired")
 
 
 def _expire_no_site(incident):
     from incidents.models import IncidentLog
+    from incidents.views import _broadcast_incident_status
 
     now = datetime.now(timezone.utc)
     incident.status = "expired"
@@ -242,10 +245,12 @@ def _expire_no_site(incident):
         action="expired",
         detail={"reason": "device has no site assigned"},
     )
+    _broadcast_incident_status(incident.id, incident.device_id, "expired")
 
 
 def _auto_resolve():
     from incidents.models import Incident, IncidentLog
+    from incidents.views import _broadcast_incident_status
 
     now = datetime.now(timezone.utc)
     active = Incident.objects.filter(status="active").select_related("incident_type")
@@ -265,3 +270,4 @@ def _auto_resolve():
                 action="resolved",
                 detail={"reason": "auto_resolve"},
             )
+            _broadcast_incident_status(incident.id, incident.device_id, "resolved")

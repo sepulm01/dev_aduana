@@ -52,6 +52,8 @@ class Device(models.Model):
         blank=True,
         related_name="devices",
     )
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
     snmp_enabled = models.BooleanField(default=False)
     snmp_community = models.CharField(max_length=64, default="public", blank=True)
     snmp_port = models.IntegerField(default=161)

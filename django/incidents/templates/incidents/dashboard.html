@@ -1,15 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Dashboard de Incidentes{% endblock %}
 {% block content %}
-<div class="page-header">
-    <h2 class="page-title"><i class="ti ti-alert-triangle me-2"></i>Incidentes</h2>
-</div>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <div class="row row-cards mb-3">
     <div class="col-sm-6 col-lg-3">
         <div class="card">
             <div class="card-body text-center">
-                <div class="subheader">Cámaras totales</div>
+                <div class="subheader">Camaras totales</div>
                 <div class="h1 m-0">{{ kpis.total_cameras }}</div>
             </div>
         </div>
@@ -17,16 +16,16 @@
     <div class="col-sm-6 col-lg-3">
         <div class="card">
             <div class="card-body text-center">
-                <div class="subheader">En línea</div>
-                <div class="h1 m-0">{{ kpis.online_cameras }}</div>
+                <div class="subheader">En linea</div>
+                <div class="h1 m-0 text-success">{{ kpis.online_cameras }}</div>
             </div>
         </div>
     </div>
     <div class="col-sm-6 col-lg-3">
         <div class="card">
             <div class="card-body text-center">
-                <div class="subheader">Con analítica</div>
-                <div class="h1 m-0">{{ kpis.with_analytics }}</div>
+                <div class="subheader">Con analytics</div>
+                <div class="h1 m-0 text-info">{{ kpis.with_analytics }}</div>
             </div>
         </div>
     </div>
@@ -34,51 +33,235 @@
         <div class="card">
             <div class="card-body text-center">
                 <div class="subheader">Incidentes activos</div>
-                <div class="h1 m-0">{{ kpis.active_incidents }}</div>
+                <div class="h1 m-0 text-danger" id="activeIncidentCount">{{ kpis.active_incidents }}</div>
             </div>
         </div>
     </div>
 </div>
 
-{% if incidents_data %}
 <div class="row">
-    {% for item in incidents_data %}
-    {% with inc=item.incident %}
-    <div class="col-lg-6 mb-3">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <div>
-                    <span class="badge bg-red me-2">Nivel {{ inc.current_level }}</span>
-                    <strong>{{ inc.incident_type.name }}</strong>
+    <div class="col-lg-9">
+        <div class="row g-2 mb-3">
+            <div class="col-6">
+                <div class="card">
+                    <div class="card-body p-0">
+                        <div id="cam1Container" style="position:relative;aspect-ratio:16/9;background:#000;border-radius:4px;overflow:hidden;">
+                            <iframe id="cam1Frame" allow="autoplay;encrypted-media" allowfullscreen
+                                style="width:100%;height:100%;border:0;position:absolute;top:0;left:0;"></iframe>
+                            <div id="cam1Label" style="position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.75);color:#fff;padding:2px 10px;border-radius:4px;font-size:12px;z-index:2;pointer-events:none;"></div>
+                        </div>
+                    </div>
                 </div>
-                <small class="text-muted">#{{ inc.id }} &middot; {{ inc.created_at|date:"H:i:s" }}</small>
             </div>
-            <a href="{% url 'incident_detail' inc.id %}" style="display:block;">
-            {% if item.webrtc_url %}
-            <div style="position:relative;aspect-ratio:16/9;background:#000;">
-                <iframe src="{{ item.webrtc_url }}"
-                    style="width:100%;height:100%;border:0;position:absolute;top:0;left:0;"
-                    allow="autoplay;encrypted-media" allowfullscreen>
-                </iframe>
+            <div class="col-6">
+                <div class="card">
+                    <div class="card-body p-0">
+                        <div id="cam2Container" style="position:relative;aspect-ratio:16/9;background:#000;border-radius:4px;overflow:hidden;">
+                            <iframe id="cam2Frame" allow="autoplay;encrypted-media" allowfullscreen
+                                style="width:100%;height:100%;border:0;position:absolute;top:0;left:0;"></iframe>
+                            <div id="cam2Label" style="position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.75);color:#fff;padding:2px 10px;border-radius:4px;font-size:12px;z-index:2;pointer-events:none;"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            {% elif inc.snapshot %}
-            <img src="{{ inc.snapshot.url }}" style="width:100%;max-height:300px;object-fit:cover;">
-            {% endif %}
-            </a>
-            <div class="card-body py-2">
-                <small class="text-muted">Dispositivo: {{ inc.device.name }}</small>
-                <a href="{% url 'incident_detail' inc.id %}" class="btn btn-sm btn-ghost-primary float-end">Detalle</a>
+        </div>
+        {% if active_incidents_data %}
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Incidentes Activos</h3>
+            </div>
+            <div class="list-group list-group-flush" id="incidentList">
+                {% for item in active_incidents_data %}
+                <div class="list-group-item py-2 small d-flex align-items-center" data-incident-id="{{ item.id }}">
+                    <span class="badge bg-danger me-2">N{{ item.level }}</span>
+                    <strong class="me-2">{{ item.incident_type }}</strong>
+                    <span class="text-muted">{{ item.device_name }}</span>
+                    <a href="/incidents/{{ item.id }}/" class="btn btn-sm btn-ghost-primary ms-auto">Detalle</a>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    <div class="col-lg-3">
+        <div class="card">
+            <div class="card-body p-0">
+                <div id="mapContainer" style="height:520px;border-radius:4px;"></div>
+            </div>
+            <div class="card-footer small text-muted">
+                <i class="ti ti-map-pin me-1"></i>Mapa de camaras
             </div>
         </div>
     </div>
-    {% endwith %}
-    {% endfor %}
 </div>
-{% else %}
-<div class="empty">
-    <div class="empty-icon"><i class="ti ti-check"></i></div>
-    <p class="empty-title">Sin incidentes activos</p>
-    <p class="empty-subtitle text-muted">No hay alertas en este momento.</p>
-</div>
+
+<script>
+const DEVICES = {{ devices_json|safe }};
+const ACTIVE_INCIDENTS = {{ active_incidents_json|safe }};
+const ROTATE_INTERVAL = 30000;
+
+let cam1Timer = null;
+let cam2Timer = null;
+let currentCam1 = null;
+let currentCam2 = null;
+let incidentLocked = false;
+let incidentDeviceId = null;
+let mapMarkers = {};
+
+function pickRandom(array, exclude) {
+    if (array.length === 0) return null;
+    if (array.length === 1) return array[0];
+    let pick;
+    do { pick = array[Math.floor(Math.random() * array.length)]; }
+    while (exclude && array.length > 1 && pick.id === exclude.id);
+    return pick;
+}
+
+function setIframe(frameId, labelId, device) {
+    var iframe = document.getElementById(frameId);
+    var label = document.getElementById(labelId);
+    if (!iframe || !label || !device) return;
+    iframe.src = device.webrtc_url;
+    label.textContent = device.name;
+}
+
+function rotateCam1() {
+    if (DEVICES.length === 0) return;
+    var exclude = incidentLocked ? currentCam2 : null;
+    var next = pickRandom(DEVICES, exclude);
+    if (!next) next = DEVICES[0];
+    currentCam1 = next;
+    setIframe('cam1Frame', 'cam1Label', next);
+    cam1Timer = setTimeout(rotateCam1, ROTATE_INTERVAL);
+}
+
+function rotateCam2() {
+    if (incidentLocked) { cam2Timer = setTimeout(rotateCam2, ROTATE_INTERVAL); return; }
+    if (DEVICES.length === 0) return;
+    var next = pickRandom(DEVICES, currentCam1);
+    if (!next) next = DEVICES[0];
+    currentCam2 = next;
+    setIframe('cam2Frame', 'cam2Label', next);
+    cam2Timer = setTimeout(rotateCam2, ROTATE_INTERVAL);
+}
+
+function lockCam2ForIncident(deviceId, deviceName) {
+    var dev = DEVICES.find(function(d) { return d.id === deviceId; });
+    if (!dev) return;
+    incidentLocked = true;
+    incidentDeviceId = deviceId;
+    currentCam2 = dev;
+    setIframe('cam2Frame', 'cam2Label', dev);
+    var label = document.getElementById('cam2Label');
+    if (label) {
+        label.style.background = 'rgba(220,53,69,0.9)';
+        label.textContent = 'INCIDENTE: ' + deviceName;
+    }
+    if (cam2Timer) { clearTimeout(cam2Timer); cam2Timer = null; }
+}
+
+function releaseCam2() {
+    incidentLocked = false;
+    incidentDeviceId = null;
+    var label = document.getElementById('cam2Label');
+    if (label) label.style.background = 'rgba(0,0,0,0.75)';
+    if (cam2Timer) { clearTimeout(cam2Timer); }
+    rotateCam2();
+}
+
+function initMap() {
+    var lat = -33.4489, lon = -70.6693, zoom = 12;
+    var hasGps = false;
+    for (var i = 0; i < DEVICES.length; i++) {
+        if (DEVICES[i].lat != null && DEVICES[i].lon != null) {
+            lat = DEVICES[i].lat; lon = DEVICES[i].lon; hasGps = true; break;
+        }
+    }
+    var map = L.map('mapContainer').setView([lat, lon], hasGps ? 14 : 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap', maxZoom: 19
+    }).addTo(map);
+    window.dashMap = map;
+
+    var redIcon = L.icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+        iconSize: [25,41], iconAnchor: [12,41], popupAnchor: [1,-34], shadowSize: [41,41]
+    });
+    var blueIcon = new L.Icon.Default();
+
+    for (var i = 0; i < DEVICES.length; i++) {
+        var d = DEVICES[i];
+        if (d.lat == null || d.lon == null) continue;
+        var isActiveIncident = ACTIVE_INCIDENTS.some(function(inc) { return inc.device_id === d.id; });
+        var marker = L.marker([d.lat, d.lon], {icon: isActiveIncident ? redIcon : blueIcon}).addTo(map)
+            .bindPopup('<b>' + d.name + '</b><br><small>ID: ' + d.id + '</small>');
+        mapMarkers[d.id] = marker;
+    }
+}
+
+function highlightIncidentOnMap(deviceId, lat, lon) {
+    if (!window.dashMap) return;
+    var redIcon = L.icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+        iconSize: [25,41], iconAnchor: [12,41], popupAnchor: [1,-34], shadowSize: [41,41]
+    });
+    if (mapMarkers[deviceId]) {
+        mapMarkers[deviceId].setIcon(redIcon);
+        mapMarkers[deviceId].openPopup();
+    }
+    if (lat != null && lon != null) window.dashMap.setView([lat, lon], 15);
+}
+
+(function connectIncidentWS() {
+    var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var ws = new WebSocket(proto + '//' + window.location.host + '/ws/incidents/');
+    ws.onmessage = function(e) {
+        try {
+            var msg = JSON.parse(e.data);
+            if (msg.type === 'incident_alert') {
+                lockCam2ForIncident(msg.device_id, msg.device_name);
+                var dev = DEVICES.find(function(d) { return d.id === msg.device_id; });
+                if (dev) highlightIncidentOnMap(msg.device_id, dev.lat, dev.lon);
+            } else if (msg.type === 'incident_status') {
+                if (msg.device_id === incidentDeviceId && msg.status !== 'active') {
+                    releaseCam2();
+                }
+            }
+        } catch(err) {}
+    };
+    ws.onclose = function() { setTimeout(connectIncidentWS, 5000); };
+})();
+
+if (DEVICES.length > 0) {
+    currentCam1 = pickRandom(DEVICES, null);
+    setIframe('cam1Frame', 'cam1Label', currentCam1);
+    cam1Timer = setTimeout(rotateCam1, ROTATE_INTERVAL + Math.random() * 5000);
+
+    var cam2Pick = pickRandom(DEVICES, currentCam1);
+    currentCam2 = cam2Pick;
+    setIframe('cam2Frame', 'cam2Label', cam2Pick);
+    cam2Timer = setTimeout(rotateCam2, ROTATE_INTERVAL + Math.random() * 5000);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(initMap, 300);
+});
+
+{% if active_incidents_data %}
+(function() {
+    var inc = {{ first_incident_json|safe }};
+    lockCam2ForIncident(inc.device_id, inc.device_name);
+    setTimeout(function() {
+        if (inc.lat != null && inc.lon != null) highlightIncidentOnMap(inc.device_id, inc.lat, inc.lon);
+    }, 800);
+})();
 {% endif %}
+</script>
+
+<style>
+#mapContainer { z-index:1; }
+.leaflet-control-attribution { font-size:10px; }
+</style>
 {% endblock %}
