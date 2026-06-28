@@ -239,7 +239,6 @@ function connectWS() {
 
 connectWS();
 
-let activeEvents = {};
 let analyticsActive = false;
 let currentActivePreset = '{{ active_preset|default:"" }}';
 let analyticsShapes = null;
@@ -247,9 +246,16 @@ const SHAPES_API = '/api/devices/' + DEVICE_ID + '/analytics/';
 
 let _overlayRafPending = false;
 let _latestOverlayObjects = null;
+let _staleOverlayTimer = null;
+const OVERLAY_STALE_MS = 3000;
 
 function scheduleOverlayUpdate(objects) {
     _latestOverlayObjects = objects;
+    if (_staleOverlayTimer) { clearTimeout(_staleOverlayTimer); _staleOverlayTimer = null; }
+    if (objects && objects.length === 0) {
+        clearIVSOverlay();
+        return;
+    }
     if (!_overlayRafPending) {
         _overlayRafPending = true;
         requestAnimationFrame(function() {
@@ -260,6 +266,9 @@ function scheduleOverlayUpdate(objects) {
             }
         });
     }
+    _staleOverlayTimer = setTimeout(function() {
+        clearIVSOverlay();
+    }, OVERLAY_STALE_MS);
 }
 
 function handleIVSEvent(msg) {
@@ -275,19 +284,14 @@ function handleIVSEvent(msg) {
 
     const badge = document.getElementById('ivsEventBadge');
     if (action === 'Start' || action === 'Pulse') {
-        activeEvents[code] = {action, data, ts};
         badge.innerHTML = '<span class="badge bg-danger pulse-badge"><i class="ti ti-alert-triangle me-1"></i>' + code + '</span>';
 
         if (analyticsActive && data.Object && Array.isArray(data.Object)) {
             scheduleOverlayUpdate(data.Object);
         }
     } else if (action === 'Stop') {
-        delete activeEvents[code];
-        if (Object.keys(activeEvents).length === 0) {
-            badge.textContent = '';
-            badge.innerHTML = '<span class="badge bg-secondary">Sin eventos</span>';
-            clearIVSOverlay();
-        }
+        badge.innerHTML = '<span class="badge bg-secondary">Sin eventos</span>';
+        clearIVSOverlay();
     }
 
     const log = document.getElementById('ivsEventLog');
@@ -305,10 +309,13 @@ function handleIVSEvent(msg) {
 
 let _overlayCacheRect = null;
 let _overlayCacheTime = 0;
+let _lastRenderedObjects = null;
 
 function drawIVSOverlay(objects) {
     const overlay = document.getElementById('ivsOverlay');
     if (!overlay) return;
+
+    _lastRenderedObjects = objects;
     overlay.style.display = 'block';
 
     const container = document.getElementById('videoContainer');
@@ -371,6 +378,8 @@ function clearIVSOverlay() {
         overlay.style.display = 'none';
     }
     _latestOverlayObjects = null;
+    _lastRenderedObjects = null;
+    if (_staleOverlayTimer) { clearTimeout(_staleOverlayTimer); _staleOverlayTimer = null; }
 }
 
 function fetchShapesAndDraw() {
@@ -428,12 +437,8 @@ function clearAnalyticsShapes() {
 }
 
 window.addEventListener('resize', function() {
-    if (Object.keys(activeEvents).length > 0 && analyticsActive) {
-        Object.values(activeEvents).forEach(function(ev) {
-            if (ev.data && ev.data.Object) {
-                drawIVSOverlay(ev.data.Object);
-            }
-        });
+    if (analyticsActive && _lastRenderedObjects && _lastRenderedObjects.length) {
+        drawIVSOverlay(_lastRenderedObjects);
     }
 });
 </script>

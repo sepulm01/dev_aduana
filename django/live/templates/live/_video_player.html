@@ -68,10 +68,8 @@ function toggleAnalytics(sfx) {
         btn.classList.remove('btn-outline-info');
         btn.classList.add('btn-info');
         fetchShapesAndDraw();
-        if (Object.keys(activeEvents).length > 0) {
-            Object.values(activeEvents).forEach(function(ev) {
-                if (ev.data && ev.data.Object) drawIVSOverlay(ev.data.Object);
-            });
+        if (typeof _lastRenderedObjects !== 'undefined' && _lastRenderedObjects && _lastRenderedObjects.length) {
+            drawIVSOverlay(_lastRenderedObjects);
         }
     }
 }
