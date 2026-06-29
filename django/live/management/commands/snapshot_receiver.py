@@ -135,7 +135,7 @@ class SnapshotReceiver:
                 status="active",
             ).order_by("-created_at").first()
 
-            if incident:
+            if incident and not incident.snapshot:
                 ts = now.strftime("%Y%m%d_%H%M%S")
                 filename = f"incident_{incident.id}_{ts}_{device_id}.jpg"
                 incident.snapshot.save(
