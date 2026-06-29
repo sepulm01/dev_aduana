@@ -20,11 +20,15 @@ class BaseNotificationBackend:
         device_name = event.get("device_name", "Unknown")
         code = event.get("code", "Event")
         action = event.get("action", "")
+        incident_id = event.get("incident_id")
         data = event.get("data", {})
         objects = data.get("Object", [])
         analytics = data.get("analytics", {})
 
-        lines = [f"Dispositivo: {device_name}"]
+        lines = []
+        if incident_id:
+            lines.append(f"Incidente #{incident_id}")
+        lines.append(f"Dispositivo: {device_name}")
         lines.append(f"Evento: {code} {action}".strip())
 
         if objects:

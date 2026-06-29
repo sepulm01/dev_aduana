@@ -176,10 +176,12 @@ class NotificationBridge:
         except Exception:
             return True
 
-    def _send_notification(self, rule, device_id, event_data):
+    def _send_notification(self, rule, device_id, event_data, photo_bytes=None, incident=None):
         from notifications.backends import get_backend
 
         ctx = self._build_event_context(device_id, event_data)
+        if incident:
+            ctx["incident_id"] = incident.id
         try:
             backend = get_backend(rule.channel.channel_type)
             if rule.message_template:
@@ -187,12 +189,10 @@ class NotificationBridge:
             else:
                 message = backend.default_message(ctx)
 
-            if rule.send_photo:
+            if rule.send_photo and photo_bytes:
                 try:
-                    photo_bytes = self._capture_device_snapshot(device_id)
-                    if photo_bytes:
-                        success = backend.send_with_photo(rule.channel, message, photo_bytes)
-                        return success, message
+                    success = backend.send_with_photo(rule.channel, message, photo_bytes)
+                    return success, message
                 except Exception as e:
                     logger.warning("Photo capture/send failed, falling back to text: %s", e)
 
@@ -222,7 +222,7 @@ class NotificationBridge:
             return None
         return capture_frame_rtsp(uri, timeout=8)
 
-    def _create_incident(self, rule, device_id, event_data):
+    def _create_incident(self, rule, device_id, event_data, photo_bytes=None):
         if rule.incident_type is None:
             return None
 
@@ -260,7 +260,6 @@ class NotificationBridge:
                 detail={"event_code": event_data.get("code")},
             )
 
-            photo_bytes = self._capture_device_snapshot(device_id)
             if photo_bytes:
                 try:
                     from django.core.files.base import ContentFile
@@ -334,6 +333,7 @@ class NotificationBridge:
 
     def _handle_event(self, device_id, event_data):
         event_data = self._filter_ivs_event(device_id, event_data)
+        photo_bytes = self._capture_device_snapshot(device_id)
 
         for rule in self._rules_cache:
             try:
@@ -346,12 +346,12 @@ class NotificationBridge:
                 if not self._check_cooldown(rule, device_id):
                     continue
 
+                incident = self._create_incident(rule, device_id, event_data, photo_bytes)
+
                 if rule.send_immediate:
-                    self._send_notification(rule, device_id, event_data)
+                    self._send_notification(rule, device_id, event_data, photo_bytes, incident)
                     key = (rule.id, device_id)
                     self._duration_first_seen.pop(key, None)
-
-                self._create_incident(rule, device_id, event_data)
 
             except Exception as e:
                 logger.warning("Rule processing error for %s: %s", rule.name, e)
