@@ -165,7 +165,7 @@ function lockIncidentSlot(deviceId, deviceName, incidentId) {
     var label = document.getElementById('cam' + INCIDENT_SLOT + 'Label');
     if (label) {
         label.style.background = 'rgba(220,53,69,0.9)';
-        label.innerHTML = '<a href="/incidents/' + incidentId + '/" style="color:#fff;text-decoration:none;" title="Ver incidente #' + incidentId + '">INCIDENTE: ' + deviceName + '</a>';
+        label.textContent = 'INCIDENTE: ' + deviceName;
     }
     if (camTimers[slot]) { clearTimeout(camTimers[slot]); camTimers[slot] = null; }
     rotateSlot(slot);
@@ -206,14 +206,18 @@ function initMap() {
     for (var i = 0; i < DEVICES.length; i++) {
         var d = DEVICES[i];
         if (d.lat == null || d.lon == null) continue;
-        var isActiveIncident = ACTIVE_INCIDENTS.some(function(inc) { return inc.device_id === d.id; });
-        var marker = L.marker([d.lat, d.lon], {icon: isActiveIncident ? redIcon : blueIcon}).addTo(map)
-            .bindPopup('<b>' + d.name + '</b><br><small>ID: ' + d.id + '</small>');
+        var activeInc = ACTIVE_INCIDENTS.find(function(inc) { return inc.device_id === d.id; });
+        var marker = L.marker([d.lat, d.lon], {icon: activeInc ? redIcon : blueIcon}).addTo(map);
+        if (activeInc) {
+            marker.bindPopup('<b>' + d.name + '</b><br><a href="/incidents/' + activeInc.id + '/" style="color:#d63939;font-weight:bold;">Incidente #' + activeInc.id + ' &rarr;</a>');
+        } else {
+            marker.bindPopup('<b>' + d.name + '</b><br><small>ID: ' + d.id + '</small>');
+        }
         mapMarkers[d.id] = marker;
     }
 }
 
-function highlightIncidentOnMap(deviceId, lat, lon) {
+function highlightIncidentOnMap(deviceId, lat, lon, incidentId) {
     if (!window.dashMap) return;
     var redIcon = L.icon({
         iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
@@ -222,6 +226,10 @@ function highlightIncidentOnMap(deviceId, lat, lon) {
     });
     if (mapMarkers[deviceId]) {
         mapMarkers[deviceId].setIcon(redIcon);
+        var dev = DEVICES.find(function(d) { return d.id === deviceId; });
+        var name = dev ? dev.name : ('Dispositivo #' + deviceId);
+        var popup = '<b>' + name + '</b><br><a href="/incidents/' + incidentId + '/" style="color:#d63939;font-weight:bold;">Incidente #' + incidentId + ' &rarr;</a>';
+        mapMarkers[deviceId].setPopupContent(popup);
         mapMarkers[deviceId].openPopup();
     }
     if (lat != null && lon != null) window.dashMap.setView([lat, lon], 15);
@@ -236,7 +244,7 @@ function highlightIncidentOnMap(deviceId, lat, lon) {
             if (msg.type === 'incident_alert') {
                 lockIncidentSlot(msg.device_id, msg.device_name, msg.incident_id);
                 var dev = DEVICES.find(function(d) { return d.id === msg.device_id; });
-                if (dev) highlightIncidentOnMap(msg.device_id, dev.lat, dev.lon);
+                if (dev) highlightIncidentOnMap(msg.device_id, dev.lat, dev.lon, msg.incident_id);
             } else if (msg.type === 'incident_status') {
                 if (msg.device_id === incidentDeviceId && msg.status !== 'active') {
                     releaseIncidentSlot();
@@ -273,7 +281,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var inc = {{ first_incident_json|safe }};
     lockIncidentSlot(inc.device_id, inc.device_name, inc.id);
     setTimeout(function() {
-        if (inc.lat != null && inc.lon != null) highlightIncidentOnMap(inc.device_id, inc.lat, inc.lon);
+        if (inc.lat != null && inc.lon != null) highlightIncidentOnMap(inc.device_id, inc.lat, inc.lon, inc.id);
     }, 800);
 })();
 {% endif %}
