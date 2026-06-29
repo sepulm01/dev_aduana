@@ -56,8 +56,8 @@ docker compose logs -f django-http
 - **Device.username/password are the single source of truth** for ONVIF and RTSP auth. Never use hardcoded creds.
 - **Stream URIs are used verbatim.** `Device.stream_uris[profile_token]` is the exact output of `MediaService.get_stream_uri()`. Never modify, split, strip, or reconstruct it. Only allowed transforms: percent-encoding `+` → `%2B` in MediaMTX URLs.
 - **Only `Device.default_profile_token`** is used for DeepStream and MediaMTX. Other profiles are stored for reference.
-- **DeepStream pipelines are static** — adding/removing cameras or editing analytics requires regenerating `config.yml` + `config_nvdsanalytics.txt` and restarting the relevant `computer-vision*` container. Use `regenerate_config_and_restart()`.
-- **`orchestrate_cameras`** (Celery Beat, every 5s) is the unified orchestrator — ONVIF ping, FPS checks, auto-recovery.
+- **DeepStream pipelines are static** — adding/removing cameras or editing analytics requires regenerating all `config*.yml` (per pipeline × per instance) + `config_nvdsanalytics.txt` and restarting the relevant `computer-vision*` container. Use `regenerate_config_and_restart()`. There are 4 pipelines, each with up to 4 instances (16 containers total). Instances without cameras are automatically stopped by the orchestrator via Docker socket. See `django/devices/README.md` for details on MAX_INSTANCES and round-robin distribution.
+- **`orchestrate_cameras`** (Celery Beat every 5s, executed by celery-worker) is the unified orchestrator — ONVIF ping, FPS checks, auto-recovery. Lives in `django/devices/tasks.py`. Beat schedule defined in `config/settings.py:CELERY_BEAT_SCHEDULE`.
 - **Migrations run automatically** via `docker-entrypoint.sh` with a PostgreSQL advisory lock (`pg_advisory_lock(123456)`). Manual `python manage.py migrate` is not needed normally.
 - **Startup sync**: `DevicesConfig.ready()` (in `django/devices/apps.py`) spawns a daemon thread that pings all devices via ONVIF, refreshes stream URIs, syncs MediaMTX paths, regenerates DeepStream config, and triggers a pipeline restart.
 - **Generated configs are gitignored**: `computer_vision/config/config*.yml` and `computer_vision/config/config_nvdsanalytics.txt` contain credentials and must never be committed.
@@ -80,8 +80,8 @@ docker compose logs -f django-http
 | nginx | Reverse proxy | 80 |
 | django-http | UI + REST API (Gunicorn) | 8000 (internal) |
 | django-asgi | WebSocket (Daphne) | 8001 (internal) |
-| celery-beat | Scheduler (DatabaseScheduler) | — |
-| celery-worker | Async tasks | — |
+| celery-beat | Orchestrator scheduler (DatabaseScheduler) | — |
+| celery-worker | Executes orchestrator + all async tasks | — |
 | redis-event-bridge | Redis → Channels WebSocket forwarder | — |
 | notification-bridge | Notification dispatch | — |
 | face-receiver | TCP server for face crops + embeddings | 12348 |

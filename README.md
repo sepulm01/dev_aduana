@@ -136,7 +136,8 @@ Solo `Device.default_profile_token` se usa para DeepStream y MediaMTX. Los demá
 
 ## Orquestador unificado
 
-`orchestrate_cameras` (celery-beat, cada 5s) es el único orquestador del sistema:
+`orchestrate_cameras` (celery-beat, cada 5s) es el único orquestador del sistema.
+Vive en dos contenedores: `celery-beat` agenda la tarea y `celery-worker` la ejecuta.
 
 1. **ONVIF ping**: `driver.ping()` (GetDeviceInformation) a cada cámara con credenciales
    - `online=True` → `failure_count=0`, `is_online=True`, `last_seen=now`, broadcast WebSocket si cambió estado
@@ -145,25 +146,38 @@ Solo `Device.default_profile_token` se usa para DeepStream y MediaMTX. Los demá
    - `FPS=0` × 12 ciclos (~60s) → restart
    - `FPS<6` × 18 ciclos (~90s) → restart
    - `offline > 120s` → restart
-3. **Recuperación**: `regenerate_config_and_restart()` repara paths MediaMTX, regenera `config.yml` y `config_nvdsanalytics.txt`, actualiza Redis `deepstream:sources`, y reinicia el contenedor `computer-vision` vía Docker socket (~10s downtime)
+3. **Recuperación**: `regenerate_config_and_restart()` repara paths MediaMTX, regenera todos los `config*.yml` y `config_nvdsanalytics.txt` para los 4 pipelines × 4 instancias, actualiza Redis `deepstream:sources:{pipeline}:{instancia}`, y reinicia o para contenedores `computer-vision*` vía Docker socket según necesiten cámaras (~10s downtime)
 
 ---
 
 ## Pipeline estático (cold-start)
 
-DeepStream arranca con todas las cámaras definidas en `config.yml`. No hay add/remove dinámico. Al agregar, quitar, o modificar cámaras o configuraciones de analítica, se regeneran los archivos de configuración y se reinicia el contenedor.
+DeepStream no soporta add/remove dinámico de cámaras. Para minimizar el downtime al agregar/quitar cámaras, el sistema usa **múltiples instancias por pipeline**: las cámaras se distribuyen round-robin entre hasta 4 instancias, cada una en su propio contenedor con su propio archivo de configuración.
+
+### Pipelines e instancias
+
+| Pipeline | Contenedores | Configs | Máx cámaras/instancia | Máx batch |
+|---|---|---|---|---|
+| `main` (PeopleNet) | `computer-vision`, `-2`, `-3`, `-4` | `config.yml`, `config_2..4.yml` | 3 | 3 |
+| `retinaface` | `computer-vision-retinaface`, `-2..4` | `config_retinaface.yml`, `_2..4.yml` | 1 | 1 |
+| `yolov9` | `computer-vision-yolov9`, `-2..4` | `config_yolov9.yml`, `_2..4.yml` | 3 | 3 |
+| `trafficcamnet_lpr` | `computer-vision-lpr`, `-2..4` | `config_trafficcamnet_lpr.yml`, `_2..4.yml` | 1 | 1 |
+
+Total: 4 pipelines × 4 instancias = 16 contenedores definidos en `docker-compose.yml`.
+El orquestador **para automáticamente las instancias sin cámaras** (`docker stop` vía socket).
+En producción con 2 cámaras, solo 2 de los 16 contenedores están corriendo; los otros 14 están detenidos.
 
 ### Archivos de configuración
 
 | Archivo | Generado por | Descripción |
 |---|---|---|
-| `config.yml` | `config_generator.generate_config()` | Source list, streammux (batch=1920×1080), pgie (peoplenet), analytics, osd, tiler (1280×720), sink |
+| `config*.yml` (por pipeline × instancia) | `config_generator.generate_all_configs()` | Source list, streammux, pgie, analytics, osd, tiler, sink |
 | `config_nvdsanalytics.txt` | `config_generator.generate_nvdsanalytics_config()` | ROI-filtering, overcrowding, line-crossing, direction-detection por stream |
 | `config_tracker_IOU.yml` | Estático en `computer_vision/config/` | Configuración del tracker IOU |
 
 ### Mapping source_id → device_id
 
-Redis hash `deepstream:sources`: `{source_id} → device_id`, más sub-keys `{source_id}:camera_id`, `{source_id}:fps`, `{source_id}:url`. El source_id es el índice en el source-list de `config.yml`.
+Redis hash `deepstream:sources:{pipeline}:{instancia}`: `{source_id} → device_id`, más sub-keys `{source_id}:camera_id`, `{source_id}:fps`, `{source_id}:url`. El source_id es el índice en el source-list de cada `config*.yml`.
 
 ---
 
@@ -198,8 +212,8 @@ Disponible con el modelo `people-facerec`:
 
 | Mecanismo | Trigger | Acción |
 |---|---|---|
-| Startup daemon | `apps.py` al arrancar Django | ONVIF refresh de todos los perfiles + URIs, sync MediaMTX, regeneración de config, restart del pipeline |
-| Orchestrator | FPS=0 × 60s / FPS<6 × 90s / offline > 120s | `regenerate_config_and_restart()` |
+| Startup daemon | `apps.py` al arrancar Django | ONVIF refresh de todos los perfiles + URIs, sync MediaMTX, regeneración de configs, restart de pipelines |
+| Orchestrator | FPS=0 × 60s / FPS<6 × 90s / offline > 120s | `regenerate_config_and_restart()` — regenera configs para todas las instancias, reinicia las que tienen cámaras, para las vacías |
 | Aplicar IA | Usuario guarda shapes de analítica | `regenerate_config_and_restart()` |
 | refresh_device_streams | Llamado en startup y manualmente | ONVIF refresh + snapshot + `regenerate_config_and_restart()` |
 
