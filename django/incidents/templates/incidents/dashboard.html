@@ -42,28 +42,23 @@
 <div class="row">
     <div class="col-lg-9">
         <div class="row g-2 mb-3">
+            {% for n in "1234" %}
             <div class="col-6">
                 <div class="card">
                     <div class="card-body p-0">
-                        <div id="cam1Container" style="position:relative;aspect-ratio:16/9;background:#000;border-radius:4px;overflow:hidden;">
-                            <iframe id="cam1Frame" allow="autoplay;encrypted-media" allowfullscreen
+                        <div id="cam{{ n }}Container" style="position:relative;aspect-ratio:16/9;background:#000;border-radius:4px;overflow:hidden;">
+                            <iframe id="cam{{ n }}Frame" allow="autoplay;encrypted-media" allowfullscreen
                                 style="width:100%;height:100%;border:0;position:absolute;top:0;left:0;"></iframe>
-                            <div id="cam1Label" style="position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.75);color:#fff;padding:2px 10px;border-radius:4px;font-size:12px;z-index:2;pointer-events:none;"></div>
+                            <div id="cam{{ n }}Label" style="position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.75);color:#fff;padding:2px 10px;border-radius:4px;font-size:12px;z-index:2;pointer-events:none;"></div>
+                            <div id="cam{{ n }}Placeholder" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#555;text-align:center;">
+                                <i class="ti ti-video-off" style="font-size:2rem;display:block;margin-bottom:6px;"></i>
+                                <span style="font-size:13px;">Sin camara</span>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="col-6">
-                <div class="card">
-                    <div class="card-body p-0">
-                        <div id="cam2Container" style="position:relative;aspect-ratio:16/9;background:#000;border-radius:4px;overflow:hidden;">
-                            <iframe id="cam2Frame" allow="autoplay;encrypted-media" allowfullscreen
-                                style="width:100%;height:100%;border:0;position:absolute;top:0;left:0;"></iframe>
-                            <div id="cam2Label" style="position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.75);color:#fff;padding:2px 10px;border-radius:4px;font-size:12px;z-index:2;pointer-events:none;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            {% endfor %}
         </div>
         {% if active_incidents_data %}
         <div class="card">
@@ -99,73 +94,89 @@
 const DEVICES = {{ devices_json|safe }};
 const ACTIVE_INCIDENTS = {{ active_incidents_json|safe }};
 const ROTATE_INTERVAL = 30000;
+const NUM_SLOTS = 4;
+const INCIDENT_SLOT = 4;
 
-let cam1Timer = null;
-let cam2Timer = null;
-let currentCam1 = null;
-let currentCam2 = null;
+let camTimers = [null, null, null, null];
+let currentCams = [null, null, null, null];
 let incidentLocked = false;
 let incidentDeviceId = null;
 let mapMarkers = {};
 
-function pickRandom(array, exclude) {
+function pickRandom(array, excludeIds) {
     if (array.length === 0) return null;
-    if (array.length === 1) return array[0];
-    let pick;
-    do { pick = array[Math.floor(Math.random() * array.length)]; }
-    while (exclude && array.length > 1 && pick.id === exclude.id);
-    return pick;
+    var candidates = array;
+    if (excludeIds && excludeIds.length > 0) {
+        candidates = array.filter(function(d) { return excludeIds.indexOf(d.id) === -1; });
+        if (candidates.length === 0) candidates = array;
+    }
+    return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
-function setIframe(frameId, labelId, device) {
-    var iframe = document.getElementById(frameId);
-    var label = document.getElementById(labelId);
-    if (!iframe || !label || !device) return;
+function allCurrentExcept(slotIdx) {
+    var ids = [];
+    for (var i = 0; i < NUM_SLOTS; i++) {
+        if (i !== slotIdx && currentCams[i]) ids.push(currentCams[i].id);
+    }
+    return ids;
+}
+
+function setIframe(slot, device) {
+    var n = slot + 1;
+    var iframe = document.getElementById('cam' + n + 'Frame');
+    var label = document.getElementById('cam' + n + 'Label');
+    var placeholder = document.getElementById('cam' + n + 'Placeholder');
+    if (!iframe || !label) return;
+    if (!device) {
+        iframe.removeAttribute('src');
+        label.textContent = '';
+        iframe.style.display = 'none';
+        if (placeholder) placeholder.style.display = 'block';
+        return;
+    }
+    iframe.style.display = '';
+    if (placeholder) placeholder.style.display = 'none';
     iframe.src = device.webrtc_url;
     label.textContent = device.name;
 }
 
-function rotateCam1() {
-    if (DEVICES.length === 0) return;
-    var next = pickRandom(DEVICES, currentCam2);
-    if (!next) next = DEVICES[0];
-    currentCam1 = next;
-    setIframe('cam1Frame', 'cam1Label', next);
-    cam1Timer = setTimeout(rotateCam1, ROTATE_INTERVAL);
+function rotateSlot(slot) {
+    if (slot === INCIDENT_SLOT - 1 && incidentLocked) {
+        camTimers[slot] = setTimeout(function() { rotateSlot(slot); }, ROTATE_INTERVAL);
+        return;
+    }
+    var exclude = allCurrentExcept(slot);
+    var next = pickRandom(DEVICES, exclude);
+    currentCams[slot] = next || null;
+    setIframe(slot, next);
+    camTimers[slot] = setTimeout(function() { rotateSlot(slot); }, ROTATE_INTERVAL);
 }
 
-function rotateCam2() {
-    if (incidentLocked) { cam2Timer = setTimeout(rotateCam2, ROTATE_INTERVAL); return; }
-    if (DEVICES.length === 0) return;
-    var next = pickRandom(DEVICES, currentCam1);
-    if (!next) next = DEVICES[0];
-    currentCam2 = next;
-    setIframe('cam2Frame', 'cam2Label', next);
-    cam2Timer = setTimeout(rotateCam2, ROTATE_INTERVAL);
-}
-
-function lockCam2ForIncident(deviceId, deviceName) {
+function lockIncidentSlot(deviceId, deviceName) {
     var dev = DEVICES.find(function(d) { return d.id === deviceId; });
     if (!dev) return;
+    var slot = INCIDENT_SLOT - 1;
     incidentLocked = true;
     incidentDeviceId = deviceId;
-    currentCam2 = dev;
-    setIframe('cam2Frame', 'cam2Label', dev);
-    var label = document.getElementById('cam2Label');
+    currentCams[slot] = dev;
+    setIframe(slot, dev);
+    var label = document.getElementById('cam' + INCIDENT_SLOT + 'Label');
     if (label) {
         label.style.background = 'rgba(220,53,69,0.9)';
         label.textContent = 'INCIDENTE: ' + deviceName;
     }
-    if (cam2Timer) { clearTimeout(cam2Timer); cam2Timer = null; }
+    if (camTimers[slot]) { clearTimeout(camTimers[slot]); camTimers[slot] = null; }
+    rotateSlot(slot);
 }
 
-function releaseCam2() {
+function releaseIncidentSlot() {
+    var slot = INCIDENT_SLOT - 1;
     incidentLocked = false;
     incidentDeviceId = null;
-    var label = document.getElementById('cam2Label');
+    var label = document.getElementById('cam' + INCIDENT_SLOT + 'Label');
     if (label) label.style.background = 'rgba(0,0,0,0.75)';
-    if (cam2Timer) { clearTimeout(cam2Timer); }
-    rotateCam2();
+    if (camTimers[slot]) { clearTimeout(camTimers[slot]); }
+    rotateSlot(slot);
 }
 
 function initMap() {
@@ -220,12 +231,12 @@ function highlightIncidentOnMap(deviceId, lat, lon) {
         try {
             var msg = JSON.parse(e.data);
             if (msg.type === 'incident_alert') {
-                lockCam2ForIncident(msg.device_id, msg.device_name);
+                lockIncidentSlot(msg.device_id, msg.device_name);
                 var dev = DEVICES.find(function(d) { return d.id === msg.device_id; });
                 if (dev) highlightIncidentOnMap(msg.device_id, dev.lat, dev.lon);
             } else if (msg.type === 'incident_status') {
                 if (msg.device_id === incidentDeviceId && msg.status !== 'active') {
-                    releaseCam2();
+                    releaseIncidentSlot();
                 }
             }
         } catch(err) {}
@@ -233,15 +244,21 @@ function highlightIncidentOnMap(deviceId, lat, lon) {
     ws.onclose = function() { setTimeout(connectIncidentWS, 5000); };
 })();
 
-if (DEVICES.length > 0) {
-    currentCam1 = pickRandom(DEVICES, null);
-    setIframe('cam1Frame', 'cam1Label', currentCam1);
-    cam1Timer = setTimeout(rotateCam1, ROTATE_INTERVAL + Math.random() * 5000);
-
-    var cam2Pick = pickRandom(DEVICES, currentCam1);
-    currentCam2 = cam2Pick;
-    setIframe('cam2Frame', 'cam2Label', cam2Pick);
-    cam2Timer = setTimeout(rotateCam2, ROTATE_INTERVAL + Math.random() * 5000);
+for (var s = 0; s < NUM_SLOTS; s++) {
+    if (s < DEVICES.length) {
+        var exclude = [];
+        for (var j = 0; j < s; j++) { if (currentCams[j]) exclude.push(currentCams[j].id); }
+        var pick = pickRandom(DEVICES, exclude);
+        currentCams[s] = pick || null;
+        setIframe(s, pick);
+    } else {
+        currentCams[s] = null;
+        setIframe(s, null);
+    }
+    if (s < DEVICES.length) {
+        camTimers[s] = setTimeout((function(slot) { return function() { rotateSlot(slot); }; })(s),
+            ROTATE_INTERVAL + Math.random() * 5000);
+    }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -251,7 +268,7 @@ document.addEventListener('DOMContentLoaded', function() {
 {% if active_incidents_data %}
 (function() {
     var inc = {{ first_incident_json|safe }};
-    lockCam2ForIncident(inc.device_id, inc.device_name);
+    lockIncidentSlot(inc.device_id, inc.device_name);
     setTimeout(function() {
         if (inc.lat != null && inc.lon != null) highlightIncidentOnMap(inc.device_id, inc.lat, inc.lon);
     }, 800);
