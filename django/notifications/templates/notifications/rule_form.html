@@ -54,7 +54,7 @@
                     <option value="{{ it.id }}" {% if rule.incident_type_id == it.id %}selected{% endif %}>{{ it.name }}</option>
                     {% endfor %}
                 </select>
-                <small class="form-hint">Al seleccionar un tipo, los eventos crearan incidentes con escalacion por niveles</small>
+                <small class="form-hint"><strong>Sin escalacion</strong>: solo envia notificaciones (Telegram/webhook), <em>no crea incidentes</em>. <strong>Con tipo</strong>: notifica + crea incidente con escalacion en /incidents/dashboard/.</small>
             </div>
             <div class="mb-3">
                 <label class="form-label">Codigos de Evento</label>
