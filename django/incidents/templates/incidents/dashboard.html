@@ -127,8 +127,7 @@ function setIframe(frameId, labelId, device) {
 
 function rotateCam1() {
     if (DEVICES.length === 0) return;
-    var exclude = incidentLocked ? currentCam2 : null;
-    var next = pickRandom(DEVICES, exclude);
+    var next = pickRandom(DEVICES, currentCam2);
     if (!next) next = DEVICES[0];
     currentCam1 = next;
     setIframe('cam1Frame', 'cam1Label', next);
