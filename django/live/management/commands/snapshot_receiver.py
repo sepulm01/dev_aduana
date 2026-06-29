@@ -13,7 +13,7 @@ from django.core.management.base import BaseCommand
 logger = logging.getLogger("snapshot_receiver")
 
 END_MARKER = b"END!"
-HEADER_FMT = "<II16sffffQII"
+HEADER_FMT = "<II16sffffQI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
 
