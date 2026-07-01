@@ -3,18 +3,6 @@
     <div class="card-header">
         <h3 class="card-title"><i class="ti ti-broadcast me-2"></i>Stream</h3>
         <div class="card-header-actions">
-            {% if ptz_supported %}
-            <button id="ptzToggleBtn{{ sfx }}"
-                class="btn btn-sm btn-outline-warning"
-                onclick="window.ptzCtrl{{ sfx }}.togglePtzMode()">
-                <i class="ti ti-arrows-move me-1"></i>PTZ
-            </button>
-            {% endif %}
-            <button id="analyticsToggleBtn{{ sfx }}"
-                class="btn btn-sm btn-outline-info"
-                onclick="toggleAnalytics('{{ sfx }}')">
-                <i class="ti ti-chart-dots me-1"></i>Analytics
-            </button>
             <button id="fullscreenBtn{{ sfx }}"
                 class="btn btn-sm btn-outline-light"
                 onclick="toggleFullscreen('{{ sfx }}')">
@@ -23,24 +11,15 @@
         </div>
     </div>
     <div class="card-body p-0">
-        <div id="videoContainer{{ sfx }}" style="position: relative; width: 100%; aspect-ratio: 16 / 9; display: {% if profile_token %}block{% else %}none{% endif %};">
+        <div id="videoContainer{{ sfx }}" style="position: relative; width: 100%; aspect-ratio: 16 / 9; display: {% if webrtc_url %}block{% else %}none{% endif %};">
             <iframe id="videoFrame{{ sfx }}"
                 src="{% if webrtc_url %}{{ webrtc_url }}{% endif %}"
                 style="width: 100%; height: 100%; border: 0; position: absolute; top: 0; left: 0;"
                 allow="autoplay; encrypted-media"
                 allowfullscreen>
             </iframe>
-            <div id="ptzOverlay{{ sfx }}"
-                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; display: none;">
-            </div>
-            <svg id="analyticsShapesOverlay{{ sfx }}" viewBox="0 0 1600 900" preserveAspectRatio="none"
-                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none; z-index: 3;">
-            </svg>
-            <div id="ivsOverlay{{ sfx }}"
-                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none;">
-            </div>
         </div>
-        <div id="noVideo{{ sfx }}" class="align-items-center justify-content-center text-muted" style="aspect-ratio: 16 / 9; display: {% if profile_token %}none{% else %}flex{% endif %};">
+        <div id="noVideo{{ sfx }}" class="align-items-center justify-content-center text-muted" style="aspect-ratio: 16 / 9; display: {% if webrtc_url %}none{% else %}flex{% endif %};">
             <div class="text-center">
                 <i class="ti ti-video-off" style="font-size: 3rem;"></i>
                 <p class="mt-2 mb-0">{{ no_video_text|default:"Selecciona un perfil y presiona Live" }}</p>
@@ -49,28 +28,13 @@
     </div>
 </div>
 <script>
-function toggleAnalytics(sfx) {
-    var overlay = document.getElementById('ivsOverlay' + sfx);
-    var shapesSvg = document.getElementById('analyticsShapesOverlay' + sfx);
-    var btn = document.getElementById('analyticsToggleBtn' + sfx);
-    if (!overlay) return;
-    var isActive = typeof analyticsActive !== 'undefined' && analyticsActive;
-    if (isActive) {
-        analyticsActive = false;
-        overlay.style.display = 'none';
-        if (shapesSvg) { shapesSvg.style.display = 'none'; shapesSvg.innerHTML = ''; }
-        btn.classList.remove('btn-info');
-        btn.classList.add('btn-outline-info');
-        updateAnalyticsBadge('Off');
-        updateActivePresetName('-');
+function toggleFullscreen(sfx) {
+    var el = document.getElementById('videoContainer' + sfx);
+    if (!el) return;
+    if (document.fullscreenElement) {
+        document.exitFullscreen();
     } else {
-        analyticsActive = true;
-        btn.classList.remove('btn-outline-info');
-        btn.classList.add('btn-info');
-        fetchShapesAndDraw();
-        if (typeof _lastRenderedObjects !== 'undefined' && _lastRenderedObjects && _lastRenderedObjects.length) {
-            drawIVSOverlay(_lastRenderedObjects);
-        }
+        el.requestFullscreen().catch(function(){});
     }
 }
 </script>

@@ -15,18 +15,6 @@ RUN make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yo
 
 COPY . /opt/computer_vision/
 
-RUN cd /opt/computer_vision/models/retinaface_det10g && \
-    g++ -std=c++11 -shared -fPIC \
-    -I/opt/nvidia/deepstream/deepstream/sources/includes \
-    -I/usr/local/cuda-12.8/include \
-    -o /opt/computer_vision/app/libnvdsparsebbox_det10g.so \
-    nvdsparsebbox_det10g.cpp
-
-RUN g++ -std=c++11 -shared -fPIC \
-    -I/opt/nvidia/deepstream/deepstream/sources/includes \
-    -o /opt/computer_vision/models/trafficcamnet/lpr/libnvdsinfer_custom_impl_lpr.so \
-    /opt/computer_vision/models/trafficcamnet/lpr/nvinfer_custom_lpr_parser.cpp
-
 WORKDIR /opt/computer_vision/app
 ENV CUDA_VER=12.8
 RUN make
@@ -34,4 +22,4 @@ RUN make
 WORKDIR /opt/computer_vision/config
 ENV DISPLAY=${DISPLAY}
 ENTRYPOINT ["/opt/nvidia/deepstream/deepstream-8.0/entrypoint.sh"]
-CMD ["../app/pipeline-test3", "./config.yml"]
+CMD ["../app/pipeline-test3", "./config_aduana.yml"]

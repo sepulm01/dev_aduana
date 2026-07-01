@@ -1,4 +1,4 @@
-name:  mediamtx-manager
+name: mediamtx-manager
 
 services:
   postgres:
@@ -29,7 +29,6 @@ services:
     restart: unless-stopped
     volumes:
       - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
-      - /var/www/dev_security/videos:/opt/videos:ro
     ports:
       - "8554:8554"
       - "8889:8889"
@@ -44,14 +43,12 @@ services:
     environment:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
-      - DEEPSTREAM_ANALYTICS_CONFIG=/opt/deepstream-app/config/config_nvdsanalytics.txt
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
-      - ./deepstream-service/app/config:/opt/deepstream-app/config:rw
       - ./django/media:/app/media
       - ./django/static/img:/app/static/img:ro
     depends_on:
@@ -68,10 +65,8 @@ services:
     environment:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
-      - DEEPSTREAM_ANALYTICS_CONFIG=/opt/deepstream-app/config/config_nvdsanalytics.txt
     volumes:
-      - ./deepstream-service/app/config:/opt/deepstream-app/config:rw
-      - ./computer_vision/config:/opt/deepstream-app/config:rw
+      - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
     depends_on:
       postgres:
@@ -82,18 +77,16 @@ services:
   celery-worker:
     build: ./django
     restart: unless-stopped
-    runtime: nvidia
-    command: celery -A config worker -l info
+    command: celery -A config worker -l info -Q celery,ocr
     env_file: .env
     environment:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
+      - ./django/media:/app/media
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,19 +111,6 @@ services:
       redis:
         condition: service_healthy
 
-  event-stream-service:
-    build: ./event-stream-service
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql://mediamtx:Ch4ngeM3!@postgres:5432/mediamtx_manager
-    depends_on:
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-
   redis-event-bridge:
     build: ./django
     command: python manage.py redis_event_bridge
@@ -146,167 +126,37 @@ services:
       postgres:
         condition: service_healthy
 
-  notification-bridge:
+  crop-receiver:
     build: ./django
-    command: python manage.py notification_bridge
+    command: python manage.py crop_receiver
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:12347:12347"
+    volumes:
+      - ./django/media:/app/media
+      - ./computer_vision/models:/opt/computer_vision/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  orchestrator:
+    build: ./django
+    command: python manage.py orchestrator
     restart: unless-stopped
     env_file: .env
     environment:
       - REDIS_URL=redis://redis:6379/0
-    volumes:
-      - ./django/media:/app/media
-      - ./computer_vision/models:/opt/computer_vision/models
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
 
-  telegram-ack-poller:
-    build: ./django
-    command: python manage.py telegram_ack_poller
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-    volumes:
-      - ./computer_vision/models:/opt/computer_vision/models
-    depends_on:
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-
-  snapshot-receiver:
-    build: ./django
-    command: python manage.py snapshot_receiver
-    restart: unless-stopped
-    env_file: .env
-    ports:
-      - "127.0.0.1:12349:12349"
-    volumes:
-      - ./django/media:/app/media
-      - ./computer_vision/models:/opt/computer_vision/models
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  face-receiver:
-    build: ./django
-    command: python manage.py face_receiver
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      - PYTHONUNBUFFERED=1
-    ports:
-      - "127.0.0.1:12348:12348"
-    volumes:
-      - ./django/media:/app/media
-      - ./computer_vision/models:/opt/computer_vision/models
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  # pipeline: PeopleNet - primary pipeline
-  computer-vision:
-    image: mediamtx-manager-computer-vision:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-1}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:main:1
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-
-  computer-vision-2:
-    image: mediamtx-manager-computer-vision-2:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-1}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:main:2
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-
-  computer-vision-3:
-    image: mediamtx-manager-computer-vision-3:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-1}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:main:3
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-
-  computer-vision-4:
-    image: mediamtx-manager-computer-vision-4:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-1}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:main:4
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-
-  # pipeline: Face Recognition
-  computer-vision-retinaface:
-    image: mediamtx-manager-computer-vision-retinaface:latest
+  computer-vision-aduana:
+    image: mediamtx-manager-computer-vision-aduana:latest
     build: ./computer_vision
     restart: unless-stopped
     runtime: nvidia
@@ -320,301 +170,13 @@ services:
       - NO_PROXY=*
       - GIO_USE_PROXY_RESOLVER=none
       - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface:1
-      - DET10G_YAW_PROXY_MAX=0.40
-      - DET10G_ASYM_MAX=0.50
-      - DET10G_ROLL_MAX=30.0
-      - DET10G_EYE_W_MIN=15.0
-      - DET10G_NOSE_MOUTH_DY_MIN=8.0
+      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:aduana:1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
       - /dev/dri:/dev/dri:rw
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_retinaface.yml"]
-
-  computer-vision-retinaface-2:
-    image: mediamtx-manager-computer-vision-retinaface-2:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface:2
-      - DET10G_YAW_PROXY_MAX=0.40
-      - DET10G_ASYM_MAX=0.50
-      - DET10G_ROLL_MAX=30.0
-      - DET10G_EYE_W_MIN=15.0
-      - DET10G_NOSE_MOUTH_DY_MIN=8.0
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_retinaface_2.yml"]
-
-  computer-vision-retinaface-3:
-    image: mediamtx-manager-computer-vision-retinaface-3:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface:3
-      - DET10G_YAW_PROXY_MAX=0.40
-      - DET10G_ASYM_MAX=0.50
-      - DET10G_ROLL_MAX=30.0
-      - DET10G_EYE_W_MIN=15.0
-      - DET10G_NOSE_MOUTH_DY_MIN=8.0
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_retinaface_3.yml"]
-
-  computer-vision-retinaface-4:
-    image: mediamtx-manager-computer-vision-retinaface-4:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:retinaface:4
-      - DET10G_YAW_PROXY_MAX=0.40
-      - DET10G_ASYM_MAX=0.50
-      - DET10G_ROLL_MAX=30.0
-      - DET10G_EYE_W_MIN=15.0
-      - DET10G_NOSE_MOUTH_DY_MIN=8.0
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_retinaface_4.yml"]
-
-  # pipeline: YOLO v9
-  computer-vision-yolov9:
-    image: mediamtx-manager-computer-vision-yolov9:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:yolov9:1
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_yolov9.yml"]
-
-  computer-vision-yolov9-2:
-    image: mediamtx-manager-computer-vision-yolov9-2:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:yolov9:2
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_yolov9_2.yml"]
-
-  computer-vision-yolov9-3:
-    image: mediamtx-manager-computer-vision-yolov9-3:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:yolov9:3
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_yolov9_3.yml"]
-
-  computer-vision-yolov9-4:
-    image: mediamtx-manager-computer-vision-yolov9-4:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:yolov9:4
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_yolov9_4.yml"]
-
-  # pipeline: TrafficCamNet + LPD + LPR
-  computer-vision-lpr:
-    image: mediamtx-manager-computer-vision-lpr:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=1
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:trafficcamnet_lpr:1
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_trafficcamnet_lpr.yml"]
-
-  computer-vision-lpr-2:
-    image: mediamtx-manager-computer-vision-lpr-2:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=1
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:trafficcamnet_lpr:2
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_trafficcamnet_lpr_2.yml"]
-
-  computer-vision-lpr-3:
-    image: mediamtx-manager-computer-vision-lpr-3:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=1
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:trafficcamnet_lpr:3
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_trafficcamnet_lpr_3.yml"]
-
-  computer-vision-lpr-4:
-    image: mediamtx-manager-computer-vision-lpr-4:latest
-    build: ./computer_vision
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - ENABLE_DISPLAY=1
-      - DISPLAY=${DISPLAY}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - GST_DEBUG=1
-      - no_proxy=*
-      - NO_PROXY=*
-      - GIO_USE_PROXY_RESOLVER=none
-      - GIO_MODULE_DIR=/dev/null
-      - DEEPSTREAM_SOURCES_KEY=deepstream:sources:trafficcamnet_lpr:4
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /var/www/dev_security/videos:/opt/videos:ro
-      - /dev/dri:/dev/dri:rw
-      - ./computer_vision/config:/opt/computer_vision/config:rw
-      - ./computer_vision/models:/opt/computer_vision/models
-    command: ["../app/pipeline-test3", "./config_trafficcamnet_lpr_4.yml"]
-
+    command: ["../app/pipeline-test3", "./config_aduana.yml"]
 
   nginx:
     image: nginx:alpine
@@ -638,4 +200,3 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  ds_output:

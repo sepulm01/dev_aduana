@@ -67,19 +67,6 @@ def live_view(request, device_id):
         ctx["active_preset"] = ""
         ctx["active_preset_name"] = ""
 
-    from notifications.models import NotificationRule
-    from notifications.utils import is_rule_active_now
-
-    rules = NotificationRule.objects.filter(is_active=True).select_related("channel")
-    device_rules = []
-    for rule in rules:
-        if not rule.devices.exists() or rule.devices.filter(id=device_id).exists():
-            device_rules.append({
-                "name": rule.name,
-                "rule_id": rule.id,
-                "channel_name": rule.channel.name,
-                "active_now": is_rule_active_now(rule),
-            })
-    ctx["device_rules"] = device_rules
+    ctx["device_rules"] = []
 
     return render(request, "live/live.html", ctx)

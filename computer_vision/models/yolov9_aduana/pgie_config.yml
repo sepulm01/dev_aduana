@@ -1,0 +1,25 @@
+property:
+  gpu-id: 0
+  net-scale-factor: 0.0039215697906911373
+  model-color-format: 0
+  onnx-file: best.onnx
+  model-engine-file: model_b2_gpu0_fp32.engine
+  labelfile-path: labels.txt
+  batch-size: 2
+  network-mode: 0
+  num-detected-classes: 4
+  interval: 0
+  gie-unique-id: 1
+  process-mode: 1
+  network-type: 0
+  cluster-mode: 2
+  maintain-aspect-ratio: 1
+  symmetric-padding: 1
+  parse-bbox-func-name: NvDsInferParseYolo
+  custom-lib-path: /opt/nvidia/deepstream/deepstream/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
+  engine-create-func-name: NvDsInferYoloCudaEngineGet
+
+class-attrs-all:
+  pre-cluster-threshold: 0.25
+  topk: 300
+  nms-iou-threshold: 0.45

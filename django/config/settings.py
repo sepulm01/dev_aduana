@@ -18,11 +18,8 @@ INSTALLED_APPS = [
     "channels",
     "django_celery_beat",
     "devices.apps.DevicesConfig",
+    "aduana.apps.AduanaConfig",
     "live",
-    "ptz",
-    "detections.apps.DetectionsConfig",
-    "notifications.apps.NotificationsConfig",
-    "incidents.apps.IncidentsConfig",
     "operadores.apps.OperadoresConfig",
     "monitoring.apps.MonitoringConfig",
 ]
@@ -89,8 +86,8 @@ CELERY_BEAT_SCHEDULE = {
         "task": "devices.tasks.orchestrate_cameras",
         "schedule": 5.0,
     },
-    "incident-manager-every-5s": {
-        "task": "incidents.tasks.incident_manager",
+    "close-stale-events-every-5s": {
+        "task": "aduana.tasks.close_stale_events",
         "schedule": 5.0,
     },
     "monitoring-system-every-30s": {
@@ -108,10 +105,6 @@ CELERY_BEAT_SCHEDULE = {
     "monitoring-deepstream-every-30s": {
         "task": "monitoring.tasks.collect_deepstream",
         "schedule": 30.0,
-    },
-    "patrol-controller-every-10s": {
-        "task": "devices.tasks.patrol_controller",
-        "schedule": 10.0,
     },
 }
 
@@ -142,7 +135,3 @@ MEDIAMTX_URL = os.environ.get("MEDIAMTX_URL", "http://mediamtx:8889")
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"
-
-FACE_MATCH_COOLDOWN_SECONDS = 10
-FACE_MATCH_COSINE_THRESHOLD = 0.35
-FACE_QUALITY_MIN_SCORE = 1500

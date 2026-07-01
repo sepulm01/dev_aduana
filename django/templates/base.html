@@ -26,11 +26,7 @@
         .incident-toast .toast-title { color: #fca5a5; font-weight: 600; font-size: 0.9rem; margin-bottom: 2px; }
         .incident-toast .toast-sub { color: #94a3b8; font-size: 0.8rem; margin-bottom: 8px; }
         .incident-toast .toast-btn { font-size: 0.75rem; padding: 2px 10px; }
-        .page-wrapper {
-            background: #111827 url({% static 'img/bg.png' %}) no-repeat center top;
-            background-size: cover;
-            min-height: 100vh;
-        }
+        .page-wrapper { min-height: 100vh; }
     </style>
 </head>
 <body class="antialiased">
@@ -42,21 +38,21 @@
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <a class="navbar-brand py-3" href="/">
-                    <i class="ti ti-video me-2" style="font-size:1.5rem;color:#00c4cc;"></i>
-                    <span class="fw-bold">STSecurity</span>
+                    <i class="ti ti-ship me-2" style="font-size:1.5rem;color:#00c4cc;"></i>
+                    <span class="fw-bold">Aduana</span>
                 </a>
                 <div class="collapse navbar-collapse" id="navbar-menu">
                     <ul class="navbar-nav pt-lg-3">
                         <li class="nav-item">
-                            <a class="nav-link" href="{% url 'incident_dashboard' %}">
-                                <i class="ti ti-alert-triangle nav-link-icon" style="color:#ef4444;"></i>
-                                <span class="nav-link-title">Dashboard</span>
+                            <a class="nav-link" href="{% url 'aduana_dashboard' %}">
+                                <i class="ti ti-container nav-link-icon" style="color:#00c4cc;"></i>
+                                <span class="nav-link-title">Contenedores</span>
                             </a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href="/">
-                                <i class="ti ti-layout-grid nav-link-icon"></i>
-                                <span class="nav-link-title">Dispositivos</span>
+                                <i class="ti ti-camera nav-link-icon"></i>
+                                <span class="nav-link-title">Cámaras</span>
                             </a>
                         </li>
                         <li class="nav-item">
@@ -66,21 +62,9 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="{% url 'notification_rule_list' %}">
-                                <i class="ti ti-bell nav-link-icon"></i>
-                                <span class="nav-link-title">Reglas</span>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'incident_list' %}">
-                                <i class="ti ti-alert-triangle nav-link-icon"></i>
-                                <span class="nav-link-title">Incidentes</span>
-                            </a>
-                        </li>
-                        <li class="nav-item">
                             <a class="nav-link" href="{% url 'operador_site_list' %}">
                                 <i class="ti ti-building nav-link-icon"></i>
-                                <span class="nav-link-title">Sites</span>
+                                <span class="nav-link-title">Sitios</span>
                             </a>
                         </li>
                         <li class="nav-item">
@@ -89,27 +73,11 @@
                                 <span class="nav-link-title">Operadores</span>
                             </a>
                         </li>
-
                         <li class="nav-item">
                             <a class="nav-link" href="{% url 'monitoring_dashboard' %}">
                                 <i class="ti ti-chart-bar nav-link-icon"></i>
-                                <span class="nav-link-title">Hardware Monitor</span>
+                                <span class="nav-link-title">Monitor</span>
                             </a>
-                        </li>
-                        <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle" href="#navbar-facial"
-                               data-bs-toggle="dropdown" data-bs-auto-close="false" role="button">
-                                <i class="ti ti-id-badge nav-link-icon"></i>
-                                <span class="nav-link-title">Reconocimiento Facial</span>
-                            </a>
-                            <div class="dropdown-menu">
-                                <a class="dropdown-item" href="{% url 'identity_list' %}">
-                                    Identidades
-                                </a>
-                                <a class="dropdown-item" href="{% url 'detection_list' %}">
-                                    Rostros
-                                </a>
-                            </div>
                         </li>
                     </ul>
                     {% if user.is_authenticated %}
@@ -142,44 +110,6 @@
     </div>
     <div id="toast-container"></div>
     <script src="{% static 'vendor/tabler/tabler.min.js' %}"></script>
-    {% if user.is_authenticated %}
-    <script>
-    (function() {
-        var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        var wsUrl = protocol + '//' + window.location.host + '/ws/incidents/';
-        var ws;
-        function connect() {
-            ws = new WebSocket(wsUrl);
-            ws.onopen = function() {};
-            ws.onmessage = function(e) {
-                try {
-                    var data = JSON.parse(e.data);
-                    if (data.type === 'incident_alert') {
-                        showToast(data);
-                    }
-                } catch(err) {}
-            };
-            ws.onclose = function() { setTimeout(connect, 3000); };
-        }
-        function showToast(data) {
-            var container = document.getElementById('toast-container');
-            var toast = document.createElement('div');
-            toast.className = 'incident-toast';
-            toast.innerHTML =
-                '<div class="toast-title">&#x1f6a8; ' + (data.incident_type || 'Incidente') + '</div>' +
-                '<div class="toast-sub">Dispositivo: ' + (data.device_name || '#') + '</div>' +
-                '<a href="/incidents/dashboard/" class="btn btn-sm btn-outline-danger toast-btn">Ver dashboard &#8594;</a>';
-            container.appendChild(toast);
-            setTimeout(function() {
-                toast.style.opacity = '0';
-                toast.style.transition = 'opacity 0.3s';
-                setTimeout(function() { toast.remove(); }, 300);
-            }, 8000);
-        }
-        connect();
-    })();
-    </script>
-    {% endif %}
     {% block scripts %}{% endblock %}
 </body>
 </html>

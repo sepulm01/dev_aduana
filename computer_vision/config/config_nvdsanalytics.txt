@@ -1,18 +1,2 @@
 [property]
-enable=1
-config-width=1280
-config-height=720
-osd-mode=1
-
-[roi-filtering-stream-0]
-enable=1
-class-id=-1
-roi-Poligono 2=5;364;723;369;715;716;7;720
-roi-Esquina=895;423;1278;426;1278;712;826;716
-
-[roi-filtering-stream-1]
-enable=1
-class-id=-1
-roi-1_Poligono 1=335;58;636;16;771;50;787;292;757;442;711;638;420;663;231;520
-roi-3_Poligono 4=86;12;871;12;904;717;150;718
-roi-4_Poligono 1=189;90;1016;87;1037;654;175;670
+enable=0

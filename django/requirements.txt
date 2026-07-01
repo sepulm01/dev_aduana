@@ -20,3 +20,4 @@ psutil>=7,<8
 pynvml>=12,<13
 pysnmp>=7,<8
 onnxruntime>=1,<2
+pyyaml>=6,<7

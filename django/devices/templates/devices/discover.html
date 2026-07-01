@@ -63,6 +63,8 @@ async function addManual(e) {
         const data = await resp.json();
         if (data.ok) {
             window.location.href = '/devices/' + data.id + '/';
+        } else {
+            alert('Error: ' + (data.error || 'No se pudo agregar el dispositivo'));
         }
     } catch (e) {
         alert('Error: ' + e.message);

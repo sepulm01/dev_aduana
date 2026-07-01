@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Evento #{{ event.id }}</h1>
+    <a href="{% url 'aduana_dashboard' %}" class="btn btn-secondary">Volver</a>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Resumen</div>
+            <div class="card-body">
+                <dl>
+                    <dt>Código Contenedor</dt>
+                    <dd><strong>{{ event.container_code|default:"---" }}</strong></dd>
+                    <dt>Estado Sellos</dt>
+                    <dd>
+                        {% if event.seal_status == "con_sello" %}
+                            <span class="badge bg-success">Con Sello</span>
+                        {% elif event.seal_status == "sin_sello" %}
+                            <span class="badge bg-danger">Sin Sello</span>
+                        {% elif event.seal_status == "processing" %}
+                            <span class="badge bg-warning">Procesando</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Indeterminado</span>
+                        {% endif %}
+                    </dd>
+                    <dt>Confianza Clasificación</dt>
+                    <dd>{{ event.seal_confidence|floatformat:3 }}</dd>
+                    <dt>Inicio</dt>
+                    <dd>{{ event.timestamp_start|date:"Y-m-d H:i:s.u" }}</dd>
+                    <dt>Fin</dt>
+                    <dd>{{ event.timestamp_end|date:"Y-m-d H:i:s.u"|default:"---" }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<h3 class="mt-4">Detecciones ({{ detections.count }})</h3>
+<table class="table table-sm table-striped">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Clase</th>
+            <th>Confianza</th>
+            <th>Cámara</th>
+            <th>BBox (x,y,w,h)</th>
+            <th>OCR</th>
+            <th>Timestamp</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for det in detections %}
+        <tr>
+            <td>{{ det.id }}</td>
+            <td>
+                {% if det.class_id == 0 %}<span class="badge bg-success">con_sello</span>{% endif %}
+                {% if det.class_id == 1 %}<span class="badge bg-info">cont data</span>{% endif %}
+                {% if det.class_id == 2 %}<span class="badge bg-danger">sin_sello</span>{% endif %}
+                {% if det.class_id == 3 %}<span class="badge bg-warning">container cod</span>{% endif %}
+            </td>
+            <td>{{ det.confidence|floatformat:3 }}</td>
+            <td>{{ det.source_id }}</td>
+            <td>
+                <small>{{ det.bbox_left|floatformat:3 }}, {{ det.bbox_top|floatformat:3 }},
+                {{ det.bbox_width|floatformat:3 }}, {{ det.bbox_height|floatformat:3 }}</small>
+            </td>
+            <td>
+                {% if det.ocr_text %}
+                    <strong>{{ det.ocr_text }}</strong>
+                    <small>({{ det.ocr_confidence|floatformat:2 }})</small>
+                {% endif %}
+            </td>
+            <td><small>{{ det.timestamp|date:"H:i:s.u" }}</small></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7">Sin detecciones.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

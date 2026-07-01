@@ -35,7 +35,7 @@ def orchestrate_cameras():
     from devices.config_generator import MAX_INSTANCES, PIPELINE_CONFIGS
 
     sources = {}
-    for pipeline_id in ("main", "retinaface", "yolov9", "trafficcamnet_lpr"):
+    for pipeline_id in ("aduana",):
         for n in range(1, MAX_INSTANCES + 1):
             data = r.hgetall(f"deepstream:sources:{pipeline_id}:{n}")
             for k, v in data.items():
@@ -159,18 +159,7 @@ def orchestrate_cameras():
                         r.setex(f"device:{cid}:pending_restart", 3600, "1")
                         need_restart = True
 
-        specs = device.camera_specs or {}
-        if specs.get("ptz_caps"):
-            try:
-                from devices.utils import get_active_preset_for_device
-
-                active = get_active_preset_for_device(device)
-                token = active.preset_token if active else ""
-                r.setex(f"device:{cid}:active_preset", 120, token)
-            except Exception:
-                r.setex(f"device:{cid}:active_preset", 120, "")
-        else:
-            r.setex(f"device:{cid}:active_preset", 120, "__fixed__")
+        r.setex(f"device:{cid}:active_preset", 120, "__fixed__")
 
     if need_restart:
         regenerate_config_and_restart()

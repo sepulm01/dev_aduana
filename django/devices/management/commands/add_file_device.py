@@ -12,9 +12,9 @@ class Command(BaseCommand):
         parser.add_argument(
             "--pipeline",
             type=str,
-            default="retinaface",
-            choices=["main", "retinaface", "yolov9"],
-            help="DeepStream pipeline (default: facerec)",
+            default="aduana",
+            choices=["aduana"],
+            help="DeepStream pipeline (default: aduana)",
         )
 
     def handle(self, *args, **options):

@@ -48,28 +48,9 @@
                     <dt>Pipeline</dt>
                     <dd>
                         <select class="form-select form-select-sm" id="pipelineSelect" style="max-width:220px">
-                            <option value="main" {% if device.deepstream_pipeline == "main" %}selected{% endif %}>Peoplenet</option>
-                            <option value="retinaface" {% if device.deepstream_pipeline == "retinaface" %}selected{% endif %}>Face Recognition</option>
-                            <option value="yolov9" {% if device.deepstream_pipeline == "yolov9" %}selected{% endif %}>YOLO v9</option>
-                            <option value="trafficcamnet_lpr" {% if device.deepstream_pipeline == "trafficcamnet_lpr" %}selected{% endif %}>TrafficCamNet + LPR</option>
+                            <option value="aduana" {% if device.deepstream_pipeline == "aduana" %}selected{% endif %}>Aduana - Contenedores</option>
                             <option value="" {% if device.deepstream_pipeline == "" %}selected{% endif %}>Sin pipeline</option>
                         </select>
-                    </dd>
-                    <dt>SNMP</dt>
-                    <dd>
-                        <div class="d-flex align-items-center gap-2">
-                            <div class="form-check form-switch mb-0">
-                                <input class="form-check-input" type="checkbox" id="snmpEnabled"
-                                    {% if device.snmp_enabled %}checked{% endif %}>
-                                <label class="form-check-label" for="snmpEnabled">Habilitado</label>
-                            </div>
-                            <input type="text" class="form-control form-control-sm" id="snmpCommunity"
-                                value="{{ device.snmp_community|default:'public' }}" placeholder="community"
-                                style="max-width:100px">
-                            <input type="number" class="form-control form-control-sm" id="snmpPort"
-                                value="{{ device.snmp_port|default:161 }}" placeholder="161"
-                                style="max-width:70px">
-                        </div>
                     </dd>
                 </dl>
             </div>
@@ -92,54 +73,10 @@
         </div>
 
         <div class="card mb-3">
-            <div class="card-header">
-                <h3 class="card-title"><i class="ti ti-chart-dots me-2"></i>Analytics IA</h3>
-            </div>
             <div class="card-body">
-                <a href="{% url 'analytics_editor' device.id %}" class="btn btn-outline-info">
-                    <i class="ti ti-pencil me-1"></i>Abrir editor de analytics
-                </a>
-                {% if not device.deepstream_enabled %}
-                <div class="alert alert-warning mt-2 mb-0 py-2 px-3 small">
-                    <i class="ti ti-alert-triangle me-1"></i>IA no esta habilitada para esta camara.
-                </div>
-                {% endif %}
-            </div>
-        </div>
-
-        {% if device.camera_specs.ptz_caps %}
-        <div class="card mb-3">
-            <div class="card-header">
-                <h3 class="card-title"><i class="ti ti-repeat me-2"></i>Patrullaje PTZ</h3>
-            </div>
-            <div class="card-body">
-                <a href="{% url 'patrol_list' device.id %}" class="btn btn-outline-purple">
-                    <i class="ti ti-repeat me-1"></i>Configurar patrullajes
-                </a>
-            </div>
-        </div>
-        {% endif %}
-
-        <div class="card mb-3">
-            <div class="card-header">
-                <div class="card-header-actions">
-                    <button id="syncTimeBtn" class="btn btn-sm btn-outline-info me-1" onclick="syncTime()">
-                        <i class="ti ti-clock me-1"></i>Sync time
-                    </button>
-                    <button id="scanBtn" class="btn btn-sm btn-outline-primary" onclick="scanDevice()">
-                        <i class="ti ti-search me-1"></i>Scan
-                    </button>
-                </div>
-            </div>
-            <div class="card-body">
-                <p class="mb-0 small text-muted" id="scanStatus">
-                    {% if device.camera_specs.last_scan %}
-                    Ultimo scan: {{ device.camera_specs.last_scan }}
-                    {% else %}
-                    Sin escanear. Presiona "Scan".
-                    {% endif %}
-                </p>
-                <div id="capabilities"></div>
+                <button class="btn btn-danger w-100" onclick="deleteDevice()">
+                    <i class="ti ti-trash me-1"></i>Eliminar dispositivo
+                </button>
             </div>
         </div>
     </div>
@@ -147,33 +84,13 @@
     <div class="col-md-6">
         {% if profile_token %}
         <div class="mb-3">
-            {% include "live/_video_player.html" with suffix="_detail" ptz_supported=ptz_supported no_video_text="Cargando stream..." %}
+            {% include "live/_video_player.html" with suffix="_detail" ptz_supported=0 no_video_text="Cargando stream..." %}
         </div>
         {% else %}
         <div class="alert alert-info">
             <i class="ti ti-info-circle me-2"></i>No hay perfil default. Selecciona uno abajo para ver el video.
         </div>
         {% endif %}
-
-        <div class="card mb-3">
-            <div class="card-header">
-                <h3 class="card-title"><i class="ti ti-arrows-move me-2"></i>Presets PTZ</h3>
-            </div>
-            <div class="card-body">
-                <div class="mb-2">
-                    <select id="presetProfileSelect" class="form-select form-select-sm">
-                        <option value="">Seleccionar perfil PTZ...</option>
-                    </select>
-                </div>
-                <div class="input-group input-group-sm mb-2">
-                    <input type="text" id="presetName" class="form-control" placeholder="Nombre del preset">
-                    <button class="btn btn-success" onclick="savePreset()"><i class="ti ti-plus"></i></button>
-                </div>
-                <div id="presetList">
-                    <p class="text-muted small text-center mb-0">Selecciona un perfil PTZ</p>
-                </div>
-            </div>
-        </div>
 
         <div class="card mb-3">
             <div class="card-header">
@@ -186,100 +103,24 @@
                 </div>
             </div>
         </div>
-        </div>
-
-        <div class="card mb-3">
-            <div class="card-body">
-                <button class="btn btn-danger w-100" onclick="deleteDevice()">
-                    <i class="ti ti-trash me-1"></i>Eliminar dispositivo
-                </button>
-            </div>
-        </div>
     </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
-{% load static %}
-<script src="{% static 'live/ptz-control.js' %}"></script>
 <script>
 var DEVICE_ID = {{ device.id }};
-var SCAN_URL = '/api/devices/{{ device.id }}/scan/';
-var SYNC_TIME_URL = '/api/devices/{{ device.id }}/sync-time/';
 var PROFILES_URL = '/api/devices/{{ device.id }}/profiles/';
-var PRESET_URL = '/api/ptz/{{ device.id }}/preset/';
 var DEFAULT_PROFILE_URL = '/api/devices/{{ device.id }}/default-profile/';
 
-var specs = {{ camera_specs_json|safe }};
-var defaultProfileToken = '{{ device.default_profile_token|default:"" }}';
+function initVideoPlayer(suffix) {
+    var videoEl = document.getElementById('videoPlayer' + suffix);
+    if (videoEl && videoEl.src) videoEl.play().catch(function(){});
+}
 
 {% if profile_token %}
-window.ptzCtrl_detail = new PTZControl({
-    overlayEl: document.getElementById('ptzOverlay_detail'),
-    containerEl: document.getElementById('videoContainer_detail'),
-    toggleBtnEl: document.getElementById('ptzToggleBtn_detail'),
-    statusEl: null,
-    moveUrl: '/api/ptz/{{ device.id }}/move/',
-    statusUrl: '/api/ptz/{{ device.id }}/status/',
-    profileToken: '{{ profile_token }}',
-    cameraSpecs: {{ camera_specs_json|safe }},
-    ptzSupported: {{ ptz_supported|yesno:"true,false" }},
-    suffix: '_detail',
-});
-ptzCtrl_detail.init();
 initVideoPlayer('_detail');
 {% endif %}
-
-async function scanDevice() {
-    var btn = document.getElementById('scanBtn');
-    var status = document.getElementById('scanStatus');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-    status.textContent = 'Escaneando...';
-    try {
-        var resp = await fetch(SCAN_URL, {method: 'POST'});
-        var data = await resp.json();
-        if (data.ok) {
-            location.reload();
-        } else {
-            status.textContent = 'Error: ' + (data.error || 'desconocido');
-        }
-    } catch (e) {
-        status.textContent = 'Error de red';
-    }
-    btn.disabled = false;
-    btn.innerHTML = '<i class="ti ti-search me-1"></i>Scan';
-}
-
-async function syncTime() {
-    var btn = document.getElementById('syncTimeBtn');
-    var status = document.getElementById('scanStatus');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-    try {
-        var resp = await fetch(SYNC_TIME_URL, {method: 'POST'});
-        var data = await resp.json();
-        var r = data.results?.[0];
-        if (r && r.ok) {
-            status.textContent = 'Hora sincronizada correctamente';
-            setTimeout(function() { location.reload(); }, 1500);
-        } else {
-            var msg = 'Error: ' + (r?.error || 'desconocido');
-            status.textContent = msg;
-            btn.innerHTML = '<i class="ti ti-alert-triangle me-1"></i>Error';
-            btn.classList.replace('btn-outline-info', 'btn-outline-danger');
-            setTimeout(function() {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="ti ti-clock me-1"></i>Sync time';
-                btn.classList.replace('btn-outline-danger', 'btn-outline-info');
-            }, 3000);
-            return;
-        }
-    } catch (e) {
-        status.textContent = 'Error de red';
-    }
-    btn.disabled = false;
-    btn.innerHTML = '<i class="ti ti-clock me-1"></i>Sync time';
-}
 
 async function setDefaultProfile(token) {
     try {
@@ -290,149 +131,7 @@ async function setDefaultProfile(token) {
         });
         location.reload();
     } catch (e) {
-        console.error('Error setting default profile:', e);
-    }
-}
-
-var selectedPresetProfile = '';
-
-async function loadPtzProfiles() {
-    try {
-        var resp = await fetch(PROFILES_URL);
-        if (!resp.ok) return;
-        var profiles = await resp.json();
-        if (!Array.isArray(profiles)) return;
-        var select = document.getElementById('presetProfileSelect');
-        profiles.forEach(function(p) {
-            if (p.ptz) {
-                var opt = document.createElement('option');
-                opt.value = p.token;
-                opt.textContent = p.name;
-                select.appendChild(opt);
-            }
-        });
-    } catch (e) {
-        console.error('Error loading PTZ profiles:', e);
-    }
-}
-
-document.getElementById('presetProfileSelect').addEventListener('change', function() {
-    selectedPresetProfile = this.value;
-    if (selectedPresetProfile) {
-        loadPresets();
-    } else {
-        document.getElementById('presetList').innerHTML = '<p class="text-muted small text-center mb-0">Selecciona un perfil PTZ</p>';
-    }
-});
-
-async function loadPresets() {
-    var container = document.getElementById('presetList');
-    container.innerHTML = '<div class="text-center py-2"><span class="spinner-border spinner-border-sm"></span></div>';
-    try {
-        var resp = await fetch(PRESET_URL + '?profile_token=' + encodeURIComponent(selectedPresetProfile));
-        var presets = await resp.json();
-        if (!Array.isArray(presets) || presets.length === 0) {
-            container.innerHTML = '<p class="text-muted small text-center mb-0">Sin presets</p>';
-            return;
-        }
-        container.innerHTML = '<div class="list-group list-group-flush">' +
-            presets.map(function(p) {
-                return '<div class="list-group-item d-flex justify-content-between align-items-center py-2">' +
-                    '<span class="small">' + (p.name || p.token) + '</span>' +
-                    '<div>' +
-                        '<button class="btn btn-sm btn-outline-success me-1 py-0 px-1" onclick="gotoPreset(this, \'' + p.token + '\')" title="Ir">' +
-                            '<i class="ti ti-player-play"></i>' +
-                        '</button>' +
-                        '<button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removePreset(this, \'' + p.token + '\')" title="Eliminar">' +
-                            '<i class="ti ti-x"></i>' +
-                        '</button>' +
-                    '</div>' +
-                '</div>';
-            }).join('') +
-        '</div>';
-    } catch (e) {
-        container.innerHTML = '<p class="text-danger small text-center mb-0">Error al cargar presets</p>';
-    }
-}
-
-async function savePreset() {
-    var name = document.getElementById('presetName').value.trim();
-    if (!selectedPresetProfile) {
-        alert('Selecciona un perfil PTZ primero');
-        return;
-    }
-    if (!name) {
-        alert('Ingresa un nombre para el preset');
-        return;
-    }
-    var btn = document.querySelector('#presetName + button');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-    try {
-        var resp = await fetch(PRESET_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({action: 'set', profile_token: selectedPresetProfile, name: name}),
-        });
-        var data = await resp.json();
-        if (resp.ok && data.ok) {
-            document.getElementById('presetName').value = '';
-            loadPresets();
-        } else {
-            alert('Error al guardar preset: ' + (data.error || 'desconocido'));
-        }
-    } catch (e) {
-        alert('Error de red al guardar preset');
-    }
-    btn.disabled = false;
-    btn.innerHTML = '<i class="ti ti-plus"></i>';
-}
-
-async function gotoPreset(btnEl, token) {
-    if (!selectedPresetProfile) return;
-    var orig = btnEl.innerHTML;
-    btnEl.disabled = true;
-    btnEl.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-    try {
-        var resp = await fetch(PRESET_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({action: 'goto', profile_token: selectedPresetProfile, preset_token: token}),
-        });
-        if (!resp.ok) {
-            var data = await resp.json();
-            alert('Error al mover: ' + (data.error || 'desconocido'));
-        }
-    } catch (e) {
-        alert('Error de red al mover preset');
-    }
-    btnEl.disabled = false;
-    btnEl.innerHTML = orig;
-}
-
-async function removePreset(btnEl, token) {
-    if (!selectedPresetProfile) return;
-    var orig = btnEl.innerHTML;
-    btnEl.disabled = true;
-    btnEl.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-    try {
-        var resp = await fetch(PRESET_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({action: 'remove', profile_token: selectedPresetProfile, preset_token: token}),
-        });
-        if (resp.ok) {
-            loadPresets();
-        } else {
-            var data = await resp.json();
-            alert('Error al eliminar: ' + (data.error || 'desconocido'));
-            btnEl.disabled = false;
-            btnEl.innerHTML = orig;
-        }
-    } catch (e) {
-        alert('Error de red al eliminar preset');
-        btnEl.disabled = false;
-        btnEl.innerHTML = orig;
+        console.error('Error:', e);
     }
 }
 
@@ -450,11 +149,10 @@ async function loadProfiles() {
                 var enc = p.video_encoder?.encoding || '-';
                 var res = p.video_encoder?.resolution;
                 var resStr = res ? res.width + 'x' + res.height : '-';
-                var hasPtz = p.ptz ? '<i class="ti ti-arrows-move text-info ms-1" title="PTZ"></i>' : '';
-                var isDefault = defaultProfileToken === p.token;
+                var isDefault = '{{ device.default_profile_token|default:"" }}' === p.token;
                 return '<div class="list-group-item d-flex justify-content-between align-items-center">' +
                     '<div>' +
-                        '<a href="/live/{{ device.id }}/?profile=' + p.token + '" class="text-reset text-decoration-none">' + p.name + ' ' + hasPtz + '</a>' +
+                        '<a href="/live/{{ device.id }}/?profile=' + p.token + '" class="text-reset text-decoration-none">' + p.name + '</a>' +
                         (isDefault ? '<span class="badge bg-blue ms-1">Default</span>' : '') +
                         '<br><small class="text-muted">' + enc + ' ' + resStr + '</small>' +
                     '</div>' +
@@ -467,44 +165,12 @@ async function loadProfiles() {
     }
 }
 
-function renderCapabilities() {
-    var container = document.getElementById('capabilities');
-    var lastScan = specs.last_scan || '-';
-    var rows = '';
-    if (specs.onvif_profiles?.profiles) {
-        var p = specs.onvif_profiles.profiles;
-        rows += '<tr><td>ONVIF</td><td>' + (['S','T','M','G','Q'].filter(function(k){ return p[k]; }).join(', ') || '-') + '</td></tr>';
-    }
-    if (specs.video_source) {
-        var v = specs.video_source;
-        rows += '<tr><td>Resolucion</td><td>' + (v.max_width || '-') + '\u00d7' + (v.max_height || '-') + ' @ ' + (v.max_framerate || '-') + 'fps</td></tr>';
-    }
-    if (specs.network) {
-        rows += '<tr><td>MAC</td><td>' + (specs.network.mac || '-') + '</td></tr>';
-        rows += '<tr><td>IP</td><td>' + (specs.network.ip || '-') + '</td></tr>';
-    }
-    if (specs.hostname) rows += '<tr><td>Hostname</td><td>' + specs.hostname + '</td></tr>';
-    if (specs.dns?.length) rows += '<tr><td>DNS</td><td>' + specs.dns.join(', ') + '</td></tr>';
-    if (specs.ntp?.length) rows += '<tr><td>NTP</td><td>' + specs.ntp.join(', ') + '</td></tr>';
-    if (specs.system_time) rows += '<tr><td>Zona horaria</td><td>' + (specs.system_time.tz || '-') + '</td></tr>';
-    if (specs.last_time_sync) rows += '<tr><td>Ultima sincro</td><td>' + specs.last_time_sync + '</td></tr>';
-    if (!rows) return;
-    container.innerHTML = '<table class="table table-vcenter mt-2 mb-0 small"><tbody>' + rows + '</tbody></table>';
-}
-
 async function saveStreamUris() {
     var textarea = document.getElementById('streamUrisEditor');
     var btn = document.getElementById('saveStreamUrisBtn');
     var status = document.getElementById('streamUrisStatus');
-    try {
-        var parsed = JSON.parse(textarea.value);
-        if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-            status.textContent = 'Error: debe ser un objeto JSON';
-            status.className = 'text-danger small mt-1 d-block';
-            return;
-        }
-    } catch (e) {
-        status.textContent = 'Error: JSON invalido';
+    try { JSON.parse(textarea.value); } catch (e) {
+        status.textContent = 'JSON invalido';
         status.className = 'text-danger small mt-1 d-block';
         return;
     }
@@ -514,17 +180,11 @@ async function saveStreamUris() {
         var resp = await fetch('/api/devices/' + DEVICE_ID + '/stream-uris/', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({stream_uris: parsed}),
+            body: JSON.stringify({stream_uris: JSON.parse(textarea.value)}),
         });
         var data = await resp.json();
-        if (data.ok) {
-            status.textContent = 'Guardado correctamente';
-            status.className = 'text-green small mt-1 d-block';
-            setTimeout(function() { status.textContent = ''; }, 3000);
-        } else {
-            status.textContent = 'Error: ' + (data.error || 'desconocido');
-            status.className = 'text-danger small mt-1 d-block';
-        }
+        status.textContent = data.ok ? 'Guardado' : 'Error: ' + (data.error || '');
+        status.className = data.ok ? 'text-green small mt-1 d-block' : 'text-danger small mt-1 d-block';
     } catch (e) {
         status.textContent = 'Error de red';
         status.className = 'text-danger small mt-1 d-block';
@@ -534,11 +194,10 @@ async function saveStreamUris() {
 }
 
 document.getElementById('siteSelect').addEventListener('change', async function() {
-    var siteId = this.value || null;
     await fetch('/api/devices/' + DEVICE_ID + '/assign-site/', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({site_id: siteId}),
+        body: JSON.stringify({site_id: this.value || null}),
     });
 });
 
@@ -551,34 +210,13 @@ document.getElementById('pipelineSelect').addEventListener('change', async funct
     location.reload();
 });
 
-function saveSnmpConfig() {
-    fetch('/api/devices/' + DEVICE_ID + '/configure-snmp/', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            snmp_enabled: document.getElementById('snmpEnabled').checked,
-            snmp_community: document.getElementById('snmpCommunity').value,
-            snmp_port: parseInt(document.getElementById('snmpPort').value) || 161,
-        }),
-    });
-}
-
-document.getElementById('snmpEnabled').addEventListener('change', saveSnmpConfig);
-document.getElementById('snmpCommunity').addEventListener('change', saveSnmpConfig);
-document.getElementById('snmpPort').addEventListener('change', saveSnmpConfig);
-
-renderCapabilities();
 loadProfiles();
-loadPtzProfiles();
 
 function deleteDevice() {
-    if (!confirm('Eliminar {{ device.name|escapejs }}? Se perderan todos los datos.')) return;
+    if (!confirm('Eliminar {{ device.name|escapejs }}?')) return;
     fetch('/devices/{{ device.id }}/delete/', {method: 'POST'})
         .then(r => r.json())
-        .then(d => {
-            if (d.ok) window.location.href = '/';
-            else alert('Error: ' + (d.error || 'desconocido'));
-        })
+        .then(d => { if (d.ok) window.location.href = '/'; else alert('Error: ' + (d.error || '')); })
         .catch(e => alert('Error de red'));
 }
 </script>

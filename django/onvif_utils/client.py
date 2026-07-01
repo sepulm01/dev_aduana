@@ -16,7 +16,7 @@ class OnvifClient:
         self.port = port
         self.username = username
         self.password = password
-        self._cam = ONVIFCamera(host, port, username, password, adjust_time=True)
+        self._cam = ONVIFCamera(host, port, username, password, adjust_time=False)
         self._device = None
         self._media = None
         self._ptz = None

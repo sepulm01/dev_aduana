@@ -5,11 +5,6 @@ from django.db import models
 class Site(models.Model):
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True, default="")
-    channels = models.ManyToManyField(
-        "notifications.NotificationChannel",
-        blank=True,
-        related_name="sites",
-    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -45,11 +40,6 @@ class OperatorProfile(models.Model):
     cargo = models.CharField(max_length=120, blank=True, default="")
     photo = models.ImageField(upload_to="profiles/", null=True, blank=True)
     escalation_level = models.IntegerField(default=1)
-    personal_channels = models.ManyToManyField(
-        "notifications.NotificationChannel",
-        blank=True,
-        related_name="operators",
-    )
     sites = models.ManyToManyField(
         Site,
         blank=True,

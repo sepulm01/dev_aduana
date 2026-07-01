@@ -4,200 +4,43 @@ NVDSANALYTICS_CONFIG_FILE = "config_nvdsanalytics.txt"
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
-MAX_INSTANCES = 4
+MAX_INSTANCES = 1
 
 PIPELINE_CONFIGS = {
-    "main": {
-        "models_dir": "../models/peoplenet",
-        "max_streammux_batch": 3,
-        "max_devices_per_instance": 3,
-        "filename_template": "",
-    },
-    "retinaface": {
-        "models_dir": "../models/retinaface_det10g",
-        "max_streammux_batch": 1,
-        "max_devices_per_instance": 1,
-        "extra_yaml": "face-class-id: 0\n",
-    },
-    "yolov9": {
-        "models_dir": "../models/yolov9",
-        "max_streammux_batch": 3,
-        "max_devices_per_instance": 3,
-    },
-    "trafficcamnet_lpr": {
-        "models_dir": "../models/trafficcamnet",
-        "max_streammux_batch": 1,
-        "max_devices_per_instance": 1,
-        "sgie_sections": (
-            "secondary-gie0:\n"
-            "  plugin-type: 0\n"
-            "  config-file-path: ../models/trafficcamnet/lpd/sgie_config.yml\n"
-            "\n"
-            "secondary-gie1:\n"
-            "  plugin-type: 0\n"
-            "  config-file-path: ../models/trafficcamnet/lpr/sgie_config.yml\n"
-        ),
+    "aduana": {
+        "models_dir": "../models/yolov9_aduana",
+        "max_streammux_batch": 2,
+        "max_devices_per_instance": 2,
+        "filename_template": "aduana",
     },
 }
 
-CONTAINER_BASE = "mediamtx-manager-computer-vision"
 PIPELINE_CONTAINER_SUFFIX = {
-    "main": "computer-vision",
-    "retinaface": "computer-vision-retinaface",
-    "yolov9": "computer-vision-yolov9",
-    "trafficcamnet_lpr": "computer-vision-lpr",
+    "aduana": "computer-vision-aduana",
 }
 
 
 def get_pipeline_filename(pipeline_id, instance=1):
     basename = PIPELINE_CONFIGS[pipeline_id].get("filename_template", pipeline_id)
-    if basename:
-        base = f"config_{basename}"
-    else:
-        base = "config"
     if instance == 1:
-        return f"{base}.yml"
-    return f"{base}_{instance}.yml"
-
-
-def get_default_filename(pipeline_id):
-    return get_pipeline_filename(pipeline_id, instance=1)
-
-
-def get_pipeline_containers(pipeline_id):
-    suffix = PIPELINE_CONTAINER_SUFFIX[pipeline_id]
-    names = []
-    for n in range(1, MAX_INSTANCES + 1):
-        if n == 1:
-            names.append(f"mediamtx-manager-{suffix}-1")
-        else:
-            names.append(f"mediamtx-manager-{suffix}-{n}-1")
-    return names
-
-
-def get_pipeline_container(pipeline_id):
-    return get_pipeline_containers(pipeline_id)[0]
+        return f"config_{basename}.yml"
+    return f"config_{basename}_{instance}.yml"
 
 
 def _read_labels(pipeline_id, config_dir):
     pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
-    models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
-    labels_path = os.path.normpath(os.path.join(config_dir, models_dir, "labels.txt"))
-    with open(labels_path) as f:
-        return ";".join(line.strip() for line in f if line.strip())
+    models_dir = pipeline_cfg.get("models_dir", "../models/yolov9_aduana")
+    labels_path = os.path.join(
+        config_dir, models_dir, "labels.txt"
+    )
+    if os.path.exists(labels_path):
+        with open(labels_path) as f:
+            names = [line.strip() for line in f if line.strip()]
+            return ";".join(names) + ";"
+    return "con_sello;cont data;sin_sello;container cod;"
 
 
-def _shapes_to_nvdsanalytics(shapes, stream_idx=0, prefix=""):
-    sections = {}
-    for shape in shapes:
-        obj_type = shape.get("object", "")
-        name = shape.get("name", "unnamed")
-        shape_type = shape.get("type", "")
-
-        if obj_type == "polygon" and shape_type == "RF":
-            pts = shape.get("points", [])
-            if len(pts) >= 4:
-                coords = ";".join(
-                    f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
-                    for p in pts
-                )
-                key = f"roi-{name}" if not prefix else f"roi-{prefix}_{name}"
-                section = f"roi-filtering-stream-{stream_idx}"
-                if section not in sections:
-                    sections[section] = {"enable": "1", "class-id": "-1"}
-                sections[section][key] = coords
-
-        elif obj_type == "polygon" and shape_type == "OC":
-            pts = shape.get("points", [])
-            if len(pts) >= 4:
-                coords = ";".join(
-                    f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
-                    for p in pts
-                )
-                key = f"roi-{name}" if not prefix else f"roi-{prefix}_{name}"
-                section = f"overcrowding-stream-{stream_idx}"
-                if section not in sections:
-                    sections[section] = {
-                        "enable": "1", "class-id": "-1", "object-threshold": "3"
-                    }
-                sections[section][key] = coords
-
-        elif obj_type == "line" and shape_type == "cross":
-            x1 = round(shape["x1"] * FRAME_WIDTH)
-            y1 = round(shape["y1"] * FRAME_HEIGHT)
-            x2 = round(shape["x2"] * FRAME_WIDTH)
-            y2 = round(shape["y2"] * FRAME_HEIGHT)
-            key = f"line-crossing-{name}" if not prefix else f"line-crossing-{prefix}_{name}"
-            section = f"line-crossing-stream-{stream_idx}"
-            if section not in sections:
-                sections[section] = {"enable": "1", "class-id": "0", "mode": "loose"}
-            sections[section][key] = f"{x1};{y1};{x2};{y2}"
-
-        elif obj_type == "line" and shape_type == "direction":
-            x1 = round(shape["x1"] * FRAME_WIDTH)
-            y1 = round(shape["y1"] * FRAME_HEIGHT)
-            x2 = round(shape["x2"] * FRAME_WIDTH)
-            y2 = round(shape["y2"] * FRAME_HEIGHT)
-            key = f"direction-{name}" if not prefix else f"direction-{prefix}_{name}"
-            section = f"direction-detection-stream-{stream_idx}"
-            if section not in sections:
-                sections[section] = {"enable": "1", "class-id": "0"}
-            sections[section][key] = f"{x1};{y1};{x2};{y2}"
-
-    return sections
-
-
-def _serialize_nvdsanalytics(sections):
-    lines = [
-        "[property]",
-        "enable=1",
-        "config-width=1280",
-        "config-height=720",
-        "osd-mode=1",
-        "",
-    ]
-    for section, props in sections.items():
-        lines.append(f"[{section}]")
-        for key, val in props.items():
-            lines.append(f"{key}={val}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def generate_nvdsanalytics_config(devices, config_dir):
-    from django.apps import apps
-
-    AnalyticsPreset = apps.get_model("devices", "AnalyticsPreset")
-
-    all_sections = {}
-    stream_idx = 0
-    for device in devices:
-        presets = AnalyticsPreset.objects.filter(
-            device=device, shapes__isnull=False
-        ).exclude(shapes=[])
-        if not presets:
-            stream_idx += 1
-            continue
-        for preset in presets:
-            prefix = preset.preset_token if preset.preset_token != "__fixed__" else ""
-            sections = _shapes_to_nvdsanalytics(preset.shapes, stream_idx, prefix)
-            for sec, props in sections.items():
-                if sec not in all_sections:
-                    all_sections[sec] = dict(props)
-                else:
-                    for k, v in props.items():
-                        if k not in ("enable", "class-id", "mode", "object-threshold"):
-                            all_sections[sec][k] = v
-        stream_idx += 1
-
-    content = _serialize_nvdsanalytics(all_sections)
-    output_path = os.path.join(config_dir, NVDSANALYTICS_CONFIG_FILE)
-    os.makedirs(config_dir, exist_ok=True)
-    with open(output_path, "w") as f:
-        f.write(content)
-
-
-def generate_config(devices, output_path, pipeline_id="main"):
+def generate_config(devices, output_path, pipeline_id="aduana"):
     uris = []
     for device in devices:
         if not device.stream_uris:
@@ -221,16 +64,14 @@ def generate_config(devices, output_path, pipeline_id="main"):
     max_batch = pipeline_cfg.get("max_streammux_batch", raw_batch_size)
     batch_size = min(raw_batch_size, max_batch)
 
-    models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
-    sgie_sections = pipeline_cfg.get("sgie_sections", "")
-    extra_yaml = pipeline_cfg.get("extra_yaml", "")
+    models_dir = pipeline_cfg.get("models_dir", "../models/yolov9_aduana")
 
     config_dir = os.path.dirname(output_path)
     os.makedirs(config_dir, exist_ok=True)
 
     labels = _read_labels(pipeline_id, config_dir)
 
-    config = f"""{extra_yaml}source-list:
+    config = f"""source-list:
   list: "{source_list}"
 
 streammux:
@@ -245,7 +86,7 @@ primary-gie:
   plugin-type: 0
   config-file-path: {models_dir}/pgie_config.yml
 
-{sgie_sections}analytics:
+analytics:
   enable: 1
   config-file: {NVDSANALYTICS_CONFIG_FILE}
 
@@ -274,10 +115,8 @@ def generate_all_configs(config_dir=None):
 
     if config_dir is None:
         config_dir = os.path.dirname(
-            os.environ.get("CONFIG_YML_PATH", "/opt/computer_vision/config/config.yml")
+            os.environ.get("CONFIG_YML_PATH", "/opt/computer_vision/config/config_aduana.yml")
         )
-
-    all_analytics_devices = []
 
     for pipeline_id in PIPELINE_CONFIGS:
         devices = list(
@@ -296,40 +135,19 @@ def generate_all_configs(config_dir=None):
             ).exclude(stream_uris={})
         )
 
-        all_analytics_devices.extend(devices)
-
         pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
         max_per_instance = pipeline_cfg["max_devices_per_instance"]
-        instances_needed = min(
-            max((len(devices) + max_per_instance - 1) // max_per_instance, 1),
-            MAX_INSTANCES,
-        )
 
         for n in range(1, MAX_INSTANCES + 1):
             filename = get_pipeline_filename(pipeline_id, instance=n)
             output_path = os.path.join(config_dir, filename)
 
-            if n <= instances_needed and devices:
-                my_devices = devices[(n - 1) :: instances_needed]
+            if devices:
+                my_devices = devices[(n - 1) :: MAX_INSTANCES][:max_per_instance]
                 generate_config(my_devices, output_path, pipeline_id)
             else:
-                write_empty_config(output_path, pipeline_id)
-
-    generate_nvdsanalytics_config(all_analytics_devices, config_dir)
-
-
-def write_empty_config(output_path, pipeline_id):
-    pipeline_cfg = PIPELINE_CONFIGS[pipeline_id]
-    models_dir = pipeline_cfg.get("models_dir", "../models/peoplenet")
-    sgie_sections = pipeline_cfg.get("sgie_sections", "")
-    extra_yaml = pipeline_cfg.get("extra_yaml", "")
-
-    config_dir = os.path.dirname(output_path)
-    os.makedirs(config_dir, exist_ok=True)
-
-    labels = _read_labels(pipeline_id, config_dir)
-
-    config = f"""{extra_yaml}source-list:
+                with open(output_path, "w") as f:
+                    f.write(f"""source-list:
   list: ""
 
 streammux:
@@ -338,13 +156,13 @@ streammux:
   width: 1920
   height: 1080
 
-labels: {labels}
+labels: ;
 
 primary-gie:
   plugin-type: 0
-  config-file-path: {models_dir}/pgie_config.yml
+  config-file-path: ../models/yolov9_aduana/pgie_config.yml
 
-{sgie_sections}analytics:
+analytics:
   enable: 1
   config-file: {NVDSANALYTICS_CONFIG_FILE}
 
@@ -358,7 +176,15 @@ tiler:
 
 sink:
   qos: 0
-"""
+""")
 
-    with open(output_path, "w") as f:
-        f.write(config)
+    generate_nvdsanalytics_config(config_dir)
+
+
+def generate_nvdsanalytics_config(config_dir):
+    path = os.path.join(config_dir, NVDSANALYTICS_CONFIG_FILE)
+    with open(path, "w") as f:
+        f.write(
+            "[property]\n"
+            "enable=0\n"
+        )

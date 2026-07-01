@@ -25,15 +25,12 @@ class Device(models.Model):
     event_listener_enabled = models.BooleanField(default=False)
     deepstream_enabled = models.BooleanField(default=False)
     PIPELINE_CHOICES = [
-        ("main", "Peoplenet"),
-        ("retinaface", "Face Recognition"),
-        ("yolov9", "YOLO v9"),
-        ("trafficcamnet_lpr", "TrafficCamNet + LPR"),
+        ("aduana", "Aduana - Contenedores"),
         ("", "Sin pipeline"),
     ]
     deepstream_pipeline = models.CharField(
         max_length=20,
-        default="main",
+        default="aduana",
         choices=PIPELINE_CHOICES,
     )
     SOURCE_TYPE_CHOICES = [

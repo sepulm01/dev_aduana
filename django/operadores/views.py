@@ -8,7 +8,6 @@ from django.contrib.auth.decorators import login_required
 
 from operadores.models import Site, SiteEscalationLevel, OperatorProfile, SiteMembership
 from devices.models import Device
-from notifications.models import NotificationChannel
 from django.contrib.auth.models import User
 
 logger = logging.getLogger(__name__)
@@ -16,14 +15,13 @@ logger = logging.getLogger(__name__)
 
 @login_required
 def site_list(request):
-    sites = Site.objects.prefetch_related("channels", "escalation_levels").all()
+    sites = Site.objects.prefetch_related("escalation_levels").all()
     return render(request, "operadores/site_list.html", {"sites": sites})
 
 
 @login_required
 @csrf_exempt
 def site_create(request):
-    channels = NotificationChannel.objects.filter(is_active=True)
     if request.method == "POST":
         try:
             data = json.loads(request.body)
@@ -37,11 +35,6 @@ def site_create(request):
             description=data.get("description", ""),
             is_active=data.get("is_active", True),
         )
-        for channel_id in data.get("channels", []):
-            try:
-                site.channels.add(NotificationChannel.objects.get(id=channel_id))
-            except NotificationChannel.DoesNotExist:
-                pass
         for level_data in data.get("levels", []):
             SiteEscalationLevel.objects.create(
                 site=site,
@@ -50,17 +43,13 @@ def site_create(request):
                 requires_ack=level_data.get("requires_ack", True),
             )
         return JsonResponse({"ok": True, "id": site.id})
-    return render(request, "operadores/site_form.html", {
-        "site": None,
-        "channels": channels,
-    })
+    return render(request, "operadores/site_form.html", {"site": None})
 
 
 @login_required
 @csrf_exempt
 def site_edit(request, site_id):
     site = get_object_or_404(Site, id=site_id)
-    channels = NotificationChannel.objects.filter(is_active=True)
     if request.method == "POST":
         try:
             data = json.loads(request.body)
@@ -70,13 +59,6 @@ def site_edit(request, site_id):
         site.description = data.get("description", site.description)
         site.is_active = data.get("is_active", site.is_active)
         site.save()
-        if "channels" in data:
-            site.channels.clear()
-            for channel_id in data["channels"]:
-                try:
-                    site.channels.add(NotificationChannel.objects.get(id=channel_id))
-                except NotificationChannel.DoesNotExist:
-                    pass
         if "levels" in data:
             site.escalation_levels.all().delete()
             for level_data in data["levels"]:
@@ -87,10 +69,7 @@ def site_edit(request, site_id):
                     requires_ack=level_data.get("requires_ack", True),
                 )
         return JsonResponse({"ok": True})
-    return render(request, "operadores/site_form.html", {
-        "site": site,
-        "channels": channels,
-    })
+    return render(request, "operadores/site_form.html", {"site": site})
 
 
 @login_required
@@ -106,11 +85,9 @@ def site_delete(request, site_id):
 @login_required
 def profile_view(request):
     profile = get_object_or_404(OperatorProfile, user=request.user)
-    channels = NotificationChannel.objects.filter(is_active=True)
     sites = Site.objects.filter(is_active=True)
     return render(request, "operadores/profile.html", {
         "profile": profile,
-        "channels": channels,
         "all_sites": sites,
     })
 
@@ -128,13 +105,6 @@ def profile_edit(request):
         profile.cargo = data.get("cargo", profile.cargo)
         profile.escalation_level = data.get("escalation_level", profile.escalation_level)
         profile.save()
-        if "personal_channels" in data:
-            profile.personal_channels.clear()
-            for ch_id in data["personal_channels"]:
-                try:
-                    profile.personal_channels.add(NotificationChannel.objects.get(id=ch_id))
-                except NotificationChannel.DoesNotExist:
-                    pass
         return JsonResponse({"ok": True})
     return JsonResponse({"error": "POST required"}, status=405)
 
@@ -149,7 +119,6 @@ def operator_list(request):
 @csrf_exempt
 def operator_edit(request, user_id):
     profile = get_object_or_404(OperatorProfile, user_id=user_id)
-    channels = NotificationChannel.objects.filter(is_active=True)
     all_sites = Site.objects.filter(is_active=True)
     if request.method == "POST":
         try:
@@ -160,13 +129,6 @@ def operator_edit(request, user_id):
         profile.cargo = data.get("cargo", profile.cargo)
         profile.escalation_level = data.get("escalation_level", profile.escalation_level)
         profile.save()
-        if "personal_channels" in data:
-            profile.personal_channels.clear()
-            for ch_id in data["personal_channels"]:
-                try:
-                    profile.personal_channels.add(NotificationChannel.objects.get(id=ch_id))
-                except NotificationChannel.DoesNotExist:
-                    pass
         if "site_ids" in data:
             SiteMembership.objects.filter(user_id=user_id).delete()
             for site_id in data["site_ids"]:
@@ -174,7 +136,6 @@ def operator_edit(request, user_id):
         return JsonResponse({"ok": True})
     return render(request, "operadores/operator_form.html", {
         "profile": profile,
-        "channels": channels,
         "all_sites": all_sites,
     })
 
