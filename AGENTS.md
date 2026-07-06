@@ -47,7 +47,7 @@ docker compose logs -f django-http
 
 ## Architecture
 
-- **Monorepo with Docker Compose** (`docker-compose.yml`). Project name: `mediamtx-manager`.
+- **Monorepo with Docker Compose** (`docker-compose.yml`). Project name: `aduana`.
 - **Django 6.0** with Gunicorn (WSGI, port 8000) and Daphne (ASGI/WebSocket, port 8001), behind nginx on port 80.
 - **6 Django apps**: `devices` (core), `aduana` (container inspection), `live` (WebSocket bridge), `operadores` (sites), `monitoring` (system metrics).
 - **Celery** with `DatabaseScheduler` — the orchestrator. Beat schedule is defined in `config/settings.py:CELERY_BEAT_SCHEDULE`.
@@ -68,10 +68,21 @@ docker compose logs -f django-http
 - **Migrations run automatically** via `docker-entrypoint.sh` with a PostgreSQL advisory lock (`pg_advisory_lock(123456)`).
 - **Generated configs are gitignored**: `computer_vision/config/config*.yml` and `computer_vision/config/config_nvdsanalytics.txt` contain credentials and must never be committed.
 
+## Recent changes (Jul 2026)
+
+- **Project renamed** from `mediamtx-manager` to `aduana`. Volume names preserved with explicit `external: true` entries.
+- **ONVIF socket timeout**: `socket.setdefaulttimeout(15)` in `onvif_utils/client.py` — prevents infinite hangs.
+- **add_device sync**: Now fetches stream URIs + syncs MediaMTX inline (no Celery dependency for the critical path).
+- **MediaMTX persistence**: Paths now written to `mediamtx/mediamtx.yml` via YAML (not just API). Config reloaded via `docker kill -s USR1`.
+- **Crop binary protocol fixed**: `object_id` changed from `f` (float/4 bytes) to `Q` (uint64_t/8 bytes) in crop-receiver header. C++ struct is 52 bytes: `IIIQ5fQI`.
+- **DeepStream timestamp fix**: JSON publish now uses `time(nullptr)*1000` (epoch ms) instead of `g_get_monotonic_time()` (boot ms). Fixes 1970 dates.
+- **PaddleOCR GPU**: celery-worker image based on `nvidia/cuda:12.6.0-cudnn-runtime-ubuntu24.04`. PaddlePaddle 2.6.2 + cuDNN 9.3 via symlinks. GPU inference confirmed on RTX 5060.
+- **Crop images in event detail**: Added thumbnail column with click-to-expand in `event_detail.html`.
+
 ## Testing
 
 - No test suite exists. Use `docker compose exec django-http python manage.py test <app>`.
-- GPU-dependent features (DeepStream) cannot be tested in CI without NVIDIA hardware.
+- GPU-dependent features (DeepStream, PaddleOCR) cannot be tested in CI without NVIDIA hardware.
 
 ## Lint / style
 
@@ -87,7 +98,7 @@ docker compose logs -f django-http
 | django-http | UI + REST API (Gunicorn) | 8000 (internal) |
 | django-asgi | WebSocket (Daphne) | 8001 (internal) |
 | celery-beat | Orchestrator scheduler (DatabaseScheduler) | — |
-| celery-worker | Executes orchestrator + OCR tasks | — |
+| celery-worker | Executes orchestrator + OCR (PaddleOCR GPU) | — |
 | redis-event-bridge | Redis → Channels WebSocket forwarder | — |
 | crop-receiver | TCP server for container crops | 12347 |
 | orchestrator | Event correlation across cameras | — |
