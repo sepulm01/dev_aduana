@@ -1,4 +1,4 @@
-name: mediamtx-manager
+name: aduana
 
 services:
   postgres:
@@ -28,7 +28,7 @@ services:
     image: bluenviron/mediamtx:latest-ffmpeg
     restart: unless-stopped
     volumes:
-      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml
     ports:
       - "8554:8554"
       - "8889:8889"
@@ -51,6 +51,7 @@ services:
       - ./computer_vision/models:/opt/computer_vision/models
       - ./django/media:/app/media
       - ./django/static/img:/app/static/img:ro
+      - ./mediamtx/mediamtx.yml:/app/mediamtx.yml
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,11 +78,14 @@ services:
   celery-worker:
     build: ./django
     restart: unless-stopped
+    runtime: nvidia
     command: celery -A config worker -l info -Q celery,ocr
     env_file: .env
     environment:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
@@ -199,4 +203,8 @@ networks:
 
 volumes:
   postgres_data:
+    name: mediamtx-manager_postgres_data
+    external: true
   redis_data:
+    name: mediamtx-manager_redis_data
+    external: true

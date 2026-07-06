@@ -75,10 +75,10 @@ def probe(request):
 def add_device(request):
     if request.method == "POST":
         data = json.loads(request.body)
-        host = data.get("host", "")
+        host = data.get("host", "").strip()
         port = int(data.get("port", 80))
-        username = data.get("username", "")
-        password = data.get("password", "")
+        username = data.get("username", "").strip()
+        password = data.get("password", "").strip()
 
         if not username or not password:
             return JsonResponse(
@@ -118,6 +118,40 @@ def add_device(request):
         )
         device._skip_stream_refresh = True
         device.save()
+
+        try:
+            svc = MediaService(client)
+            profiles = svc.get_profiles()
+            stream_uris = {}
+            profiles_tokens = []
+            uris = []
+            for p in profiles:
+                try:
+                    uri = svc.get_stream_uri(
+                        p["token"], username=username, password=password
+                    )
+                    if uri:
+                        stream_uris[p["token"]] = uri
+                        profiles_tokens.append(p["token"])
+                        uris.append(uri)
+                except Exception:
+                    pass
+
+            if stream_uris:
+                if not device.default_profile_token:
+                    device.default_profile_token = profiles_tokens[0]
+                device._skip_stream_refresh = True
+                device.stream_uris = stream_uris
+                device.save(update_fields=["stream_uris", "default_profile_token"])
+                delattr(device, "_skip_stream_refresh")
+
+                try:
+                    mtx = MediaMTXAPI()
+                    mtx.ensure_camera_streams(device.id, profiles_tokens, uris)
+                except Exception as e:
+                    logger.warning("add_device(%s) MediaMTX sync failed: %s", device.id, e)
+        except Exception as e:
+            logger.warning("add_device(%s) ONVIF stream fetch failed: %s", device.id, e)
 
         from devices.tasks import refresh_device_streams
 

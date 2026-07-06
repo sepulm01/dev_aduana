@@ -1,6 +1,10 @@
+import socket
+
 from datetime import datetime, timezone
 
 from onvif import ONVIFCamera
+
+socket.setdefaulttimeout(15)
 
 
 class OnvifClient:

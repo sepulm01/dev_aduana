@@ -1,43 +1,58 @@
 api: true
 apiAddress: :9997
 apiAllowOrigins:
-  - '*'
-authMethod: internal
+- '*'
 authInternalUsers:
-  - user: admin
-    pass: mediamtx_admin_pass
-    ips: []
-    permissions:
-      - action: api
-      - action: metrics
-      - action: pprof
-      - action: publish
-      - action: read
-      - action: playback
-  - user: any
-    pass:
-    ips: ['127.0.0.1', '::1', '172.23.0.0/16']
-    permissions:
-      - action: publish
-      - action: read
-      - action: playback
+- ips: []
+  pass: mediamtx_admin_pass
+  permissions:
+  - action: api
+  - action: metrics
+  - action: pprof
+  - action: publish
+  - action: read
+  - action: playback
+  user: admin
+- ips:
+  - 127.0.0.1
+  - ::1
+  - 172.23.0.0/16
+  pass: null
+  permissions:
+  - action: publish
+  - action: read
+  - action: playback
+  user: any
+authMethod: internal
 hls: true
 hlsAddress: :8888
 hlsAllowOrigins:
-  - '*'
+- '*'
 hlsSegmentCount: 7
 hlsSegmentDuration: 1s
 hlsVariant: lowLatency
 logDestinations:
-  - stdout
+- stdout
 logLevel: info
+paths:
+  cam_1_MediaProfile00000_hw:
+    runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://admin:M4rt1n2026@172.16.120.50:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif
+      -c:v libx264 -preset ultrafast -tune zerolatency -c:a copy -f rtsp "rtsp://127.0.0.1:8554/cam_1_MediaProfile00000_hw"
+    runOnDemandRestart: true
+    source: publisher
+  cam_2_MediaProfile00000_hw:
+    runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://admin:M4rt1n2026@172.16.120.51:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif
+      -c:v libx264 -preset ultrafast -tune zerolatency -c:a copy -f rtsp "rtsp://127.0.0.1:8554/cam_2_MediaProfile00000_hw"
+    runOnDemandRestart: true
+    source: publisher
 rtsp: true
 rtspAddress: :8554
-rtspAuthMethods: [basic]
+rtspAuthMethods:
+- basic
 webrtc: true
 webrtcAddress: :8889
 webrtcAllowOrigins:
-  - '*'
+- '*'
 webrtcICEServers:
-  - stun:stun.l.google.com:19302
+- stun:stun.l.google.com:19302
 webrtcICEUDPMuxAddress: :8189

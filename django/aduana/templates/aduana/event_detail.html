@@ -43,6 +43,7 @@
     <thead>
         <tr>
             <th>ID</th>
+            <th>Crop</th>
             <th>Clase</th>
             <th>Confianza</th>
             <th>Cámara</th>
@@ -55,6 +56,12 @@
         {% for det in detections %}
         <tr>
             <td>{{ det.id }}</td>
+            <td>
+                {% if det.crop %}
+                <img src="{{ det.crop.url }}" style="max-width:160px;max-height:120px;cursor:pointer"
+                     onclick="this.style.maxWidth='400px';this.style.maxHeight='300px'">
+                {% endif %}
+            </td>
             <td>
                 {% if det.class_id == 0 %}<span class="badge bg-success">con_sello</span>{% endif %}
                 {% if det.class_id == 1 %}<span class="badge bg-info">cont data</span>{% endif %}
@@ -76,7 +83,7 @@
             <td><small>{{ det.timestamp|date:"H:i:s.u" }}</small></td>
         </tr>
         {% empty %}
-        <tr><td colspan="7">Sin detecciones.</td></tr>
+        <tr><td colspan="8">Sin detecciones.</td></tr>
         {% endfor %}
     </tbody>
 </table>

@@ -11,7 +11,7 @@ from django.utils import timezone
 logger = logging.getLogger("crop_receiver")
 
 END_MARKER = b"END!"
-HEADER_FMT = "<IIIf4fQI"
+HEADER_FMT = "<IIIQ5fQI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
 

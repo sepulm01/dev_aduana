@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 CONFIG_YML_PATH = os.environ.get(
     "CONFIG_YML_PATH", "/opt/computer_vision/config/config_aduana.yml"
 )
-COMPUTER_VISION_CONTAINER = "mediamtx-manager-computer-vision-aduana-1"
+COMPUTER_VISION_CONTAINER = "aduana-computer-vision-aduana-1"
 
 PIPELINE_INSTANCES = {
     "aduana": [
-        "mediamtx-manager-computer-vision-aduana-1",
+        "aduana-computer-vision-aduana-1",
     ],
 }
 

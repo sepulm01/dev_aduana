@@ -54,9 +54,9 @@ async function addManual(e) {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                host: document.getElementById('host').value,
+                host: document.getElementById('host').value.trim(),
                 port: parseInt(document.getElementById('port').value) || 80,
-                username: document.getElementById('user').value,
+                username: document.getElementById('user').value.trim(),
                 password: document.getElementById('pass').value,
             }),
         });
@@ -78,7 +78,7 @@ async function probeIP() {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                host: document.getElementById('host').value,
+                host: document.getElementById('host').value.trim(),
                 port: parseInt(document.getElementById('port').value) || 80,
             }),
         });

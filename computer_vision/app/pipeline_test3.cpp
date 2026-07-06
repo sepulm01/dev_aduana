@@ -209,7 +209,7 @@ static void publish_detection_json(int dev_id, int source_id,
     json << "{\"device_id\":" << dev_id
          << ",\"source_id\":" << source_id
          << ",\"frame_num\":" << fm->frame_num
-         << ",\"timestamp_ms\":" << (now_us / 1000)
+          << ",\"timestamp_ms\":" << ((guint64)time(nullptr) * 1000LL)
          << ",\"objects\":[";
 
     bool first = true;
@@ -407,33 +407,15 @@ static gboolean bus_call(GstBus* bus, GstMessage* msg, gpointer data) {
     return TRUE;
 }
 
-static void cb_newpad(GstElement* decodebin, GstPad* decoder_src_pad, gpointer data) {
-    GstCaps* caps = gst_pad_get_current_caps(decoder_src_pad);
+static void source_pad_added(GstElement* el, GstPad* pad, gpointer data) {
+    GstPad* sink = (GstPad*)data;
+    GstCaps* caps = gst_pad_get_current_caps(pad);
     const GstStructure* str = gst_caps_get_structure(caps, 0);
     const gchar* name = gst_structure_get_name(str);
-    GstElement* source_bin = (GstElement*)data;
-    GstCapsFeatures* features = gst_caps_get_features(caps, 0);
-
-    if (!strncmp(name, "video", 5)) {
-        if (gst_caps_features_contains(features, GST_CAPS_FEATURES_NVMM)) {
-            GstPad* sink_pad = gst_element_get_static_pad(source_bin, "sink");
-            gst_pad_link(decoder_src_pad, sink_pad);
-            gst_object_unref(sink_pad);
-        }
+    if (!strncmp(name, "video", 5) || !strncmp(name, "video/x-raw", 11)) {
+        gst_pad_link(pad, sink);
     }
     gst_caps_unref(caps);
-}
-
-static void decodebin_child_added(GstChildProxy* child_proxy, GObject* object,
-                                   gchar* name, gpointer user_data) {
-    if (g_strrstr(name, "decodebin") == name) {
-        g_signal_connect(G_OBJECT(object), "child-added",
-                         G_CALLBACK(decodebin_child_added), user_data);
-    }
-    if (g_strrstr(name, "nvv4l2decoder") == name) {
-        g_object_set(G_OBJECT(object), "enable-max-performance", TRUE,
-                     "bufapi-version", TRUE, NULL);
-    }
 }
 
 static GstElement* create_source_bin(guint index, gchar* uri) {
@@ -445,13 +427,29 @@ static GstElement* create_source_bin(guint index, gchar* uri) {
     }
 
     g_object_set(G_OBJECT(uri_decode_bin), "uri", uri, NULL);
-    g_signal_connect(G_OBJECT(uri_decode_bin), "pad-added",
-                     G_CALLBACK(cb_newpad), bin);
-    g_signal_connect(G_OBJECT(uri_decode_bin), "child-added",
-                     G_CALLBACK(decodebin_child_added), bin);
 
-    gst_bin_add(GST_BIN(bin), uri_decode_bin);
-    gst_element_add_pad(bin, gst_ghost_pad_new_no_target("src", GST_PAD_SRC));
+    GstElement* nvconv = gst_element_factory_make("nvvideoconvert", NULL);
+    GstElement* conv_queue = gst_element_factory_make("queue", NULL);
+    if (!nvconv || !conv_queue) {
+        g_printerr("Failed to create nvvideoconvert or queue\n");
+        return NULL;
+    }
+
+    gst_bin_add_many(GST_BIN(bin), uri_decode_bin, nvconv, conv_queue, NULL);
+
+    GstPad* nvconv_sink_pad = gst_element_get_static_pad(nvconv, "sink");
+    g_signal_connect(G_OBJECT(uri_decode_bin), "pad-added",
+                     G_CALLBACK(source_pad_added), nvconv_sink_pad);
+    gst_object_unref(nvconv_sink_pad);
+
+    gst_element_link_many(nvconv, conv_queue, NULL);
+
+    GstPad* pad = gst_element_get_static_pad(conv_queue, "src");
+    GstPad* ghost = gst_ghost_pad_new("src", pad);
+    gst_pad_set_active(ghost, TRUE);
+    gst_element_add_pad(bin, ghost);
+    gst_object_unref(pad);
+
     return bin;
 }
 

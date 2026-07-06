@@ -12,40 +12,16 @@ REDIS_HOST = "redis"
 REDIS_PORT = 6379
 
 PIPELINES = {
-    "main": [
-        "mediamtx-manager-computer-vision-1",
-        "mediamtx-manager-computer-vision-2-1",
-        "mediamtx-manager-computer-vision-3-1",
-        "mediamtx-manager-computer-vision-4-1",
-    ],
-    "retinaface": [
-        "mediamtx-manager-computer-vision-retinaface-1",
-        "mediamtx-manager-computer-vision-retinaface-2-1",
-        "mediamtx-manager-computer-vision-retinaface-3-1",
-        "mediamtx-manager-computer-vision-retinaface-4-1",
-    ],
-    "yolov9": [
-        "mediamtx-manager-computer-vision-yolov9-1",
-        "mediamtx-manager-computer-vision-yolov9-2-1",
-        "mediamtx-manager-computer-vision-yolov9-3-1",
-        "mediamtx-manager-computer-vision-yolov9-4-1",
-    ],
-    "trafficcamnet_lpr": [
-        "mediamtx-manager-computer-vision-lpr-1",
-        "mediamtx-manager-computer-vision-lpr-2-1",
-        "mediamtx-manager-computer-vision-lpr-3-1",
-        "mediamtx-manager-computer-vision-lpr-4-1",
+    "aduana": [
+        "aduana-computer-vision-aduana-1",
     ],
 }
 
 REDIS_SOURCES_PREFIX = {
-    "main": "deepstream:sources:main",
-    "retinaface": "deepstream:sources:retinaface",
-    "yolov9": "deepstream:sources:yolov9",
-    "trafficcamnet_lpr": "deepstream:sources:trafficcamnet_lpr",
+    "aduana": "deepstream:sources:aduana",
 }
 
-MAX_INSTANCES = 4
+MAX_INSTANCES = 1
 
 DOCKER_SOCK = "/var/run/docker.sock"
 

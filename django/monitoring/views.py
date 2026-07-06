@@ -19,6 +19,11 @@ def dashboard(request):
         .order_by("-created_at")
         .first()
     )
+    latest_deepstream = (
+        MetricSnapshot.objects.filter(source="deepstream")
+        .order_by("-created_at")
+        .first()
+    )
 
     return render(
         request,
@@ -26,6 +31,7 @@ def dashboard(request):
         {
             "latest_system": latest_system,
             "latest_mediamtx": latest_mediamtx,
+            "latest_deepstream": latest_deepstream,
             "snapshots": snapshots,
         },
     )

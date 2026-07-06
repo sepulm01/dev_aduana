@@ -1,16 +1,31 @@
-FROM python:3.12-slim
+FROM nvidia/cuda:12.6.0-cudnn-runtime-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive TZ=America/Santiago
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-dev \
+    python3.12-venv \
+    python3-pip \
     gcc \
     libpq-dev \
     ffmpeg \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    libgl1 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
+
+RUN rm -rf /usr/local/cuda-12/compat \
+    && ln -sf /usr/lib/x86_64-linux-gnu/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so \
+    && ln -sf /usr/lib/x86_64-linux-gnu/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so.9 \
+    && ldconfig
 
 COPY . .
 

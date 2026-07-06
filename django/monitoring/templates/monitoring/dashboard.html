@@ -277,38 +277,22 @@ function buildCharts() {
         }
     });
 
-    const canvasDs = document.getElementById('chartDsFps');
-    if (canvasDs) {
-        chartDsFps = new Chart(canvasDs, {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [
-                {
-                    label: 'main fps', borderColor: '#4299e1', data: [], fill: false, tension: 0.3, pointRadius: 0
-                },
-                {
-                    label: 'retinaface fps', borderColor: '#2fb344', data: [], fill: false, tension: 0.3, pointRadius: 0
-                },
-                {
-                    label: 'yolov9 fps', borderColor: '#f59f00', data: [], fill: false, tension: 0.3, pointRadius: 0
-                },
-                {
-                    label: 'lpr fps', borderColor: '#ae3ec9', data: [], fill: false, tension: 0.3, pointRadius: 0
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: { ticks: { color: dark, maxTicksLimit: 10 }, grid: { color: grid } },
-                y: { min: 0, ticks: { color: dark, callback: v => v + ' fps' }, grid: { color: grid } }
-            },
-            plugins: { legend: { labels: { color: dark } } }
-        }
-    });
-    }
+     const canvasDs = document.getElementById('chartDsFps');
+     if (canvasDs) {
+         chartDsFps = new Chart(canvasDs, {
+         type: 'line',
+         data: { labels: [], datasets: [] },
+         options: {
+             responsive: true,
+             maintainAspectRatio: false,
+             scales: {
+                 x: { ticks: { color: dark, maxTicksLimit: 10 }, grid: { color: grid } },
+                 y: { min: 0, ticks: { color: dark, callback: v => v + ' fps' }, grid: { color: grid } }
+             },
+             plugins: { legend: { labels: { color: dark } } }
+         }
+     });
+     }
 }
 
 buildCharts();
@@ -517,26 +501,49 @@ function updateDeepstreamKPIs(items) {
     document.getElementById('dsUpdated').textContent = 'actualizado ' + new Date().toLocaleTimeString('es-CL');
 }
 
+var dsColors = ['#4299e1', '#2fb344', '#f59f00', '#ae3ec9', '#e53e3e', '#805ad5'];
+
 function updateDeepstreamChart(items) {
     if (!chartDsFps) return;
-    const labels = [];
-    const datasets = {main: [], retinaface: [], yolov9: [], trafficcamnet_lpr: []};
+    var labels = [];
+    var pipelineNames = {};
+    var seriesByName = {};
 
     items.forEach(function(item) {
-        const d = item.data;
+        var d = item.data;
         if (!d) return;
         labels.push(new Date(item.ts).toLocaleTimeString('es-CL', {hour:'2-digit',minute:'2-digit',second:'2-digit'}));
-        const fps = d.fps || {};
-        Object.keys(datasets).forEach(function(name) {
-            datasets[name].push((fps[name] || {}).total_fps ?? null);
+        var fps = d.fps || {};
+        Object.keys(fps).forEach(function(name) {
+            if (!seriesByName[name]) { seriesByName[name] = []; pipelineNames[name] = true; }
         });
     });
 
+    var names = Object.keys(pipelineNames);
+    names.forEach(function(name) { seriesByName[name] = []; });
+
+    items.forEach(function(item) {
+        var d = item.data;
+        if (!d) return;
+        var fps = d.fps || {};
+        names.forEach(function(name) {
+            seriesByName[name].push((fps[name] || {}).total_fps ?? null);
+        });
+    });
+
+    var datasets = names.map(function(name, i) {
+        return {
+            label: name + ' fps',
+            borderColor: dsColors[i % dsColors.length],
+            data: seriesByName[name],
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0
+        };
+    });
+
     chartDsFps.data.labels = labels;
-    chartDsFps.data.datasets[0].data = datasets.main;
-    chartDsFps.data.datasets[1].data = datasets.retinaface;
-    chartDsFps.data.datasets[2].data = datasets.yolov9;
-    chartDsFps.data.datasets[3].data = datasets.trafficcamnet_lpr;
+    chartDsFps.data.datasets = datasets;
     chartDsFps.update('none');
 }
 

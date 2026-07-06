@@ -275,58 +275,57 @@ def refresh_device_streams(device_id):
     from onvif_utils.media import MediaService
     from onvif_utils.mediamtx_api import MediaMTXAPI
 
-    try:
-        client = OnvifClient(
-            device.host, device.port, device.username, device.password
-        )
-        svc = MediaService(client)
-        profiles = svc.get_profiles()
-    except Exception as e:
-        logger.warning("refresh_device_streams(%s) ONVIF failed: %s", device_id, e)
-        return
-
-    stream_uris = {}
-    profiles_tokens = []
-    uris = []
-    for p in profiles:
-        try:
-            uri = svc.get_stream_uri(
-                p["token"], username=device.username, password=device.password
-            )
-            if uri:
-                stream_uris[p["token"]] = uri
-                profiles_tokens.append(p["token"])
-                uris.append(uri)
-        except Exception as e:
-            logger.warning(
-                "refresh_device_streams(%s) get_stream_uri(%s) failed: %s",
-                device_id, p["token"], e,
-            )
+    stream_uris = device.stream_uris or {}
 
     if not stream_uris:
-        logger.warning("refresh_device_streams(%s) no stream URIs obtained", device_id)
-        return
-
-    if not device.default_profile_token:
-        device.default_profile_token = profiles_tokens[0]
-
-    device._skip_stream_refresh = True
-    device.stream_uris = stream_uris
-    device.save(update_fields=["stream_uris", "default_profile_token"])
-    delattr(device, "_skip_stream_refresh")
-
-    try:
-        mtx = MediaMTXAPI()
-        default_uri = stream_uris.get(device.default_profile_token, "")
-        if default_uri:
-            mtx.ensure_camera_streams(
-                device.id, [device.default_profile_token], [default_uri]
+        try:
+            client = OnvifClient(
+                device.host, device.port, device.username, device.password
             )
-    except Exception as e:
-        logger.warning(
-            "refresh_device_streams(%s) MediaMTX sync failed: %s", device_id, e
-        )
-        return
+            svc = MediaService(client)
+            profiles = svc.get_profiles()
+        except Exception as e:
+            logger.warning("refresh_device_streams(%s) ONVIF failed: %s", device_id, e)
+            return
+
+        for p in profiles:
+            try:
+                uri = svc.get_stream_uri(
+                    p["token"], username=device.username, password=device.password
+                )
+                if uri:
+                    stream_uris[p["token"]] = uri
+            except Exception as e:
+                logger.warning(
+                    "refresh_device_streams(%s) get_stream_uri(%s) failed: %s",
+                    device_id, p["token"], e,
+                )
+
+        if not stream_uris:
+            logger.warning("refresh_device_streams(%s) no stream URIs obtained", device_id)
+            return
+
+        if not device.default_profile_token:
+            profiles = list(stream_uris.keys())
+            if profiles:
+                device.default_profile_token = profiles[0]
+
+        device._skip_stream_refresh = True
+        device.stream_uris = stream_uris
+        device.save(update_fields=["stream_uris", "default_profile_token"])
+        delattr(device, "_skip_stream_refresh")
+
+        try:
+            mtx = MediaMTXAPI()
+            mtx.ensure_camera_streams(
+                device.id,
+                list(stream_uris.keys()),
+                list(stream_uris.values()),
+            )
+        except Exception as e:
+            logger.warning(
+                "refresh_device_streams(%s) MediaMTX sync failed: %s", device_id, e
+            )
 
     try:
         from devices.models import AnalyticsPreset
