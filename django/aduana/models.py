@@ -48,6 +48,7 @@ class ContainerDetection(models.Model):
     source_id = models.IntegerField(default=0)
     class_id = models.IntegerField(choices=CLASS_CHOICES)
     object_id = models.BigIntegerField(default=0)
+    frame_num = models.BigIntegerField(default=0)
     confidence = models.FloatField(default=0.0)
     bbox_left = models.FloatField()
     bbox_top = models.FloatField()

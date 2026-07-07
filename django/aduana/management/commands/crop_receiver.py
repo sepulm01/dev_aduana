@@ -11,7 +11,7 @@ from django.utils import timezone
 logger = logging.getLogger("crop_receiver")
 
 END_MARKER = b"END!"
-HEADER_FMT = "<IIIQ5fQI"
+HEADER_FMT = "<IIIQ5fIQI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
 
@@ -98,8 +98,9 @@ class CropReceiver:
                     bbox_top = pkt[6]
                     bbox_width = pkt[7]
                     bbox_height = pkt[8]
-                    timestamp_ms = pkt[9]
-                    jpeg_size = pkt[10]
+                    frame_num = pkt[9]
+                    timestamp_ms = pkt[10]
+                    jpeg_size = pkt[11]
 
                     if len(jpeg_bytes) != jpeg_size:
                         logger.warning(
@@ -118,6 +119,7 @@ class CropReceiver:
                             bbox_top=bbox_top,
                             bbox_width=bbox_width,
                             bbox_height=bbox_height,
+                            frame_num=frame_num,
                             timestamp_ms=timestamp_ms,
                             jpeg_bytes=jpeg_bytes,
                         )
@@ -134,7 +136,7 @@ class CropReceiver:
 
     def _process_crop(self, device_id, source_id, class_id, object_id,
                       confidence, bbox_left, bbox_top, bbox_width, bbox_height,
-                      timestamp_ms, jpeg_bytes):
+                      frame_num, timestamp_ms, jpeg_bytes):
         from django.utils import timezone as dj_timezone
 
         from aduana.models import ContainerDetection, ContainerEvent
@@ -154,6 +156,7 @@ class CropReceiver:
                 source_id=source_id,
                 class_id=class_id,
                 object_id=object_id,
+                frame_num=frame_num,
                 confidence=confidence,
                 bbox_left=bbox_left,
                 bbox_top=bbox_top,

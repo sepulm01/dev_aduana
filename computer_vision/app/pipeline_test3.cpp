@@ -14,6 +14,7 @@
 #include <time.h>
 #include <string>
 #include <sstream>
+#include <chrono>
 
 #include "gstnvdsmeta.h"
 #include "gstnvdsinfer.h"
@@ -45,6 +46,7 @@ struct CropPacket {
     float    bbox_top;
     float    bbox_width;
     float    bbox_height;
+    uint32_t frame_num;
     uint64_t timestamp_ms;
     uint32_t jpeg_size;
 };
@@ -182,7 +184,9 @@ static bool send_crop(const CropPending& cp) {
         pkt.bbox_top     = cp.om->detector_bbox_info.org_bbox_coords.top    / fh;
         pkt.bbox_width   = cp.om->detector_bbox_info.org_bbox_coords.width  / fw;
         pkt.bbox_height  = cp.om->detector_bbox_info.org_bbox_coords.height / fh;
-        pkt.timestamp_ms = (uint64_t)(time(nullptr) * 1000LL);
+        pkt.frame_num    = (uint32_t)cp.fm->frame_num;
+        pkt.timestamp_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
         pkt.jpeg_size    = (uint32_t)enc->outLen;
 
         auto safe_send = [&](const void* data, size_t len) -> bool {
