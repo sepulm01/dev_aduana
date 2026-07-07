@@ -32,6 +32,7 @@
 #define CROP_END_MARKER "END!"
 #define CROP_MIN_BBOX_PX 20
 #define CROP_MAX_FPS 15
+#define CROP_MIN_CONFIDENCE 0.6
 
 #pragma pack(push, 1)
 struct CropPacket {
@@ -322,6 +323,7 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 float w = om->detector_bbox_info.org_bbox_coords.width;
                 float h = om->detector_bbox_info.org_bbox_coords.height;
                 if (w < CROP_MIN_BBOX_PX || h < CROP_MIN_BBOX_PX) continue;
+                if (om->confidence < CROP_MIN_CONFIDENCE) continue;
                 if (now - last_crop_sent < crop_interval) continue;
 
                 CropPending cp;
