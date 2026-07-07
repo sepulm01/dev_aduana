@@ -54,7 +54,7 @@ def _run_paddle_ocr(image_path):
         logger.error("PaddleOCR not installed")
         return None
 
-    ocr = PaddleOCR(lang="en", use_angle_cls=False, show_log=False)
+    ocr = PaddleOCR(lang="en", use_angle_cls=True, show_log=False)
     results = ocr.ocr(image_path)
 
     if not results or not results[0]:
