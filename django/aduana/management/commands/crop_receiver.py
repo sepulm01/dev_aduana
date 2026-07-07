@@ -163,6 +163,7 @@ class CropReceiver:
                 bbox_width=bbox_width,
                 bbox_height=bbox_height,
                 timestamp=ts,
+                ocr_texts=[],
             )
 
             filename = (
