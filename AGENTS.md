@@ -82,6 +82,14 @@ docker compose logs -f django-http
 - **Deployment on remote server**: Project deployed on `172.16.150.50` (RTX 4080, 31 GB RAM). Requires `nvidia-container-toolkit` (`sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`).
 - **PaddleOCR rec model**: Must re-download if corrupted (`Cannot parse tensor desc` error). Model cache at `/root/.paddleocr/whl/rec/en/`.
 - **GPU compat**: `rm -rf /usr/local/cuda-12/compat` required in Dockerfile — stale libcuda.so stub breaks GPU detection on newer drivers.
+- **Orchestrator removed**: The `aduana orchestrator` service was removed (created duplicate empty events via Redis pubsub). Event correlation now fully handled by crop-receiver with a 15s window (was 5s).
+- **Crop confidence filter**: C++ filter `CROP_MIN_CONFIDENCE 0.6` in pipeline_test3.cpp — crops with confidence < 0.6 discarded before TCP send.
+- **OCR confidence threshold**: Raised from 0.3 → 0.6 in `process_ocr` and `aggregate_ocr_results`.
+- **frame_num in detection packet**: Added `uint32_t frame_num` to CropPacket (struct now 56 bytes: `IIIQ5fIQI`). Enables grouping detections from the same frame. Python HEADER_FMT updated to `<IIIQ5fIQI`. Migration added.
+- **Timestamp precision**: Changed from `time(nullptr)*1000LL` (seconds × 1000, always .000) to `std::chrono::system_clock` (real milliseconds). Detections now ordered precisely in event detail.
+- **Model updated**: Replaced `best.onnx` (101 MB) with YOLOv9-E `ds_20260626` (229 MB, 68M params, 240 GFLOPS). Converted via `export_yoloV9.py` from WongKinYiu/yolov9.
+- **Event detail ordering**: Changed from `source_id, class_id, timestamp` to `-timestamp` (most recent first).
+- **container-code only for OCR**: Only class_id=3 (`container cod`) is sent to PaddleOCR. Seal classes are stored without OCR.
 
 ## Testing
 
@@ -105,7 +113,6 @@ docker compose logs -f django-http
 | celery-worker | Executes orchestrator + OCR (PaddleOCR GPU) | — |
 | redis-event-bridge | Redis → Channels WebSocket forwarder | — |
 | crop-receiver | TCP server for container crops | 12347 |
-| orchestrator | Event correlation across cameras | — |
 | computer-vision-aduana | DeepStream YOLOv9 pipeline | — |
 | mediamtx | RTSP/WebRTC media server | 8554, 8889, 9997 |
 | postgres | Database (pgvector) | 5432 |
