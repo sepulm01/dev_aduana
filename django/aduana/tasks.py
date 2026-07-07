@@ -31,13 +31,15 @@ def process_ocr(detection_id):
     if result:
         detection.ocr_text = result["text"]
         detection.ocr_confidence = result["confidence"]
+        detection.ocr_texts = result["regions"]
         detection.ocr_processed = True
-        detection.save(update_fields=["ocr_text", "ocr_confidence", "ocr_processed"])
+        detection.save(update_fields=["ocr_text", "ocr_confidence", "ocr_texts", "ocr_processed"])
         logger.info(
-            "OCR detection %s: '%s' (conf=%.3f)",
+            "OCR detection %s: '%s' (conf=%.3f, regions=%d)",
             detection_id,
             result["text"],
             result["confidence"],
+            len(result["regions"]),
         )
 
         if detection.event_id:
@@ -60,14 +62,27 @@ def _run_paddle_ocr(image_path):
     if not results or not results[0]:
         return None
 
-    best = max(results[0], key=lambda r: r[1][1])
-    text = best[1][0].strip()
-    confidence = float(best[1][1])
+    regions = []
+    best_text = ""
+    best_conf = 0.0
 
-    if not text or confidence < 0.6:
+    for region in results[0]:
+        text = region[1][0].strip()
+        conf = float(region[1][1])
+        if text and conf >= 0.6:
+            regions.append([text, conf])
+            if conf > best_conf:
+                best_text = text
+                best_conf = conf
+
+    if not regions:
         return None
 
-    return {"text": text, "confidence": confidence}
+    return {
+        "text": best_text,
+        "confidence": best_conf,
+        "regions": regions,
+    }
 
 
 @shared_task
@@ -89,11 +104,14 @@ def aggregate_ocr_results(event_id):
     if detections.count() < 2:
         return
 
-    texts = [
-        d.ocr_text
-        for d in detections
-        if d.ocr_text and d.ocr_confidence and d.ocr_confidence > 0.6
-    ]
+    texts = []
+    for d in detections:
+        if d.ocr_text and d.ocr_confidence and d.ocr_confidence > 0.6:
+            texts.append(d.ocr_text)
+        for region in (d.ocr_texts or []):
+            if region[1] >= 0.6:
+                texts.append(region[0])
+
     if not texts:
         return
 

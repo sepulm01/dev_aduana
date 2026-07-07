@@ -79,6 +79,13 @@
                     <strong>{{ det.ocr_text }}</strong>
                     <small>({{ det.ocr_confidence|floatformat:2 }})</small>
                 {% endif %}
+                {% if det.ocr_texts %}
+                    <br><small class="text-muted">
+                    {% for region in det.ocr_texts %}
+                        "{{ region.0 }}" ({{ region.1|floatformat:2 }}){% if not forloop.last %}, {% endif %}
+                    {% endfor %}
+                    </small>
+                {% endif %}
             </td>
             <td><small>{{ det.timestamp|date:"H:i:s.u" }}</small></td>
         </tr>

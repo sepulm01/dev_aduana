@@ -58,6 +58,7 @@ class ContainerDetection(models.Model):
     crop = models.ImageField(upload_to="crops/%Y/%m/%d/", max_length=255)
     ocr_text = models.CharField(max_length=64, blank=True, default="")
     ocr_confidence = models.FloatField(null=True, blank=True)
+    ocr_texts = models.JSONField(default=list, blank=True)
     ocr_processed = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
