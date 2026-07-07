@@ -25,6 +25,8 @@ RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 RUN rm -rf /usr/local/cuda-12/compat \
     && ln -sf /usr/lib/x86_64-linux-gnu/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so \
     && ln -sf /usr/lib/x86_64-linux-gnu/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so.9 \
+    && ln -sf /usr/local/cuda-12.6/targets/x86_64-linux/lib/libcublas.so.12 /usr/local/cuda/lib64/libcublas.so \
+    && ln -sf /usr/local/cuda-12.6/targets/x86_64-linux/lib/libcublasLt.so.12 /usr/local/cuda/lib64/libcublasLt.so \
     && ln -sf /usr/local/lib/python3.12/site-packages/wsdl /usr/local/lib/python3.12/dist-packages/wsdl \
     && ldconfig
 
