@@ -64,7 +64,7 @@ def _run_paddle_ocr(image_path):
     text = best[1][0].strip()
     confidence = float(best[1][1])
 
-    if not text or confidence < 0.3:
+    if not text or confidence < 0.6:
         return None
 
     return {"text": text, "confidence": confidence}
@@ -92,7 +92,7 @@ def aggregate_ocr_results(event_id):
     texts = [
         d.ocr_text
         for d in detections
-        if d.ocr_text and d.ocr_confidence and d.ocr_confidence > 0.3
+        if d.ocr_text and d.ocr_confidence and d.ocr_confidence > 0.6
     ]
     if not texts:
         return
