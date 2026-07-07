@@ -62,6 +62,11 @@ def _run_paddle_ocr(image_path):
     if not results or not results[0]:
         return None
 
+    from PIL import Image
+
+    img = Image.open(image_path)
+    img_w, img_h = img.size
+
     regions = []
     best_text = ""
     best_conf = 0.0
@@ -70,7 +75,9 @@ def _run_paddle_ocr(image_path):
         text = region[1][0].strip()
         conf = float(region[1][1])
         if text and conf >= 0.6:
-            regions.append([text, conf])
+            bbox = region[0]
+            normalized_bbox = [[p[0] / img_w, p[1] / img_h] for p in bbox]
+            regions.append([text, conf, normalized_bbox])
             if conf > best_conf:
                 best_text = text
                 best_conf = conf

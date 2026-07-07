@@ -342,14 +342,39 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 objData.quality       = 80;
                 objData.objNum        = (int)(++g_crop_obj_ctr);
 
+                float orig_left = om->detector_bbox_info.org_bbox_coords.left;
+                float orig_top  = om->detector_bbox_info.org_bbox_coords.top;
+                float orig_w = om->detector_bbox_info.org_bbox_coords.width;
+                float orig_h = om->detector_bbox_info.org_bbox_coords.height;
+
+                if (om->class_id == 3) {
+                    float pad = 0.05f;
+                    om->detector_bbox_info.org_bbox_coords.left   -= orig_w * pad;
+                    om->detector_bbox_info.org_bbox_coords.top    -= orig_h * pad;
+                    om->detector_bbox_info.org_bbox_coords.width  += orig_w * 2 * pad;
+                    om->detector_bbox_info.org_bbox_coords.height += orig_h * 2 * pad;
+                }
+
                 GstMapInfo inmap = GST_MAP_INFO_INIT;
-                if (!gst_buffer_map(buf, &inmap, GST_MAP_READ)) continue;
+                if (!gst_buffer_map(buf, &inmap, GST_MAP_READ)) {
+                    om->detector_bbox_info.org_bbox_coords.left   = orig_left;
+                    om->detector_bbox_info.org_bbox_coords.top    = orig_top;
+                    om->detector_bbox_info.org_bbox_coords.width  = orig_w;
+                    om->detector_bbox_info.org_bbox_coords.height = orig_h;
+                    continue;
+                }
                 NvBufSurface* surf = (NvBufSurface*)inmap.data;
                 if (surf) {
                     nvds_obj_enc_process(g_crop_enc_ctx, &objData, surf, om, fm);
                     crop_queue.push_back(cp);
                 }
                 gst_buffer_unmap(buf, &inmap);
+
+                om->detector_bbox_info.org_bbox_coords.left   = orig_left;
+                om->detector_bbox_info.org_bbox_coords.top    = orig_top;
+                om->detector_bbox_info.org_bbox_coords.width  = orig_w;
+                om->detector_bbox_info.org_bbox_coords.height = orig_h;
+
                 last_crop_sent = now;
             }
 
