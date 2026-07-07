@@ -1,4 +1,6 @@
 import logging
+import re
+from collections import Counter
 from datetime import timedelta
 
 from celery import shared_task
@@ -94,8 +96,6 @@ def _run_paddle_ocr(image_path):
 
 @shared_task
 def aggregate_ocr_results(event_id):
-    from collections import Counter
-
     from aduana.models import ContainerDetection, ContainerEvent
 
     try:
@@ -106,29 +106,87 @@ def aggregate_ocr_results(event_id):
 
     detections = ContainerDetection.objects.filter(
         event=event, class_id=3, ocr_processed=True
-    ).exclude(ocr_text="")
+    )
 
     if detections.count() < 2:
         return
 
-    texts = []
-    for d in detections:
-        if d.ocr_text and d.ocr_confidence and d.ocr_confidence > 0.6:
-            texts.append(d.ocr_text)
-        for region in (d.ocr_texts or []):
-            if region[1] >= 0.6:
-                texts.append(region[0])
+    candidates = []
 
-    if not texts:
+    for d in detections:
+        regions = d.ocr_texts or []
+        if not regions:
+            continue
+
+        regions_with_bbox = [r for r in regions if len(r) >= 3 and r[1] >= 0.6]
+        if not regions_with_bbox:
+            continue
+
+        regions_with_bbox.sort(key=lambda r: r[2][0][0])
+
+        full_text = "".join(r[0].upper() for r in regions_with_bbox)
+
+        found = re.findall(r"[A-Z]{4}\d{7}", full_text)
+        for code in found:
+            if es_contenedor_valido(code):
+                candidates.append(code)
+
+        if d.ocr_text and d.ocr_confidence and d.ocr_confidence >= 0.6:
+            full_main = d.ocr_text.upper()
+            found_main = re.findall(r"[A-Z]{4}\d{7}", full_main)
+            for code in found_main:
+                if es_contenedor_valido(code):
+                    candidates.append(code)
+
+    if not candidates:
         return
 
-    counter = Counter(texts)
+    counter = Counter(candidates)
     most_common = counter.most_common(1)[0][0]
 
     if event.container_code != most_common:
         event.container_code = most_common
         event.save(update_fields=["container_code"])
-        logger.info("Event %s OCR consensus: '%s' (from %d readings)", event_id, most_common, len(texts))
+        logger.info(
+            "Event %s OCR consensus: '%s' (from %d candidates in %d detections)",
+            event_id, most_common, len(candidates), detections.count(),
+        )
+
+
+def es_contenedor_valido(contenedor):
+    if not isinstance(contenedor, str):
+        return False
+
+    limpio = "".join(c.upper() for c in contenedor if c.isalnum())
+
+    if len(limpio) != 11:
+        return False
+
+    if not re.match(r"^[A-Z]{4}\d{7}$", limpio):
+        return False
+
+    if limpio[3] not in {"U", "J", "Z"}:
+        return False
+
+    valores = {}
+    n = 10
+    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        if n % 11 == 0:
+            n += 1
+        valores[c] = n
+        n += 1
+
+    total = 0
+    for i in range(10):
+        char = limpio[i]
+        valor = valores[char] if char.isalpha() else int(char)
+        total += valor * (2 ** i)
+
+    checksum = total % 11
+    if checksum == 10:
+        checksum = 0
+
+    return checksum == int(limpio[10])
 
 
 @shared_task
