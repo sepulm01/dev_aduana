@@ -184,7 +184,7 @@ class CropReceiver:
     def _find_or_create_event(self, ts, device_id):
         from aduana.models import ContainerEvent
 
-        window_seconds = 5
+        window_seconds = 15
         window_start = ts - __import__('datetime').timedelta(seconds=window_seconds)
 
         event = (
