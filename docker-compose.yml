@@ -160,7 +160,7 @@ services:
         condition: service_healthy
 
   computer-vision-aduana:
-    image: mediamtx-manager-computer-vision-aduana:latest
+    image: aduana-computer-vision-aduana:latest
     build: ./computer_vision
     restart: unless-stopped
     runtime: nvidia
