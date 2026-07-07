@@ -76,8 +76,12 @@ docker compose logs -f django-http
 - **MediaMTX persistence**: Paths now written to `mediamtx/mediamtx.yml` via YAML (not just API). Config reloaded via `docker kill -s USR1`.
 - **Crop binary protocol fixed**: `object_id` changed from `f` (float/4 bytes) to `Q` (uint64_t/8 bytes) in crop-receiver header. C++ struct is 52 bytes: `IIIQ5fQI`.
 - **DeepStream timestamp fix**: JSON publish now uses `time(nullptr)*1000` (epoch ms) instead of `g_get_monotonic_time()` (boot ms). Fixes 1970 dates.
-- **PaddleOCR GPU**: celery-worker image based on `nvidia/cuda:12.6.0-cudnn-runtime-ubuntu24.04`. PaddlePaddle 2.6.2 + cuDNN 9.3 via symlinks. GPU inference confirmed on RTX 5060.
+- **PaddleOCR GPU**: celery-worker image based on `nvidia/cuda:12.6.0-cudnn-runtime-ubuntu24.04`. PaddlePaddle 2.6.2 + cuDNN 9.3 via symlinks. GPU inference confirmed on RTX 4080 and RTX 5060.
 - **Crop images in event detail**: Added thumbnail column with click-to-expand in `event_detail.html`.
+- **Dockerfile fixes**: WSDL symlink (`site-packages/wsdl` → `dist-packages/wsdl`) for ONVIF on Ubuntu 24.04. `libcublas.so` symlink from CUDA 12.6 targets to `/usr/local/cuda/lib64/`.
+- **Deployment on remote server**: Project deployed on `172.16.150.50` (RTX 4080, 31 GB RAM). Requires `nvidia-container-toolkit` (`sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`).
+- **PaddleOCR rec model**: Must re-download if corrupted (`Cannot parse tensor desc` error). Model cache at `/root/.paddleocr/whl/rec/en/`.
+- **GPU compat**: `rm -rf /usr/local/cuda-12/compat` required in Dockerfile — stale libcuda.so stub breaks GPU detection on newer drivers.
 
 ## Testing
 
