@@ -503,8 +503,7 @@ int main(int argc, char* argv[]) {
                *nvtracker = NULL,
                *queue1 = NULL, *queue2 = NULL, *queue3 = NULL, *queue4 = NULL, *queue5 = NULL,
                *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL;
-    GstElement *record_tee = NULL, *record_queue = NULL,
-               *record_caps = NULL, *record_conv = NULL,
+    GstElement *record_conv = NULL, *record_caps = NULL,
                *record_enc = NULL, *record_parse = NULL,
                *record_mux = NULL, *record_sink = NULL;
     GstBus* bus = NULL;
@@ -699,52 +698,56 @@ int main(int argc, char* argv[]) {
         }
 
         gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
-                         nvosd, sink, NULL);
+                         nvosd, NULL);
 
         if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
-                                    nvosd, sink, NULL)) {
-            g_printerr("streammux to sink link failed\n");
+                                    NULL)) {
+            g_printerr("streammux to nvtracker link failed\n");
+            return -1;
+        }
+        if (!gst_element_link(nvtracker, nvosd)) {
+            g_printerr("nvtracker to nvosd link failed\n");
             return -1;
         }
 
         if (do_record) {
-            record_tee = gst_element_factory_make("tee", "record-tee");
-            record_queue = gst_element_factory_make("queue", "record-queue");
-            record_caps = gst_element_factory_make("capsfilter", "record-caps");
             record_conv = gst_element_factory_make("nvvideoconvert", "record-conv");
+            record_caps = gst_element_factory_make("capsfilter", "record-caps");
             record_enc = gst_element_factory_make("nvv4l2h264enc", "record-enc");
             record_parse = gst_element_factory_make("h264parse", "record-parse");
             record_mux = gst_element_factory_make("qtmux", "record-mux");
             record_sink = gst_element_factory_make("filesink", "record-sink");
 
-            if (!record_tee || !record_queue || !record_caps || !record_conv ||
-                !record_enc || !record_parse || !record_mux || !record_sink) {
+            if (!record_conv || !record_caps || !record_enc ||
+                !record_parse || !record_mux || !record_sink) {
                 g_printerr("Failed to create recording elements\n");
                 return -1;
             }
 
             g_object_set(G_OBJECT(record_caps), "caps",
                 gst_caps_from_string("video/x-raw(memory:NVMM), format=NV12"), NULL);
-            g_object_set(G_OBJECT(record_queue), "leaky", 2, NULL);
             g_object_set(G_OBJECT(record_enc), "bitrate", record_bitrate, NULL);
             g_object_set(G_OBJECT(record_sink),
                          "location", record_path,
                          "sync", FALSE,
                          NULL);
 
-            gst_bin_add_many(GST_BIN(pipeline), record_tee, record_queue, record_conv,
-                             record_caps, record_enc, record_parse, record_mux, record_sink, NULL);
+            gst_bin_add_many(GST_BIN(pipeline), record_conv, record_caps,
+                             record_enc, record_parse, record_mux, record_sink, NULL);
 
-            gst_element_unlink(nvosd, sink);
-            if (!gst_element_link_many(nvosd, record_tee, NULL)) return -1;
-            if (!gst_element_link_many(record_tee, sink, NULL)) return -1;
-            if (!gst_element_link_many(record_tee, record_queue, record_conv,
-                                        record_caps, record_enc, record_parse,
-                                        record_mux, record_sink, NULL)) {
+            if (!gst_element_link_many(nvosd, record_conv, record_caps,
+                                        record_enc, record_parse, record_mux,
+                                        record_sink, NULL)) {
                 g_printerr("recording branch link failed\n");
                 do_record = 0;
             } else {
                 g_print("[Record] %s bitrate=%d\n", record_path, record_bitrate);
+            }
+        } else {
+            gst_bin_add(GST_BIN(pipeline), sink);
+            if (!gst_element_link(nvosd, sink)) {
+                g_printerr("nvosd to sink link failed\n");
+                return -1;
             }
         }
     }
