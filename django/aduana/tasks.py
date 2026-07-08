@@ -107,7 +107,7 @@ def _run_ocr_vl(image_path):
     except ImportError:
         return None
 
-    OCR_VL_URL = "http://localhost:5002/ocr"
+    OCR_VL_URL = "http://ocr-vl:5002/ocr"
 
     try:
         with open(image_path, "rb") as f:

@@ -15,7 +15,8 @@ RUN pip install --break-system-packages --no-cache-dir \
     "transformers>=5.0.0" \
     accelerate \
     fastapi uvicorn \
-    pillow requests
+    pillow requests \
+    python-multipart
 
 ENV HF_HOME=/app/.cache/huggingface
 
