@@ -1,0 +1,5 @@
+record=0
+output_path=/opt/computer_vision/record/output.h264
+bitrate=2000000
+width=1280
+height=720
