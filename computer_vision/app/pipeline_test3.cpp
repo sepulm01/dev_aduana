@@ -503,7 +503,8 @@ int main(int argc, char* argv[]) {
                *nvtracker = NULL,
                *queue1 = NULL, *queue2 = NULL, *queue3 = NULL, *queue4 = NULL, *queue5 = NULL,
                *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL;
-    GstElement *record_queue = NULL, *record_conv = NULL,
+    GstElement *record_tiler = NULL, *record_tiler_conv = NULL,
+               *record_queue = NULL, *record_conv = NULL,
                *record_caps = NULL, *record_scale_caps = NULL,
                *record_enc = NULL, *record_parse = NULL,
                *record_sink = NULL;
@@ -704,17 +705,41 @@ int main(int argc, char* argv[]) {
             return -1;
         }
 
-        gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
-                         nvosd, NULL);
+        if (do_record) {
+            record_tiler = gst_element_factory_make("nvmultistreamtiler", "record-tiler");
+            record_tiler_conv = gst_element_factory_make("nvvideoconvert", "record-tiler-conv");
+            if (!record_tiler || !record_tiler_conv) {
+                g_printerr("Failed to create tiler elements\n");
+                return -1;
+            }
+            g_object_set(G_OBJECT(record_tiler), "rows", 1, "columns", 2, NULL);
 
-        if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
-                                    NULL)) {
-            g_printerr("streammux to nvtracker link failed\n");
-            return -1;
-        }
-        if (!gst_element_link(nvtracker, nvosd)) {
-            g_printerr("nvtracker to nvosd link failed\n");
-            return -1;
+            gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
+                             record_tiler, record_tiler_conv, nvosd, NULL);
+
+            if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
+                                        NULL)) {
+                g_printerr("streammux to nvtracker link failed\n");
+                return -1;
+            }
+            if (!gst_element_link_many(nvtracker, record_tiler, record_tiler_conv,
+                                        nvosd, NULL)) {
+                g_printerr("tiler link failed\n");
+                return -1;
+            }
+        } else {
+            gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
+                             nvosd, NULL);
+
+            if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
+                                        NULL)) {
+                g_printerr("streammux to nvtracker link failed\n");
+                return -1;
+            }
+            if (!gst_element_link(nvtracker, nvosd)) {
+                g_printerr("nvtracker to nvosd link failed\n");
+                return -1;
+            }
         }
 
         if (do_record) {
