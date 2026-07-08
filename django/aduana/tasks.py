@@ -8,11 +8,12 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-GAP_CLUSTER_THRESHOLD = 2.0
+GAP_CLUSTER_THRESHOLD = 3.0
 COLOR_SPLIT_THRESHOLD = 0.25
 COLOR_MERGE_THRESHOLD = 0.20
 MERGE_WINDOW = 30
 MIN_CLUSTER_SIZE = 3
+GAP_CROSS_SOURCE = 5.0
 
 
 def _hsv_distance(c1, c2):
@@ -334,7 +335,10 @@ def _finalize_event(event):
 
 
 def _find_temporal_clusters(detections):
-    dets = list(detections.order_by("timestamp").values("id", "timestamp", "dominant_color_h", "dominant_color_s", "dominant_color_v"))
+    dets = list(detections.order_by("timestamp").values(
+        "id", "timestamp", "source_id",
+        "dominant_color_h", "dominant_color_s", "dominant_color_v",
+    ))
     if len(dets) < 2:
         return []
 
@@ -342,7 +346,9 @@ def _find_temporal_clusters(detections):
     current_cluster = [dets[0]]
     for i in range(1, len(dets)):
         gap = (dets[i]["timestamp"] - dets[i - 1]["timestamp"]).total_seconds()
-        if gap > GAP_CLUSTER_THRESHOLD:
+        cross_source = dets[i]["source_id"] != dets[i - 1]["source_id"]
+        threshold = GAP_CROSS_SOURCE if cross_source else GAP_CLUSTER_THRESHOLD
+        if gap > threshold:
             if len(current_cluster) >= MIN_CLUSTER_SIZE:
                 clusters.append([d["id"] for d in current_cluster])
             current_cluster = [dets[i]]

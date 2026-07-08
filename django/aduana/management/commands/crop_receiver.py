@@ -16,9 +16,10 @@ END_MARKER = b"END!"
 HEADER_FMT = "<IIIQ5fIQI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
-GAP_THRESHOLD = 2.0
+GAP_THRESHOLD = 3.0
 COLOR_THRESHOLD = 0.25
 BBOX_JUMP_THRESHOLD = 0.3
+GAP_CROSS_SOURCE = 5.0
 
 
 def _hsv_distance(c1, c2):
@@ -257,6 +258,8 @@ class CropReceiver:
 
         last_det = recent[0]
         gap = (ts - last_det.timestamp).total_seconds()
+        cross_source = detection.source_id != last_det.source_id
+        threshold = GAP_CROSS_SOURCE if cross_source else GAP_THRESHOLD
 
         new_color = (detection.dominant_color_h, detection.dominant_color_s, detection.dominant_color_v)
 
@@ -280,9 +283,9 @@ class CropReceiver:
 
         new_container = False
 
-        if gap > GAP_THRESHOLD and color_diff is not None and color_diff > COLOR_THRESHOLD:
+        if gap > threshold and color_diff is not None and color_diff > COLOR_THRESHOLD:
             new_container = True
-        elif gap > GAP_THRESHOLD and bbox_jump > BBOX_JUMP_THRESHOLD:
+        elif gap > threshold and bbox_jump > BBOX_JUMP_THRESHOLD:
             new_container = True
         elif color_diff is not None and color_diff > COLOR_THRESHOLD and gap > 1.0:
             new_container = True
