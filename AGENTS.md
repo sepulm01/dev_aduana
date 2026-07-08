@@ -98,6 +98,7 @@ docker compose logs -f django-http
 - **OCR spotting mode**: Added `/spotting` endpoint in `ocr-vl` (PaddleOCR-VL-1.6) for vertical text. Fallback chain: OCR mode → spotting mode → PaddleOCR.
 - **Camera sync fix**: Streammux now configured with `live-source: 1` and `sync-inputs: 0` in generated YAML config. RTSP sources get `latency=0`, `drop-on-latency=TRUE`, `protocols=TCP` via `source-setup` signal callback in `pipeline_test3.cpp`. Eliminated 3-6s inter-camera delay caused by default rtspsrc latency=2000ms buffer and missing live-source mode. Detections now balanced 52/48% between cameras (was 57/42%).
 - **Cross-source gap thresholds**: `GAP_THRESHOLD=3.0s` for same-camera gaps, `GAP_CROSS_SOURCE=5.0s` for different-camera gaps. Applied in both `crop_receiver.py` (proactive) and `tasks.py` (reactive temporal clustering).
+- **Annotated video recording**: `manage.py record_annotated` captures ONVIF snapshots + overlays detection bounding boxes from recent crops. Requiere `HTTPDigestAuth` para cámaras Dahua. Output GIF se guarda en `media/recordings/`, accesible via nginx. Uso: `docker exec aduana-celery-worker-1 python3 manage.py record_annotated --duration 20 --fps 5`.
 
 ## Testing
 
