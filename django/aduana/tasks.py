@@ -8,6 +8,19 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+GAP_CLUSTER_THRESHOLD = 2.0
+COLOR_SPLIT_THRESHOLD = 0.25
+COLOR_MERGE_THRESHOLD = 0.20
+MERGE_WINDOW = 30
+MIN_CLUSTER_SIZE = 3
+
+
+def _hsv_distance(c1, c2):
+    dh = min(abs(c1[0] - c2[0]), 1.0 - abs(c1[0] - c2[0]))
+    ds = abs(c1[1] - c2[1])
+    dv = abs(c1[2] - c2[2])
+    return ((dh * 1.5) ** 2 + ds ** 2 + (dv * 0.5) ** 2) ** 0.5
+
 
 @shared_task
 def process_ocr(detection_id):
@@ -269,11 +282,22 @@ def close_stale_events():
 
 
 def _finalize_event(event):
-    from collections import Counter
-
     from aduana.models import ContainerDetection
 
     detections = ContainerDetection.objects.filter(event=event)
+    if detections.count() == 0:
+        return
+
+    clusters = _find_temporal_clusters(detections)
+    if len(clusters) >= 2:
+        _split_event(event, clusters)
+        detections = ContainerDetection.objects.filter(event=event)
+        if detections.count() == 0:
+            return
+
+    if _try_merge_event(event):
+        return
+
     seal_detections = detections.filter(class_id__in=[0, 2])
 
     con_sello_count = seal_detections.filter(class_id=0).count()
@@ -307,3 +331,135 @@ def _finalize_event(event):
 
     if event.container_code:
         aggregate_ocr_results.delay(event.id)
+
+
+def _find_temporal_clusters(detections):
+    dets = list(detections.order_by("timestamp").values("id", "timestamp", "dominant_color_h", "dominant_color_s", "dominant_color_v"))
+    if len(dets) < 2:
+        return []
+
+    clusters = []
+    current_cluster = [dets[0]]
+    for i in range(1, len(dets)):
+        gap = (dets[i]["timestamp"] - dets[i - 1]["timestamp"]).total_seconds()
+        if gap > GAP_CLUSTER_THRESHOLD:
+            if len(current_cluster) >= MIN_CLUSTER_SIZE:
+                clusters.append([d["id"] for d in current_cluster])
+            current_cluster = [dets[i]]
+        else:
+            current_cluster.append(dets[i])
+
+    if len(current_cluster) >= MIN_CLUSTER_SIZE:
+        clusters.append([d["id"] for d in current_cluster])
+
+    if len(clusters) < 2:
+        return []
+
+    cluster_colors = []
+    for cl in clusters:
+        hs = [d["dominant_color_h"] for d in dets if d["id"] in cl and d["dominant_color_h"] is not None]
+        ss = [d["dominant_color_s"] for d in dets if d["id"] in cl and d["dominant_color_s"] is not None]
+        vs = [d["dominant_color_v"] for d in dets if d["id"] in cl and d["dominant_color_v"] is not None]
+        if len(hs) >= 2:
+            cluster_colors.append((sum(hs) / len(hs), sum(ss) / len(ss), sum(vs) / len(vs)))
+        else:
+            cluster_colors.append(None)
+
+    distinct = False
+    for i in range(len(clusters)):
+        for j in range(i + 1, len(clusters)):
+            if cluster_colors[i] and cluster_colors[j]:
+                if _hsv_distance(cluster_colors[i], cluster_colors[j]) > COLOR_SPLIT_THRESHOLD:
+                    distinct = True
+                    break
+        if distinct:
+            break
+
+    if not distinct:
+        return []
+
+    return clusters
+
+
+def _split_event(event, clusters):
+    from aduana.models import ContainerDetection, ContainerEvent
+
+    for i in range(1, len(clusters)):
+        cluster_ids = clusters[i]
+        if len(cluster_ids) < MIN_CLUSTER_SIZE:
+            continue
+        dets = ContainerDetection.objects.filter(id__in=cluster_ids).order_by("timestamp")
+        first_ts = dets.first().timestamp
+        new_event = ContainerEvent.objects.create(
+            seal_status="processing",
+            timestamp_start=first_ts,
+        )
+        dets.update(event=new_event)
+        logger.info(
+            "Split: created event %s from event %s (%d detections)",
+            new_event.id, event.id, len(cluster_ids),
+        )
+
+
+def _try_merge_event(event):
+    from aduana.models import ContainerEvent, ContainerDetection
+
+    prev = (
+        ContainerEvent.objects
+        .filter(
+            timestamp_end__isnull=False,
+            timestamp_end__lt=event.timestamp_start,
+            seal_status__in=["con_sello", "sin_sello", "indeterminado"],
+        )
+        .order_by("-timestamp_end")
+        .first()
+    )
+
+    if prev is None:
+        return False
+
+    gap = (event.timestamp_start - prev.timestamp_end).total_seconds()
+    if gap > MERGE_WINDOW:
+        return False
+
+    evt_color = _get_event_avg_color(event)
+    prev_color = _get_event_avg_color(prev)
+
+    if evt_color is None or prev_color is None:
+        return False
+
+    if _hsv_distance(evt_color, prev_color) > COLOR_MERGE_THRESHOLD:
+        return False
+
+    ContainerDetection.objects.filter(event=event).update(event=prev)
+    prev.timestamp_end = max(
+        prev.timestamp_end or timezone.now(),
+        event.timestamp_end or timezone.now(),
+    )
+    prev.save(update_fields=["timestamp_end"])
+    event_id_old = event.id
+    event.delete()
+
+    logger.info("Merge: event %s merged into event %s (gap=%.1fs)", event_id_old, prev.id, gap)
+
+    if prev.container_code:
+        aggregate_ocr_results.delay(prev.id)
+
+    return True
+
+
+def _get_event_avg_color(event):
+    from aduana.models import ContainerDetection
+
+    dets = ContainerDetection.objects.filter(
+        event=event, dominant_color_h__isnull=False
+    ).values_list("dominant_color_h", "dominant_color_s", "dominant_color_v")
+
+    colors = list(dets)
+    if len(colors) < 2:
+        return None
+
+    avg_h = sum(c[0] for c in colors) / len(colors)
+    avg_s = sum(c[1] for c in colors) / len(colors)
+    avg_v = sum(c[2] for c in colors) / len(colors)
+    return avg_h, avg_s, avg_v

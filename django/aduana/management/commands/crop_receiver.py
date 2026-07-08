@@ -2,17 +2,61 @@ import logging
 import os
 import socket
 import struct
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
+from io import BytesIO
 
+import numpy as np
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
-from django.utils import timezone
+from PIL import Image
 
 logger = logging.getLogger("crop_receiver")
 
 END_MARKER = b"END!"
 HEADER_FMT = "<IIIQ5fIQI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
+
+GAP_THRESHOLD = 2.0
+COLOR_THRESHOLD = 0.25
+BBOX_JUMP_THRESHOLD = 0.3
+
+
+def _hsv_distance(c1, c2):
+    dh = min(abs(c1[0] - c2[0]), 1.0 - abs(c1[0] - c2[0]))
+    ds = abs(c1[1] - c2[1])
+    dv = abs(c1[2] - c2[2])
+    return ((dh * 1.5) ** 2 + ds ** 2 + (dv * 0.5) ** 2) ** 0.5
+
+
+def extract_avg_hsv(image_path):
+    try:
+        img = Image.open(image_path).convert("RGB")
+        arr = np.array(img, dtype=np.float32) / 255.0
+        r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+        max_c = np.max(arr, axis=2)
+        min_c = np.min(arr, axis=2)
+        delta = max_c - min_c
+        v = max_c
+
+        mask = (v > 0.15) & (v < 0.95) & (delta > 0.02)
+        if mask.sum() < 100:
+            return None, None, None
+
+        h = np.zeros_like(max_c)
+        h[(mask) & (max_c == r)] = (
+            60 * ((g[(mask) & (max_c == r)] - b[(mask) & (max_c == r)]) / delta[(mask) & (max_c == r)])
+        ) % 360 / 360.0
+        h[(mask) & (max_c == g)] = (
+            60 * ((b[(mask) & (max_c == g)] - r[(mask) & (max_c == g)]) / delta[(mask) & (max_c == g)]) + 120
+        ) / 360.0
+        h[(mask) & (max_c == b)] = (
+            60 * ((r[(mask) & (max_c == b)] - g[(mask) & (max_c == b)]) / delta[(mask) & (max_c == b)]) + 240
+        ) / 360.0
+
+        s = np.where(max_c > 0.01, delta / max_c, 0)
+        return float(np.mean(h[mask])), float(np.mean(s[mask])), float(np.mean(v[mask]))
+    except Exception:
+        return None, None, None
 
 
 class CropReceiver:
@@ -139,7 +183,7 @@ class CropReceiver:
                       frame_num, timestamp_ms, jpeg_bytes):
         from django.utils import timezone as dj_timezone
 
-        from aduana.models import ContainerDetection, ContainerEvent
+        from aduana.models import ContainerDetection
 
         try:
             device = None
@@ -172,7 +216,13 @@ class CropReceiver:
             )
             detection.crop.save(filename, ContentFile(jpeg_bytes), save=False)
 
-            event = self._find_or_create_event(ts, device_id if device else None)
+            h, s, v = extract_avg_hsv(detection.crop.path)
+            if h is not None:
+                detection.dominant_color_h = h
+                detection.dominant_color_s = s
+                detection.dominant_color_v = v
+
+            event = self._find_or_create_event(detection)
             if event:
                 detection.event = event
 
@@ -185,29 +235,61 @@ class CropReceiver:
         except Exception as e:
             logger.error("_process_crop error: %s", e)
 
-    def _find_or_create_event(self, ts, device_id):
+    def _find_or_create_event(self, detection):
         from aduana.models import ContainerEvent
 
-        window_seconds = 15
-        window_start = ts - __import__('datetime').timedelta(seconds=window_seconds)
+        ts = detection.timestamp
+        window_start = ts - timedelta(seconds=15)
 
         event = (
             ContainerEvent.objects
-            .filter(
-                seal_status="processing",
-                timestamp_start__gte=window_start,
-            )
+            .filter(seal_status="processing", timestamp_start__gte=window_start)
             .order_by("-timestamp_start")
             .first()
         )
 
-        if event:
+        if not event:
+            return ContainerEvent.objects.create(seal_status="processing", timestamp_start=ts)
+
+        recent = list(event.detections.order_by("-timestamp")[:10])
+        if not recent:
             return event
 
-        event = ContainerEvent.objects.create(
-            seal_status="processing",
-            timestamp_start=ts,
-        )
+        last_det = recent[0]
+        gap = (ts - last_det.timestamp).total_seconds()
+
+        new_color = (detection.dominant_color_h, detection.dominant_color_s, detection.dominant_color_v)
+
+        event_colors = []
+        for d in recent:
+            if d.dominant_color_h is not None:
+                event_colors.append((d.dominant_color_h, d.dominant_color_s, d.dominant_color_v))
+
+        color_diff = None
+        if new_color[0] is not None and len(event_colors) >= 2:
+            avg_h = sum(c[0] for c in event_colors) / len(event_colors)
+            avg_s = sum(c[1] for c in event_colors) / len(event_colors)
+            avg_v = sum(c[2] for c in event_colors) / len(event_colors)
+            color_diff = _hsv_distance(new_color, (avg_h, avg_s, avg_v))
+
+        new_cx = detection.bbox_left + detection.bbox_width / 2
+        new_cy = detection.bbox_top + detection.bbox_height / 2
+        last_cx = last_det.bbox_left + last_det.bbox_width / 2
+        last_cy = last_det.bbox_top + last_det.bbox_height / 2
+        bbox_jump = ((new_cx - last_cx) ** 2 + (new_cy - last_cy) ** 2) ** 0.5
+
+        new_container = False
+
+        if gap > GAP_THRESHOLD and color_diff is not None and color_diff > COLOR_THRESHOLD:
+            new_container = True
+        elif gap > GAP_THRESHOLD and bbox_jump > BBOX_JUMP_THRESHOLD:
+            new_container = True
+        elif color_diff is not None and color_diff > COLOR_THRESHOLD and gap > 1.0:
+            new_container = True
+
+        if new_container:
+            return ContainerEvent.objects.create(seal_status="processing", timestamp_start=ts)
+
         return event
 
 
