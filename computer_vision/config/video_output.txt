@@ -1,3 +1,0 @@
-record=1
-output_path=/opt/computer_vision/record/output.h264
-bitrate=4000000
