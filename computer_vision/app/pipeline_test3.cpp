@@ -504,8 +504,9 @@ int main(int argc, char* argv[]) {
                *queue1 = NULL, *queue2 = NULL, *queue3 = NULL, *queue4 = NULL, *queue5 = NULL,
                *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL;
     GstElement *record_tee = NULL, *record_queue = NULL,
-               *record_enc = NULL, *record_parse = NULL,
-               *record_mux = NULL, *record_sink = NULL;
+               *record_conv = NULL, *record_enc = NULL,
+               *record_parse = NULL, *record_mux = NULL,
+               *record_sink = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
     guint i, num_sources = 0;
@@ -709,13 +710,14 @@ int main(int argc, char* argv[]) {
         if (do_record) {
             record_tee = gst_element_factory_make("tee", "record-tee");
             record_queue = gst_element_factory_make("queue", "record-queue");
+            record_conv = gst_element_factory_make("nvvideoconvert", "record-conv");
             record_enc = gst_element_factory_make("nvv4l2h264enc", "record-enc");
             record_parse = gst_element_factory_make("h264parse", "record-parse");
             record_mux = gst_element_factory_make("qtmux", "record-mux");
             record_sink = gst_element_factory_make("filesink", "record-sink");
 
-            if (!record_tee || !record_queue || !record_enc ||
-                !record_parse || !record_mux || !record_sink) {
+            if (!record_tee || !record_queue || !record_conv ||
+                !record_enc || !record_parse || !record_mux || !record_sink) {
                 g_printerr("Failed to create recording elements\n");
                 return -1;
             }
@@ -727,14 +729,14 @@ int main(int argc, char* argv[]) {
                          "sync", FALSE,
                          NULL);
 
-            gst_bin_add_many(GST_BIN(pipeline), record_tee, record_queue,
+            gst_bin_add_many(GST_BIN(pipeline), record_tee, record_queue, record_conv,
                              record_enc, record_parse, record_mux, record_sink, NULL);
 
             gst_element_unlink(nvosd, sink);
             if (!gst_element_link_many(nvosd, record_tee, NULL)) return -1;
             if (!gst_element_link_many(record_tee, sink, NULL)) return -1;
-            if (!gst_element_link_many(record_tee, record_queue, record_enc,
-                                        record_parse, record_mux, record_sink, NULL)) {
+            if (!gst_element_link_many(record_tee, record_queue, record_conv,
+                                        record_enc, record_parse, record_mux, record_sink, NULL)) {
                 g_printerr("recording branch link failed\n");
                 do_record = 0;
             } else {
