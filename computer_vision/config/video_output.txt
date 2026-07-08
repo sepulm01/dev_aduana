@@ -1,0 +1,3 @@
+record=0
+output_path=/opt/computer_vision/record/output.mp4
+bitrate=4000000

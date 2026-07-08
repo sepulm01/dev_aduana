@@ -503,8 +503,9 @@ int main(int argc, char* argv[]) {
                *nvtracker = NULL,
                *queue1 = NULL, *queue2 = NULL, *queue3 = NULL, *queue4 = NULL, *queue5 = NULL,
                *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL;
-    GstElement *record_tee = NULL, *record_queue = NULL, *record_conv = NULL,
-               *record_caps = NULL, *record_enc = NULL, *record_sink = NULL;
+    GstElement *record_tee = NULL, *record_queue = NULL,
+               *record_enc = NULL, *record_parse = NULL,
+               *record_mux = NULL, *record_sink = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
     guint i, num_sources = 0;
@@ -519,8 +520,25 @@ int main(int argc, char* argv[]) {
     const char* enable_display_env = getenv("ENABLE_DISPLAY");
     int show_display = enable_display_env ? atoi(enable_display_env) : 0;
 
-    const char* record_env = getenv("RECORD_OUTPUT");
-    int do_record = record_env ? atoi(record_env) : 0;
+    int do_record = 0;
+    gchar record_path[512] = "/opt/computer_vision/record/output.mp4";
+    int record_bitrate = 4000000;
+    {
+        FILE* f = fopen("/opt/computer_vision/config/video_output.txt", "r");
+        if (f) {
+            char line[256];
+            while (fgets(line, sizeof(line), f)) {
+                if (g_str_has_prefix(line, "record=")) {
+                    do_record = atoi(line + 7);
+                } else if (g_str_has_prefix(line, "output_path=")) {
+                    g_strlcpy(record_path, g_strstrip(line + 12), sizeof(record_path));
+                } else if (g_str_has_prefix(line, "bitrate=")) {
+                    record_bitrate = atoi(line + 8);
+                }
+            }
+            fclose(f);
+        }
+    }
 
     const char* sources_key_env = getenv("DEEPSTREAM_SOURCES_KEY");
     if (sources_key_env) g_sources_key = sources_key_env;
@@ -691,37 +709,37 @@ int main(int argc, char* argv[]) {
         if (do_record) {
             record_tee = gst_element_factory_make("tee", "record-tee");
             record_queue = gst_element_factory_make("queue", "record-queue");
-            record_conv = gst_element_factory_make("nvvideoconvert", "record-conv");
-            record_caps = gst_element_factory_make("capsfilter", "record-caps");
-            record_enc = gst_element_factory_make("jpegenc", "record-jpegenc");
-            record_sink = gst_element_factory_make("multifilesink", "record-sink");
+            record_enc = gst_element_factory_make("nvv4l2h264enc", "record-enc");
+            record_parse = gst_element_factory_make("h264parse", "record-parse");
+            record_mux = gst_element_factory_make("qtmux", "record-mux");
+            record_sink = gst_element_factory_make("filesink", "record-sink");
 
-            if (!record_tee || !record_queue || !record_conv || !record_caps ||
-                !record_enc || !record_sink) {
+            if (!record_tee || !record_queue || !record_enc ||
+                !record_parse || !record_mux || !record_sink) {
                 g_printerr("Failed to create recording elements\n");
                 return -1;
             }
 
-            g_object_set(G_OBJECT(record_caps), "caps",
-                gst_caps_from_string("video/x-raw, format=RGBA"), NULL);
+            g_object_set(G_OBJECT(record_queue), "leaky", 2, NULL);
+            g_object_set(G_OBJECT(record_enc), "bitrate", record_bitrate, NULL);
             g_object_set(G_OBJECT(record_sink),
-                         "location", "/opt/computer_vision/record/frame_%05d.jpg",
-                         "max-files", 500,
+                         "location", record_path,
+                         "sync", FALSE,
                          NULL);
 
             gst_bin_add_many(GST_BIN(pipeline), record_tee, record_queue,
-                             record_conv, record_caps, record_enc, record_sink, NULL);
+                             record_enc, record_parse, record_mux, record_sink, NULL);
 
             gst_element_unlink(nvosd, sink);
             if (!gst_element_link_many(nvosd, record_tee, NULL)) return -1;
             if (!gst_element_link_many(record_tee, sink, NULL)) return -1;
-            if (!gst_element_link_many(record_tee, record_queue, record_conv,
-                                        record_caps, record_enc, record_sink, NULL)) {
+            if (!gst_element_link_many(record_tee, record_queue, record_enc,
+                                        record_parse, record_mux, record_sink, NULL)) {
                 g_printerr("recording branch link failed\n");
-                return -1;
+                do_record = 0;
+            } else {
+                g_print("[Record] %s bitrate=%d\n", record_path, record_bitrate);
             }
-
-            g_print("[Record] Saving annotated frames to /opt/computer_vision/record/\n");
         }
     }
 
