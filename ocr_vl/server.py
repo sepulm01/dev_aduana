@@ -32,6 +32,15 @@ app = FastAPI()
 
 @app.post("/ocr")
 async def ocr_image(file: UploadFile = File(...)):
+    return await _process_image(file, "OCR:")
+
+
+@app.post("/spotting")
+async def spotting_image(file: UploadFile = File(...)):
+    return await _process_image(file, "Spotting:")
+
+
+async def _process_image(file: UploadFile, task: str):
     contents = await file.read()
     image = Image.open(io.BytesIO(contents)).convert("RGB")
 
@@ -40,7 +49,7 @@ async def ocr_image(file: UploadFile = File(...)):
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": "OCR:"},
+                {"type": "text", "text": task},
             ],
         }
     ]

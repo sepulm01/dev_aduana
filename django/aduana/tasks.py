@@ -107,15 +107,25 @@ def _run_ocr_vl(image_path):
     except ImportError:
         return None
 
-    OCR_VL_URL = "http://ocr-vl:5002/ocr"
+    OCR_VL_URL = "http://ocr-vl:5002"
 
     try:
         with open(image_path, "rb") as f:
-            resp = requests.post(OCR_VL_URL, files={"file": f}, timeout=10)
+            # Try OCR mode first
+            resp = requests.post(f"{OCR_VL_URL}/ocr", files={"file": f}, timeout=10)
         if resp.status_code != 200:
             return None
         data = resp.json()
         raw_text = data.get("text", "").strip()
+
+        # If OCR mode returned nothing, try spotting mode (for vertical text)
+        if not raw_text:
+            with open(image_path, "rb") as f:
+                resp2 = requests.post(f"{OCR_VL_URL}/spotting", files={"file": f}, timeout=10)
+            if resp2.status_code == 200:
+                data2 = resp2.json()
+                raw_text = data2.get("text", "").strip()
+
         if not raw_text:
             return None
 
