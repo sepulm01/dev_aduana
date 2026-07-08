@@ -505,7 +505,7 @@ int main(int argc, char* argv[]) {
                *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL;
     GstElement *record_conv = NULL, *record_caps = NULL,
                *record_enc = NULL, *record_parse = NULL,
-               *record_mux = NULL, *record_sink = NULL;
+               *record_sink = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
     guint i, num_sources = 0;
@@ -521,7 +521,7 @@ int main(int argc, char* argv[]) {
     int show_display = enable_display_env ? atoi(enable_display_env) : 0;
 
     int do_record = 0;
-    gchar record_path[512] = "/opt/computer_vision/record/output.mp4";
+    gchar record_path[512] = "/opt/computer_vision/record/output.h264";
     int record_bitrate = 4000000;
     {
         FILE* f = fopen("/opt/computer_vision/config/video_output.txt", "r");
@@ -715,11 +715,10 @@ int main(int argc, char* argv[]) {
             record_caps = gst_element_factory_make("capsfilter", "record-caps");
             record_enc = gst_element_factory_make("nvv4l2h264enc", "record-enc");
             record_parse = gst_element_factory_make("h264parse", "record-parse");
-            record_mux = gst_element_factory_make("qtmux", "record-mux");
             record_sink = gst_element_factory_make("filesink", "record-sink");
 
             if (!record_conv || !record_caps || !record_enc ||
-                !record_parse || !record_mux || !record_sink) {
+                !record_parse || !record_sink) {
                 g_printerr("Failed to create recording elements\n");
                 return -1;
             }
@@ -733,10 +732,10 @@ int main(int argc, char* argv[]) {
                          NULL);
 
             gst_bin_add_many(GST_BIN(pipeline), record_conv, record_caps,
-                             record_enc, record_parse, record_mux, record_sink, NULL);
+                             record_enc, record_parse, record_sink, NULL);
 
             if (!gst_element_link_many(nvosd, record_conv, record_caps,
-                                        record_enc, record_parse, record_mux,
+                                        record_enc, record_parse,
                                         record_sink, NULL)) {
                 g_printerr("recording branch link failed\n");
                 do_record = 0;
