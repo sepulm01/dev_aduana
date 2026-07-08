@@ -90,6 +90,9 @@ docker compose logs -f django-http
 - **Model updated**: Replaced `best.onnx` (101 MB) with YOLOv9-E `ds_20260626` (229 MB, 68M params, 240 GFLOPS). Converted via `export_yoloV9.py` from WongKinYiu/yolov9.
 - **Event detail ordering**: Changed from `source_id, class_id, timestamp` to `-timestamp` (most recent first).
 - **container-code only for OCR**: Only class_id=3 (`container cod`) is sent to PaddleOCR. Seal classes are stored without OCR.
+- **OCR-VL-1.6 as primary engine**: New `ocr-vl` container with PaddleOCR-VL-1.6 (0.9B VLM, BF16) on RTX 4080 GPU. Reads crops via HTTP API at `http://ocr-vl:5002/ocr` in ~400ms. 100% accuracy on crops where PaddleOCR fails. PaddleOCR kept as fallback.
+- **Container code validation**: ISO 6346 checksum validation via `es_contenedor_valido()` in `aggregate_ocr_results`. Regex `[A-Z]{4}\d{7}` + weighted sum modulo 11. Filters out noise like "45G1" type codes.
+- **Docling server**: `docling-server` container (ghcr.io/docling-project/docling-serve-cu130:v1.16.1) for OCR performance comparisons. RapidOCR CPU-only, ~2s/crop but reads text PaddleOCR misses.
 
 ## Testing
 
@@ -110,10 +113,12 @@ docker compose logs -f django-http
 | django-http | UI + REST API (Gunicorn) | 8000 (internal) |
 | django-asgi | WebSocket (Daphne) | 8001 (internal) |
 | celery-beat | Orchestrator scheduler (DatabaseScheduler) | — |
-| celery-worker | Executes orchestrator + OCR (PaddleOCR GPU) | — |
+| celery-worker | Executes orchestrator + OCR tasks | — |
 | redis-event-bridge | Redis → Channels WebSocket forwarder | — |
 | crop-receiver | TCP server for container crops | 12347 |
 | computer-vision-aduana | DeepStream YOLOv9 pipeline | — |
 | mediamtx | RTSP/WebRTC media server | 8554, 8889, 9997 |
+| ocr-vl | PaddleOCR-VL-1.6 (0.9B VLM, GPU) | 5002 |
+| docling-server | Docling OCR (RapidOCR CPU, baseline) | 5001 |
 | postgres | Database (pgvector) | 5432 |
 | redis | Cache/broker/channel layer | 6379 |
