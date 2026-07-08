@@ -53,6 +53,13 @@ def process_ocr(detection_id):
 
 def _run_paddle_ocr(image_path):
     try:
+        result = _run_ocr_vl(image_path)
+        if result:
+            return result
+    except Exception as e:
+        logger.warning("OCR-VL failed, falling back to PaddleOCR: %s", e)
+
+    try:
         from paddleocr import PaddleOCR
     except ImportError:
         logger.error("PaddleOCR not installed")
@@ -92,6 +99,37 @@ def _run_paddle_ocr(image_path):
         "confidence": best_conf,
         "regions": regions,
     }
+
+
+def _run_ocr_vl(image_path):
+    try:
+        import requests
+    except ImportError:
+        return None
+
+    OCR_VL_URL = "http://localhost:5002/ocr"
+
+    try:
+        with open(image_path, "rb") as f:
+            resp = requests.post(OCR_VL_URL, files={"file": f}, timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        raw_text = data.get("text", "").strip()
+        if not raw_text:
+            return None
+
+        lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
+        regions = [[line, 0.85, []] for line in lines]
+
+        best_text = lines[0] if lines else raw_text
+        return {
+            "text": best_text,
+            "confidence": 0.85,
+            "regions": regions,
+        }
+    except Exception:
+        return None
 
 
 @shared_task
