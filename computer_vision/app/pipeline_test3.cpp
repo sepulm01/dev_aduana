@@ -449,6 +449,17 @@ static void source_pad_added(GstElement* el, GstPad* pad, gpointer data) {
     gst_caps_unref(caps);
 }
 
+static void source_setup_callback(GstElement* uridecodebin, GstElement* source, gpointer user_data) {
+    if (g_strrstr(G_OBJECT_TYPE_NAME(G_OBJECT(source)), "RTSPSrc")) {
+        g_object_set(G_OBJECT(source),
+                     "latency", 0,
+                     "drop-on-latency", TRUE,
+                     "protocols", 4,  /* 4 = TCP only, more stable */
+                     NULL);
+        g_print("[Source setup] rtspsrc latency=0 drop-on-latency=1 protocols=TCP\n");
+    }
+}
+
 static GstElement* create_source_bin(guint index, gchar* uri) {
     GstElement* bin = gst_bin_new(NULL);
     GstElement* uri_decode_bin = gst_element_factory_make("uridecodebin", NULL);
@@ -458,6 +469,8 @@ static GstElement* create_source_bin(guint index, gchar* uri) {
     }
 
     g_object_set(G_OBJECT(uri_decode_bin), "uri", uri, NULL);
+    g_signal_connect(G_OBJECT(uri_decode_bin), "source-setup",
+                     G_CALLBACK(source_setup_callback), NULL);
 
     GstElement* nvconv = gst_element_factory_make("nvvideoconvert", NULL);
     GstElement* conv_queue = gst_element_factory_make("queue", NULL);

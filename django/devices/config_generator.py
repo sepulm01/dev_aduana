@@ -79,6 +79,9 @@ streammux:
   batched-push-timeout: 40000
   width: 1920
   height: 1080
+  live-source: 1
+  attach-sys-ts: 0
+  sync-inputs: 0
 
 labels: {labels}
 
@@ -155,6 +158,9 @@ streammux:
   batched-push-timeout: 40000
   width: 1920
   height: 1080
+  live-source: 1
+  attach-sys-ts: 0
+  sync-inputs: 0
 
 labels: ;
 
