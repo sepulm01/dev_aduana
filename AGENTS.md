@@ -64,7 +64,7 @@ docker compose logs -f django-http
 - **DeepStream pipeline is static** — changing cameras requires regenerating `config_aduana.yml` + `config_nvdsanalytics.txt` and restarting `computer-vision-aduana`. Use `regenerate_config_and_restart()`. MAX_INSTANCES=1, max 2 devices per instance.
 - **`orchestrate_cameras`** (Celery Beat every 5s) is the unified orchestrator — ONVIF ping, FPS checks, auto-recovery. Lives in `django/devices/tasks.py`.
 - **OCR via Celery**: `process_ocr(detection_id)` runs PaddleOCR on container_cod crops. `aggregate_ocr_results(event_id)` does majority-vote consensus.
-- **Container events**: `close_stale_events` (Celery Beat every 5s) finalizes events with no recent detections.
+- **Container events**: `close_stale_events` (Celery Beat every 5s) finalizes events with no recent detections. `_finalize_event()` runs temporal clustering to detect multi-container events (split) and checks for same-container merges across consecutive events.
 - **Migrations run automatically** via `docker-entrypoint.sh` with a PostgreSQL advisory lock (`pg_advisory_lock(123456)`).
 - **Generated configs are gitignored**: `computer_vision/config/config*.yml` and `computer_vision/config/config_nvdsanalytics.txt` contain credentials and must never be committed.
 
@@ -93,6 +93,11 @@ docker compose logs -f django-http
 - **OCR-VL-1.6 as primary engine**: New `ocr-vl` container with PaddleOCR-VL-1.6 (0.9B VLM, BF16) on RTX 4080 GPU. Reads crops via HTTP API at `http://ocr-vl:5002/ocr` in ~400ms. 100% accuracy on crops where PaddleOCR fails. PaddleOCR kept as fallback.
 - **Container code validation**: ISO 6346 checksum validation via `es_contenedor_valido()` in `aggregate_ocr_results`. Regex `[A-Z]{4}\d{7}` + weighted sum modulo 11. Filters out noise like "45G1" type codes.
 - **Docling server**: `docling-server` container (ghcr.io/docling-project/docling-serve-cu130:v1.16.1) for OCR performance comparisons. RapidOCR CPU-only, ~2s/crop but reads text PaddleOCR misses.
+- **Event grouping by color + gap**: Multi-signal proactive grouping in `crop_receiver.py:_find_or_create_event()`. Uses 3 signals: temporal gap (threshold 3s same-source, 5s cross-source), HSV color distance (0.25), and bbox position jump (0.3). Reactive split via temporal clustering in `_finalize_event()`, plus merge of same-container events in `_try_merge_event()`.
+- **Container color extraction**: `extract_avg_hsv()` in `crop_receiver.py` computes average HSV from crop JPEG, ignoring dark (<15%V) and bright (>95%V) pixels. Stored as `dominant_color_h/s/v` FloatFields on ContainerDetection (migration 0004).
+- **OCR spotting mode**: Added `/spotting` endpoint in `ocr-vl` (PaddleOCR-VL-1.6) for vertical text. Fallback chain: OCR mode → spotting mode → PaddleOCR.
+- **Camera sync fix**: Streammux now configured with `live-source: 1` and `sync-inputs: 0` in generated YAML config. RTSP sources get `latency=0`, `drop-on-latency=TRUE`, `protocols=TCP` via `source-setup` signal callback in `pipeline_test3.cpp`. Eliminated 3-6s inter-camera delay caused by default rtspsrc latency=2000ms buffer and missing live-source mode. Detections now balanced 52/48% between cameras (was 57/42%).
+- **Cross-source gap thresholds**: `GAP_THRESHOLD=3.0s` for same-camera gaps, `GAP_CROSS_SOURCE=5.0s` for different-camera gaps. Applied in both `crop_receiver.py` (proactive) and `tasks.py` (reactive temporal clustering).
 
 ## Testing
 
