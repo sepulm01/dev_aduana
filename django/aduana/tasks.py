@@ -156,13 +156,20 @@ def aggregate_ocr_results(event_id):
         if not regions:
             continue
 
-        regions_with_bbox = [r for r in regions if len(r) >= 3 and r[1] >= 0.6]
-        if not regions_with_bbox:
+        regions_filtered = [r for r in regions if len(r) >= 2 and r[1] >= 0.6]
+        if not regions_filtered:
             continue
 
-        regions_with_bbox.sort(key=lambda r: r[2][0][0])
+        has_bbox = any(len(r) >= 3 and len(r[2]) > 0 for r in regions_filtered)
 
-        full_text = "".join(r[0].upper() for r in regions_with_bbox)
+        if has_bbox:
+            regions_with_bbox = [r for r in regions_filtered if len(r) >= 3 and len(r[2]) > 0]
+            regions_with_bbox.sort(key=lambda r: r[2][0][0])
+            ordered = regions_with_bbox
+        else:
+            ordered = regions_filtered
+
+        full_text = "".join(r[0].upper() for r in ordered)
 
         found = re.findall(r"[A-Z]{4}\d{7}", full_text)
         for code in found:
