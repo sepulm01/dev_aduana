@@ -713,6 +713,7 @@ int main(int argc, char* argv[]) {
                 return -1;
             }
             g_object_set(G_OBJECT(record_tiler), "rows", 1, "columns", 2, NULL);
+            RETURN_ON_PARSER_ERROR(nvds_parse_tiler(record_tiler, argv[1], "tiler"));
 
             gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
                              record_tiler, record_tiler_conv, nvosd, NULL);
