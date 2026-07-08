@@ -12,19 +12,20 @@ logger = logging.getLogger("ocr-vl")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_PATH = "PaddlePaddle/PaddleOCR-VL-1.6"
-TASK = "OCR:"
 
 logger.info(f"Loading model {MODEL_PATH} on {DEVICE}...")
 
 model = AutoModelForImageTextToText.from_pretrained(
     MODEL_PATH,
     torch_dtype=torch.bfloat16,
-    attn_implementation="flash_attention_2",
 ).to(DEVICE).eval()
 
 processor = AutoProcessor.from_pretrained(MODEL_PATH)
 
-logger.info("Model loaded")
+SHORTEST_EDGE = processor.image_processor.size["shortest_edge"]
+LONGEST_EDGE = processor.image_processor.size["longest_edge"]
+
+logger.info(f"Model loaded (shortest_edge={SHORTEST_EDGE}, longest_edge={LONGEST_EDGE})")
 
 app = FastAPI()
 
@@ -39,7 +40,7 @@ async def ocr_image(file: UploadFile = File(...)):
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": TASK},
+                {"type": "text", "text": "OCR:"},
             ],
         }
     ]
@@ -51,8 +52,8 @@ async def ocr_image(file: UploadFile = File(...)):
         return_tensors="pt",
         images_kwargs={
             "size": {
-                "shortest_edge": processor.image_processor.min_pixels,
-                "longest_edge": 1280 * 28 * 28,
+                "shortest_edge": SHORTEST_EDGE,
+                "longest_edge": LONGEST_EDGE,
             }
         },
     ).to(DEVICE)
@@ -75,3 +76,8 @@ async def health():
         "cuda_available": torch.cuda.is_available(),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A",
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5002)
