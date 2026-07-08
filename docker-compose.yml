@@ -153,6 +153,7 @@ services:
     runtime: nvidia
     environment:
       - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
+      - RECORD_OUTPUT=${RECORD_OUTPUT:-1}
       - DISPLAY=${DISPLAY}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
@@ -167,6 +168,7 @@ services:
       - /dev/dri:/dev/dri:rw
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
+      - ./computer_vision/record:/opt/computer_vision/record
     command: ["../app/pipeline-test3", "./config_aduana.yml"]
 
   nginx:

@@ -20,6 +20,8 @@ ENV CUDA_VER=12.8
 RUN make
 
 WORKDIR /opt/computer_vision/config
+RUN mkdir -p /opt/computer_vision/record
 ENV DISPLAY=${DISPLAY}
+ENV RECORD_OUTPUT=1
 ENTRYPOINT ["/opt/nvidia/deepstream/deepstream-8.0/entrypoint.sh"]
 CMD ["../app/pipeline-test3", "./config_aduana.yml"]
