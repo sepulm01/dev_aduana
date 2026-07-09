@@ -414,6 +414,49 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
     return GST_PAD_PROBE_OK;
 }
 
+static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
+                                             gpointer user_data) {
+    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
+    if (!batch_meta) return GST_PAD_PROBE_OK;
+
+    for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame; l_frame = l_frame->next) {
+        NvDsFrameMeta* frame_meta = (NvDsFrameMeta*)l_frame->data;
+        if (!frame_meta) continue;
+
+        guint source_id = frame_meta->source_id;
+        guint pad_index = frame_meta->pad_index;
+
+        for (NvDsMetaList* l_obj = frame_meta->obj_meta_list; l_obj; l_obj = l_obj->next) {
+            NvDsObjectMeta* obj_meta = (NvDsObjectMeta*)l_obj->data;
+            if (!obj_meta) continue;
+
+            for (NvDsMetaList* l_um = obj_meta->obj_user_meta_list; l_um; l_um = l_um->next) {
+                NvDsUserMeta* um = (NvDsUserMeta*)l_um->data;
+                if (um->base_meta.meta_type == NVDS_USER_FRAME_META_NVDSANALYTICS) {
+                    NvDsAnalyticsObjInfo* aoi = (NvDsAnalyticsObjInfo*)um->user_meta_data;
+                    if (aoi && !aoi->lcStatus.empty()) {
+                        gchar lc_json[256];
+                        g_snprintf(lc_json, sizeof(lc_json),
+                            "{\"device_id\":%d,\"source_id\":%u,\"object_id\":%lu,\"class_id\":%d}",
+                            source_to_device[pad_index], source_id,
+                            obj_meta->object_id, obj_meta->class_id);
+                        g_mutex_lock(&redis_mutex);
+                        if (pub_ctx) {
+                            redisReply* reply = (redisReply*)redisCommand(
+                                pub_ctx, "PUBLISH aduana:lc_event %s", lc_json);
+                            if (reply) freeReplyObject(reply);
+                        }
+                        g_mutex_unlock(&redis_mutex);
+                        g_print("[LC] %s\n", lc_json);
+                    }
+                }
+            }
+        }
+    }
+    return GST_PAD_PROBE_OK;
+}
+
 static gboolean bus_call(GstBus* bus, GstMessage* msg, gpointer data) {
     GMainLoop* loop = (GMainLoop*)data;
     switch (GST_MESSAGE_TYPE(msg)) {
@@ -500,7 +543,7 @@ static GstElement* create_source_bin(guint index, gchar* uri) {
 int main(int argc, char* argv[]) {
     GMainLoop* loop = NULL;
     GstElement *pipeline = NULL, *streammux = NULL, *sink = NULL, *pgie = NULL,
-               *nvtracker = NULL,
+               *nvtracker = NULL, *nvds_analytics = NULL,
                *queue1 = NULL, *queue2 = NULL, *queue3 = NULL, *queue4 = NULL, *queue5 = NULL,
                *nvvidconv = NULL, *nvosd = NULL, *tiler = NULL;
     GstElement *record_tiler = NULL, *record_tiler_conv = NULL,
@@ -652,7 +695,17 @@ int main(int argc, char* argv[]) {
                  "ll-lib-file",
                  "/opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so",
                  "ll-config-file", "config_tracker_IOU.yml",
-                 NULL);
+                  NULL);
+    nvds_analytics = gst_element_factory_make("nvdsanalytics", "nvdsanalytics");
+    if (nvds_analytics) {
+        g_object_set(G_OBJECT(nvds_analytics),
+                     "enable", TRUE,
+                     "config-file", "config_nvdsanalytics.txt",
+                     NULL);
+        g_print("Analytics enabled\n");
+    } else {
+        g_printerr("Failed to create nvdsanalytics element\n");
+    }
     if (show_display) {
         RETURN_ON_PARSER_ERROR(nvds_parse_osd(nvosd, argv[1], "osd"));
         if (num_sources > 0) {
@@ -686,14 +739,14 @@ int main(int argc, char* argv[]) {
 
     if (show_display) {
         gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
-                         tiler,
+                         nvds_analytics, tiler,
                          queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL);
 
         if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker, NULL)) {
             g_printerr("streammux to nvtracker link failed\n");
             return -1;
         }
-        if (!gst_element_link_many(nvtracker, tiler,
+        if (!gst_element_link_many(nvtracker, nvds_analytics, tiler,
                                     queue3, nvvidconv, queue4, nvosd, queue5, sink, NULL)) {
             g_printerr("tracker to display link failed\n");
             return -1;
@@ -716,28 +769,28 @@ int main(int argc, char* argv[]) {
             RETURN_ON_PARSER_ERROR(nvds_parse_tiler(record_tiler, argv[1], "tiler"));
 
             gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
-                             record_tiler, record_tiler_conv, nvosd, NULL);
+                             nvds_analytics, record_tiler, record_tiler_conv, nvosd, NULL);
 
             if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
                                         NULL)) {
                 g_printerr("streammux to nvtracker link failed\n");
                 return -1;
             }
-            if (!gst_element_link_many(nvtracker, record_tiler, record_tiler_conv,
+            if (!gst_element_link_many(nvtracker, nvds_analytics, record_tiler, record_tiler_conv,
                                         nvosd, NULL)) {
                 g_printerr("tiler link failed\n");
                 return -1;
             }
         } else {
             gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
-                             nvosd, NULL);
+                             nvds_analytics, nvosd, NULL);
 
             if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
                                         NULL)) {
                 g_printerr("streammux to nvtracker link failed\n");
                 return -1;
             }
-            if (!gst_element_link(nvtracker, nvosd)) {
+            if (!gst_element_link_many(nvtracker, nvds_analytics, nvosd, NULL)) {
                 g_printerr("nvtracker to nvosd link failed\n");
                 return -1;
             }
@@ -806,6 +859,16 @@ int main(int argc, char* argv[]) {
     gst_pad_add_probe(probe_pad, GST_PAD_PROBE_TYPE_BUFFER,
                       analytics_pad_probe, &probeData, NULL);
     gst_object_unref(probe_pad);
+
+    if (nvds_analytics) {
+        GstPad* lc_pad = gst_element_get_static_pad(nvds_analytics, "src");
+        if (lc_pad) {
+            gst_pad_add_probe(lc_pad, GST_PAD_PROBE_TYPE_BUFFER,
+                              analytics_lc_probe, NULL, NULL);
+            gst_object_unref(lc_pad);
+            g_print("Line crossing probe attached\n");
+        }
+    }
 
     g_print("Pipeline ready. Setting to PLAYING\n");
     gst_element_set_state(pipeline, GST_STATE_PLAYING);

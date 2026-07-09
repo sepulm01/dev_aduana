@@ -188,9 +188,90 @@ sink:
 
 
 def generate_nvdsanalytics_config(config_dir):
+    from django.apps import apps
+
+    Device = apps.get_model("devices", "Device")
+    AnalyticsPreset = apps.get_model("aduana", "AnalyticsPreset")
+
+    devices = list(
+        Device.objects.filter(
+            is_online=True,
+            stream_uris__isnull=False,
+            source_type="rtsp",
+        ).exclude(stream_uris={})
+    )
+    devices += list(
+        Device.objects.filter(
+            is_online=True,
+            stream_uris__isnull=False,
+            source_type="file",
+        ).exclude(stream_uris={})
+    )
+    devices.sort(key=lambda d: d.id)
+    devices = devices[:MAX_INSTANCES]
+
+    sections = {}
+    has_any = False
+
+    for stream_idx, device in enumerate(devices):
+        token = device.default_profile_token or "__fixed__"
+        preset = AnalyticsPreset.objects.filter(
+            device=device, preset_token=token
+        ).first()
+        if not preset or not preset.shapes:
+            continue
+
+        device_sections = _shapes_to_nvdsanalytics(preset.shapes, stream_idx)
+        for sec_name, sec_data in device_sections.items():
+            if sec_name not in sections:
+                sections[sec_name] = {}
+            sections[sec_name].update(sec_data)
+        has_any = True
+
+    if not has_any:
+        path = os.path.join(config_dir, NVDSANALYTICS_CONFIG_FILE)
+        with open(path, "w") as f:
+            f.write("[property]\nenable=0\n")
+        return
+
     path = os.path.join(config_dir, NVDSANALYTICS_CONFIG_FILE)
     with open(path, "w") as f:
-        f.write(
-            "[property]\n"
-            "enable=0\n"
-        )
+        f.write(_serialize_nvdsanalytics(sections))
+
+
+def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
+    sections = {}
+    for shape in shapes:
+        obj_type = shape.get("object", "")
+        name = shape.get("name", "unnamed")
+        shape_type = shape.get("type", "")
+
+        if obj_type == "line" and shape_type == "cross":
+            x1 = round(shape["x1"] * FRAME_WIDTH)
+            y1 = round(shape["y1"] * FRAME_HEIGHT)
+            x2 = round(shape["x2"] * FRAME_WIDTH)
+            y2 = round(shape["y2"] * FRAME_HEIGHT)
+            key = f"line-crossing-{name}"
+            section = f"line-crossing-stream-{stream_idx}"
+            if section not in sections:
+                sections[section] = {"enable": "1", "class-id": "0", "mode": "balanced"}
+            sections[section][key] = f"{x1};{y1};{x2};{y2}"
+
+    return sections
+
+
+def _serialize_nvdsanalytics(sections):
+    lines = [
+        "[property]",
+        "enable=1",
+        f"config-width={FRAME_WIDTH}",
+        f"config-height={FRAME_HEIGHT}",
+        "osd-mode=1",
+        "",
+    ]
+    for sec_name, props in sorted(sections.items()):
+        lines.append(f"[{sec_name}]")
+        for key, value in sorted(props.items()):
+            lines.append(f"{key}={value}")
+        lines.append("")
+    return "\n".join(lines) + "\n"

@@ -81,3 +81,20 @@ class ContainerDetection(models.Model):
             f"Det {self.id} — {self.class_label} "
             f"(conf={self.confidence:.2f}) — src={self.source_id}"
         )
+
+
+class AnalyticsPreset(models.Model):
+    device = models.ForeignKey(
+        "devices.Device", on_delete=models.CASCADE, related_name="analytics_presets"
+    )
+    preset_token = models.CharField(max_length=120)
+    preset_name = models.CharField(max_length=120, blank=True, default="")
+    shapes = models.JSONField(default=list, blank=True)
+    snapshot = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [["device", "preset_token"]]
+
+    def __str__(self):
+        return f"Analytics {self.device.name} — {self.preset_name or self.preset_token}"
