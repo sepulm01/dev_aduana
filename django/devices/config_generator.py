@@ -208,7 +208,6 @@ def generate_nvdsanalytics_config(config_dir):
         ).exclude(stream_uris={})
     )
     devices.sort(key=lambda d: d.id)
-    devices = devices[:MAX_INSTANCES]
 
     sections = {}
     has_any = False
