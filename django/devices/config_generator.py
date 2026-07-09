@@ -207,7 +207,7 @@ def generate_nvdsanalytics_config(config_dir):
             source_type="file",
         ).exclude(stream_uris={})
     )
-    devices.sort(key=lambda d: d.id)
+    devices.sort(key=lambda d: d.host)
 
     sections = {}
     has_any = False
