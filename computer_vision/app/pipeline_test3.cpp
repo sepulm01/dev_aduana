@@ -33,7 +33,41 @@
 #define CROP_END_MARKER "END!"
 #define CROP_MIN_BBOX_PX 20
 #define CROP_MAX_FPS 15
-#define CROP_MIN_CONFIDENCE 0.6
+#define DEFAULT_MIN_CONFIDENCE 0.6f
+#define MAX_CLASSES 16
+#define CONFIDENCE_CONFIG "/opt/computer_vision/config/confidence_thresholds.txt"
+
+static float g_class_confidence[MAX_CLASSES];
+static bool g_roi_configured = false;
+
+static void load_confidence_thresholds() {
+    for (int i = 0; i < MAX_CLASSES; i++)
+        g_class_confidence[i] = DEFAULT_MIN_CONFIDENCE;
+
+    FILE* f = fopen(CONFIDENCE_CONFIG, "r");
+    if (!f) return;
+
+    char line[64];
+    while (fgets(line, sizeof(line), f)) {
+        char* eq = strchr(line, '=');
+        if (!eq) continue;
+        int cls = atoi(line);
+        float val = atof(eq + 1);
+        if (cls >= 0 && cls < MAX_CLASSES && val > 0)
+            g_class_confidence[cls] = val;
+    }
+    fclose(f);
+
+    g_print("[Confidence] thresholds loaded: ");
+    for (int i = 0; i < 4; i++)
+        g_print("%scls%d=%.2f", i > 0 ? ", " : "", i, g_class_confidence[i]);
+    g_print("\n");
+}
+
+static float get_class_confidence(guint class_id) {
+    if (class_id >= MAX_CLASSES) return DEFAULT_MIN_CONFIDENCE;
+    return g_class_confidence[class_id];
+}
 
 #pragma pack(push, 1)
 struct CropPacket {
@@ -327,7 +361,20 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 float w = om->detector_bbox_info.org_bbox_coords.width;
                 float h = om->detector_bbox_info.org_bbox_coords.height;
                 if (w < CROP_MIN_BBOX_PX || h < CROP_MIN_BBOX_PX) continue;
-                if (om->confidence < CROP_MIN_CONFIDENCE) continue;
+                if (om->confidence < get_class_confidence(om->class_id)) continue;
+
+                if (g_roi_configured) {
+                    bool in_roi = false;
+                    for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
+                        NvDsUserMeta* um2 = (NvDsUserMeta*)lum->data;
+                        if (!um2) continue;
+                        if (um2->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
+                            NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um2->user_meta_data;
+                            if (ai && !ai->roiStatus.empty()) { in_roi = true; break; }
+                        }
+                    }
+                    if (!in_roi) continue;
+                }
                 if (now - last_crop_sent < crop_interval) continue;
 
                 CropPending cp;
@@ -590,6 +637,11 @@ int main(int argc, char* argv[]) {
             fclose(f);
         }
     }
+
+    load_confidence_thresholds();
+    g_roi_configured = yaml_has_section(
+        "/opt/computer_vision/config/config_nvdsanalytics.txt",
+        "roi-filtering-stream-");
 
     const char* sources_key_env = getenv("DEEPSTREAM_SOURCES_KEY");
     if (sources_key_env) g_sources_key = sources_key_env;
