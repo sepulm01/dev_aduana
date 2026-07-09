@@ -218,6 +218,10 @@ def generate_nvdsanalytics_config(config_dir):
         preset = AnalyticsPreset.objects.filter(
             device=device, preset_token=token
         ).first()
+        if (not preset or not preset.shapes) and token != "__fixed__":
+            preset = AnalyticsPreset.objects.filter(
+                device=device, preset_token="__fixed__"
+            ).first()
         if not preset or not preset.shapes:
             continue
 
