@@ -231,7 +231,13 @@ def generate_nvdsanalytics_config(config_dir):
     if not has_any:
         path = os.path.join(config_dir, NVDSANALYTICS_CONFIG_FILE)
         with open(path, "w") as f:
-            f.write("[property]\nenable=0\n")
+            f.write(
+                "[property]\n"
+                "enable=1\n"
+                f"config-width={FRAME_WIDTH}\n"
+                f"config-height={FRAME_HEIGHT}\n"
+                "osd-mode=1\n"
+            )
         return
 
     path = os.path.join(config_dir, NVDSANALYTICS_CONFIG_FILE)

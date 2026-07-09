@@ -130,6 +130,19 @@ services:
       postgres:
         condition: service_healthy
 
+  lc-bridge:
+    build: ./django
+    command: python manage.py lc_bridge
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./computer_vision/config:/opt/computer_vision/config:rw
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
   crop-receiver:
     build: ./django
     command: python manage.py crop_receiver

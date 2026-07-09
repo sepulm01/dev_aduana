@@ -700,7 +700,7 @@ int main(int argc, char* argv[]) {
     if (nvds_analytics) {
         g_object_set(G_OBJECT(nvds_analytics),
                      "enable", TRUE,
-                     "config-file", "config_nvdsanalytics.txt",
+                     "config-file", "/opt/computer_vision/config/config_nvdsanalytics.txt",
                      NULL);
         g_print("Analytics enabled\n");
     } else {
