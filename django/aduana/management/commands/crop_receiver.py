@@ -72,17 +72,16 @@ def load_roi_shapes():
     _roi_shapes_cache.clear()
     presets = AnalyticsPreset.objects.filter(shapes__isnull=False).exclude(shapes=[])
     for ap in presets:
-        source_id = ap.device.id - 1
         polygons = []
         for shape in ap.shapes:
-            if shape.get("object") == "polygon" and shape.get("isClosed"):
+            if shape.get("object") == "polygon" and shape.get("isClosed", True):
                 points = shape.get("points", [])
                 if len(points) >= 3:
                     name = shape.get("name", "")
                     poly = Polygon([(p["x"], p["y"]) for p in points])
                     polygons.append((name, poly))
         if polygons:
-            _roi_shapes_cache[(ap.device_id, source_id)] = polygons
+            _roi_shapes_cache[ap.device_id] = polygons
     _roi_shapes_updated = dj_timezone.now()
 
 
@@ -90,7 +89,7 @@ def crop_roi_name(device_id, source_id, bbox_left, bbox_top, bbox_width, bbox_he
     global _roi_shapes_cache, _roi_shapes_updated
     if _roi_shapes_updated is None or (dj_timezone.now() - _roi_shapes_updated).total_seconds() > 30:
         load_roi_shapes()
-    polygons = _roi_shapes_cache.get((device_id, source_id), [])
+    polygons = _roi_shapes_cache.get(device_id, [])
     if not polygons:
         return ""
     cx = bbox_left + bbox_width / 2
