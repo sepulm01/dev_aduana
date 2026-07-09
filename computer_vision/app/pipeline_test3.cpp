@@ -33,6 +33,7 @@
 #define CROP_END_MARKER "END!"
 #define CROP_MIN_BBOX_PX 20
 #define CROP_MAX_FPS 15
+#define CROP_MIN_OCR_BYTES 3000
 #define DEFAULT_MIN_CONFIDENCE 0.6f
 #define MAX_CLASSES 16
 #define CONFIDENCE_CONFIG "/opt/computer_vision/config/confidence_thresholds.txt"
@@ -222,6 +223,10 @@ static bool send_crop(const CropPending& cp) {
         pkt.timestamp_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         pkt.jpeg_size    = (uint32_t)enc->outLen;
+
+        if (cp.om->class_id == 3 && enc->outLen < CROP_MIN_OCR_BYTES) {
+            return false;
+        }
 
         auto safe_send = [&](const void* data, size_t len) -> bool {
             ssize_t s = send(g_crop_sock.fd, data, len, MSG_NOSIGNAL);
