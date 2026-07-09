@@ -256,7 +256,20 @@ def _shapes_to_nvdsanalytics(shapes, stream_idx=0):
         name = shape.get("name", "unnamed")
         shape_type = shape.get("type", "")
 
-        if obj_type == "line" and shape_type == "cross":
+        if obj_type == "polygon" and shape_type == "RF":
+            pts = shape.get("points", [])
+            if len(pts) >= 3:
+                coords = ";".join(
+                    f"{round(p['x'] * FRAME_WIDTH)};{round(p['y'] * FRAME_HEIGHT)}"
+                    for p in pts
+                )
+                key = f"roi-{name}"
+                section = f"roi-filtering-stream-{stream_idx}"
+                if section not in sections:
+                    sections[section] = {"enable": "1", "class-id": "-1"}
+                sections[section][key] = coords
+
+        elif obj_type == "line" and shape_type == "cross":
             x1 = round(shape["x1"] * FRAME_WIDTH)
             y1 = round(shape["y1"] * FRAME_HEIGHT)
             x2 = round(shape["x2"] * FRAME_WIDTH)
