@@ -57,6 +57,7 @@ class ContainerDetection(models.Model):
     dominant_color_h = models.FloatField(null=True, blank=True)
     dominant_color_s = models.FloatField(null=True, blank=True)
     dominant_color_v = models.FloatField(null=True, blank=True)
+    roi_name = models.CharField(max_length=32, blank=True, default="")
     timestamp = models.DateTimeField(db_index=True)
     crop = models.ImageField(upload_to="crops/%Y/%m/%d/", max_length=255)
     ocr_text = models.CharField(max_length=64, blank=True, default="")

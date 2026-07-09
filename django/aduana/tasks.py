@@ -263,22 +263,40 @@ def close_stale_events():
     from aduana.models import ContainerDetection, ContainerEvent
 
     threshold = timezone.now() - timedelta(seconds=15)
+    seal_threshold = timezone.now() - timedelta(seconds=3)
+    roi_exit_threshold = timezone.now() - timedelta(seconds=2)
 
     open_events = ContainerEvent.objects.filter(
         seal_status="processing", timestamp_end__isnull=True
     )
 
     for event in open_events:
-        last_detection = (
-            ContainerDetection.objects.filter(event=event)
-            .order_by("-timestamp")
-            .first()
-        )
+        detections = ContainerDetection.objects.filter(event=event)
+        last_detection = detections.order_by("-timestamp").first()
 
         if last_detection is None:
             continue
 
+        should_close = False
+
         if last_detection.timestamp < threshold:
+            should_close = True
+
+        if not should_close:
+            seal_dets = detections.filter(class_id__in=[0, 2])
+            if seal_dets.exists():
+                last_seal = seal_dets.order_by("-timestamp").first()
+                if last_seal.timestamp < seal_threshold:
+                    should_close = True
+
+        if not should_close:
+            exit_dets = detections.filter(roi_name="salida")
+            if exit_dets.exists():
+                last_exit = exit_dets.order_by("-timestamp").first()
+                if last_exit.timestamp < roi_exit_threshold:
+                    should_close = True
+
+        if should_close:
             _finalize_event(event)
 
 

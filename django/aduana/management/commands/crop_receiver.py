@@ -3,12 +3,13 @@ import os
 import socket
 import struct
 from datetime import datetime, timedelta, timezone as dt_timezone
-from io import BytesIO
 
 import numpy as np
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
+from django.utils import timezone as dj_timezone
 from PIL import Image
+from shapely.geometry import Point, Polygon
 
 logger = logging.getLogger("crop_receiver")
 
@@ -58,6 +59,47 @@ def extract_avg_hsv(image_path):
         return float(np.mean(h[mask])), float(np.mean(s[mask])), float(np.mean(v[mask]))
     except Exception:
         return None, None, None
+
+
+_roi_shapes_cache = {}
+_roi_shapes_updated = None
+
+
+def load_roi_shapes():
+    global _roi_shapes_cache, _roi_shapes_updated
+    from devices.models import AnalyticsPreset
+
+    _roi_shapes_cache.clear()
+    presets = AnalyticsPreset.objects.filter(shapes__isnull=False).exclude(shapes=[])
+    for ap in presets:
+        source_id = ap.device.id - 1
+        polygons = []
+        for shape in ap.shapes:
+            if shape.get("object") == "polygon" and shape.get("isClosed"):
+                points = shape.get("points", [])
+                if len(points) >= 3:
+                    name = shape.get("name", "")
+                    poly = Polygon([(p["x"], p["y"]) for p in points])
+                    polygons.append((name, poly))
+        if polygons:
+            _roi_shapes_cache[(ap.device_id, source_id)] = polygons
+    _roi_shapes_updated = dj_timezone.now()
+
+
+def crop_roi_name(device_id, source_id, bbox_left, bbox_top, bbox_width, bbox_height):
+    global _roi_shapes_cache, _roi_shapes_updated
+    if _roi_shapes_updated is None or (dj_timezone.now() - _roi_shapes_updated).total_seconds() > 30:
+        load_roi_shapes()
+    polygons = _roi_shapes_cache.get((device_id, source_id), [])
+    if not polygons:
+        return ""
+    cx = bbox_left + bbox_width / 2
+    cy = bbox_top + bbox_height / 2
+    pt = Point(cx, cy)
+    for name, poly in polygons:
+        if poly.contains(pt):
+            return name
+    return ""
 
 
 class CropReceiver:
@@ -222,6 +264,10 @@ class CropReceiver:
                 detection.dominant_color_h = h
                 detection.dominant_color_s = s
                 detection.dominant_color_v = v
+
+            roi = crop_roi_name(device_id, source_id, bbox_left, bbox_top, bbox_width, bbox_height)
+            if roi:
+                detection.roi_name = roi
 
             event = self._find_or_create_event(detection)
             if event:

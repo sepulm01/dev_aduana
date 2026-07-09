@@ -21,5 +21,6 @@ pynvml>=12,<13
 pysnmp>=7,<8
 onnxruntime>=1,<2
 pyyaml>=6,<7
+shapely>=2,<3
 paddlepaddle-gpu>=2.6,<2.7
 paddleocr>=2.9,<2.10
