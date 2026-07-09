@@ -191,7 +191,7 @@ def generate_nvdsanalytics_config(config_dir):
     from django.apps import apps
 
     Device = apps.get_model("devices", "Device")
-    AnalyticsPreset = apps.get_model("aduana", "AnalyticsPreset")
+    AnalyticsPreset = apps.get_model("devices", "AnalyticsPreset")
 
     devices = list(
         Device.objects.filter(
