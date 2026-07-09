@@ -99,7 +99,8 @@ docker compose logs -f django-http
 - **Camera sync fix**: Streammux now configured with `live-source: 1` and `sync-inputs: 0` in generated YAML config. RTSP sources get `latency=0`, `drop-on-latency=TRUE`, `protocols=TCP` via `source-setup` signal callback in `pipeline_test3.cpp`. Eliminated 3-6s inter-camera delay caused by default rtspsrc latency=2000ms buffer and missing live-source mode. Detections now balanced 52/48% between cameras (was 57/42%).
 - **Cross-source gap thresholds**: `GAP_THRESHOLD=3.0s` for same-camera gaps, `GAP_CROSS_SOURCE=5.0s` for different-camera gaps. Applied in both `crop_receiver.py` (proactive) and `tasks.py` (reactive temporal clustering).
 - **Annotated video recording**: `manage.py record_annotated` captures ONVIF snapshots + overlays detection bounding boxes from recent crops. Requiere `HTTPDigestAuth` para cámaras Dahua. Output GIF se guarda en `media/recordings/`, accesible via nginx. Uso: `docker exec aduana-celery-worker-1 python3 manage.py record_annotated --duration 20 --fps 5`.
-- **Native 720p video recording**: Pipeline conditional controlado por `computer_vision/config/video_output.txt` (`record=1|0`). Cuando record=1, reemplaza fakesink con `nvvideoconvert → capsfilter(NV12) → capsfilter(1280×720) → nvv4l2h264enc(2Mbps) → h264parse → filesink`. Sin tee (incompatible con NVMM). 1080p causa OOM en RTX 4080. 720p no probado aún — requiere deploy con VPN funcional.
+- **Native 720p video recording**: Pipeline conditional controlado por `computer_vision/config/video_output.txt` (`record=1|0`). Cuando record=1, reemplaza fakesink con `nvvideoconvert → capsfilter(NV12) → capsfilter(1280×720) → nvv4l2h264enc(2Mbps) → h264parse → filesink`. Sin tee (incompatible con NVMM). 1080p causa OOM en RTX 4080.
+- **NVDS Analytics + Line Crossing**: Elemento `nvdsanalytics` insertado entre `nvtracker` y `nvosd` en el pipeline C++. Config via `config_nvdsanalytics.txt` generado por `config_generator.py:_shapes_to_nvdsanalytics()`. Frontend canvas p5.js en `/devices/<id>/analytics/` (heredado de `dev_security`) para dibujar líneas de crossing. Modelo `devices.AnalyticsPreset` almacena shapes normalizadas (0.0-1.0). Probe `analytics_lc_probe` en `pipeline_test3.cpp` lee `NvDsAnalyticsObjInfo.lcStatus` y publica JSON a Redis `aduana:lc_event`. Consumer `lc_bridge` (management command, corre en `django-http`) se suscribe al canal Redis y llama `_finalize_event()` del evento abierto más reciente. Flujo: YOLO → nvtracker → nvdsanalytics → cruce línea → Redis PUBLISH → lc_bridge → cierre evento.
 
 ## Testing
 
@@ -122,6 +123,7 @@ docker compose logs -f django-http
 | celery-beat | Orchestrator scheduler (DatabaseScheduler) | — |
 | celery-worker | Executes orchestrator + OCR tasks | — |
 | redis-event-bridge | Redis → Channels WebSocket forwarder | — |
+| lc-bridge | Line crossing → event finalization (Redis pubsub) | — (runs in django-http) |
 | crop-receiver | TCP server for container crops | 12347 |
 | computer-vision-aduana | DeepStream YOLOv9 pipeline | — |
 | mediamtx | RTSP/WebRTC media server | 8554, 8889, 9997 |
