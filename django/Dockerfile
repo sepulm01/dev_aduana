@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
+RUN pip install --no-cache-dir --break-system-packages --default-timeout=120 --retries 10 -r requirements.txt
 
 RUN rm -rf /usr/local/cuda-12/compat \
     && ln -sf /usr/lib/x86_64-linux-gnu/libcudnn.so.9 /usr/local/cuda/lib64/libcudnn.so \
