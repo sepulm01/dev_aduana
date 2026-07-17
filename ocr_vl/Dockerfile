@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04
 
-ENV DEBIAN_FRONTEND=noninteractive TZ=America/Santiago
+ENV DEBIAN_FRONTEND=noninteractive TZ=America/Santiago PIP_DEFAULT_TIMEOUT=600
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-venv python3-pip curl \
@@ -9,8 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN pip install --break-system-packages --no-cache-dir --default-timeout=120 \
-    torch torchvision \
+RUN pip install --break-system-packages --no-cache-dir --retries 10 \
+    torch torchvision
+
+RUN pip install --break-system-packages --no-cache-dir --retries 10 \
     "transformers>=5.0.0" \
     accelerate \
     fastapi uvicorn \
