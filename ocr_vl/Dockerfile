@@ -9,9 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN pip install --break-system-packages --no-cache-dir \
-    torch torchvision --index-url https://download.pytorch.org/whl/cu126 \
-    && pip install --break-system-packages --no-cache-dir \
+RUN pip install --break-system-packages --no-cache-dir --default-timeout=120 \
+    torch torchvision \
     "transformers>=5.0.0" \
     accelerate \
     fastapi uvicorn \
