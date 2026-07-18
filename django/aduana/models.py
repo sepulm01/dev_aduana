@@ -29,8 +29,8 @@ class ContainerEvent(models.Model):
 class ContainerDetection(models.Model):
     CLASS_CHOICES = [
         (0, "con_sello"),
-        (1, "cont data"),
-        (2, "sin_sello"),
+        (1, "sin_sello"),
+        (2, "cont data"),
         (3, "container cod"),
     ]
     CLASS_LABELS = {c[0]: c[1] for c in CLASS_CHOICES}
