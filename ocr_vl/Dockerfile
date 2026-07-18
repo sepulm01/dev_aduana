@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04
 
-ENV DEBIAN_FRONTEND=noninteractive TZ=America/Santiago PIP_DEFAULT_TIMEOUT=600
+ENV DEBIAN_FRONTEND=noninteractive TZ=America/Santiago PIP_DEFAULT_TIMEOUT=1800
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-venv python3-pip curl \

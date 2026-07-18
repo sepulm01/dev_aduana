@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.6.0-cudnn-runtime-ubuntu24.04
 
-ENV DEBIAN_FRONTEND=noninteractive TZ=America/Santiago PIP_DEFAULT_TIMEOUT=600
+ENV DEBIAN_FRONTEND=noninteractive TZ=America/Santiago PIP_DEFAULT_TIMEOUT=1800
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
@@ -21,11 +21,11 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages --retries 10 \
-    paddlepaddle-gpu>=2.6,<2.7
+    "paddlepaddle-gpu>=2.6,<2.7"
 RUN pip install --no-cache-dir --break-system-packages --retries 10 \
-    opencv-python-headless>=4,<5 \
-    onnxruntime>=1,<2 \
-    numpy>=1,<2
+    "opencv-python-headless>=4,<5" \
+    "onnxruntime>=1,<2" \
+    "numpy>=1,<2"
 RUN pip install --no-cache-dir --break-system-packages --retries 10 \
     -r requirements.txt
 
