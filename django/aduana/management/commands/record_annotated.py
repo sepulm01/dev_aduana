@@ -20,11 +20,11 @@ from io import BytesIO
 
 CLASS_COLORS = {
     0: (0, 255, 0),      # con_sello: green
-    1: (255, 255, 0),    # sin_sello/cont data: yellow
-    2: (255, 0, 0),      # sin_sello: red
+    1: (255, 0, 0),      # sin_sello: red
+    2: (255, 255, 0),    # cont data: yellow
     3: (0, 255, 255),    # container cod: cyan
 }
-CLASS_NAMES = {0: 'con_sello', 1: 'cont data', 2: 'sin_sello', 3: 'container cod'}
+CLASS_NAMES = {0: 'con_sello', 1: 'sin_sello', 2: 'cont data', 3: 'container cod'}
 
 def capture_snapshot(device, wsdl_dir):
     cam = ONVIFCamera(device.host, device.port, device.username, device.password, wsdl_dir=wsdl_dir)

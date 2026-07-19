@@ -1,10 +1,16 @@
 import logging
-import re
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import timedelta
 
 from celery import shared_task
 from django.utils import timezone
+
+from aduana.ocr_codes import (  # noqa: F401 (re-exportado)
+    candidatos_de_regiones,
+    consenso_parcial,
+    es_contenedor_valido,
+    texto_tiene_codigo_valido,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +42,10 @@ def process_ocr(detection_id):
     if detection.class_id != 3:
         return
 
+    vertical = detection.bbox_height > detection.bbox_width
+
     try:
-        result = _run_paddle_ocr(detection.crop.path)
+        result = _run_paddle_ocr(detection.crop.path, vertical=vertical)
     except Exception as e:
         logger.error("PaddleOCR failed for detection %s: %s", detection_id, e)
         detection.ocr_processed = True
@@ -65,9 +73,9 @@ def process_ocr(detection_id):
         detection.save(update_fields=["ocr_processed"])
 
 
-def _run_paddle_ocr(image_path):
+def _run_paddle_ocr(image_path, vertical=False):
     try:
-        result = _run_ocr_vl(image_path)
+        result = _run_ocr_vl(image_path, vertical=vertical)
         if result:
             return result
     except Exception as e:
@@ -115,7 +123,7 @@ def _run_paddle_ocr(image_path):
     }
 
 
-def _run_ocr_vl(image_path):
+def _run_ocr_vl(image_path, vertical=False):
     try:
         import requests
     except ImportError:
@@ -123,35 +131,62 @@ def _run_ocr_vl(image_path):
 
     OCR_VL_URL = "http://ocr-vl:5002"
 
-    try:
+    # El texto vertical sale truncado/vacío de /ocr con más frecuencia;
+    # /spotting funciona mejor para ese caso, así que se prueba primero.
+    modes = ["/spotting", "/ocr"] if vertical else ["/ocr", "/spotting"]
+
+    def _call(mode):
+        # El file handle no es reutilizable entre requests: se reabre cada vez.
         with open(image_path, "rb") as f:
-            # Try OCR mode first
-            resp = requests.post(f"{OCR_VL_URL}/ocr", files={"file": f}, timeout=10)
+            resp = requests.post(f"{OCR_VL_URL}{mode}", files={"file": f}, timeout=10)
         if resp.status_code != 200:
-            return None
+            return ""
         data = resp.json()
-        raw_text = data.get("text", "").strip()
+        return data.get("text", "").strip()
 
-        # If OCR mode returned nothing, try spotting mode (for vertical text)
-        if not raw_text:
-            with open(image_path, "rb") as f:
-                resp2 = requests.post(f"{OCR_VL_URL}/spotting", files={"file": f}, timeout=10)
-            if resp2.status_code == 200:
-                data2 = resp2.json()
-                raw_text = data2.get("text", "").strip()
+    def _lines(text):
+        return [line.strip() for line in text.split("\n") if line.strip()]
 
-        if not raw_text:
-            return None
+    def _merge_unique(base, extra):
+        combined = list(base)
+        for line in extra:
+            if line not in combined:
+                combined.append(line)
+        return combined
 
-        lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
-        regions = [[line, 0.85, []] for line in lines]
+    try:
+        first_text = _call(modes[0])
+        first_lines = _lines(first_text)
 
-        best_text = lines[0] if lines else raw_text
-        return {
-            "text": best_text,
-            "confidence": 0.85,
-            "regions": regions,
-        }
+        if first_text and texto_tiene_codigo_valido(first_text):
+            return {
+                "text": first_lines[0] if first_lines else first_text,
+                "confidence": 0.85,
+                "regions": [[line, 0.85, []] for line in first_lines],
+            }
+
+        second_text = _call(modes[1])
+        second_lines = _lines(second_text)
+
+        if second_text and texto_tiene_codigo_valido(second_text):
+            regions_lines = _merge_unique(second_lines, first_lines)
+            return {
+                "text": second_lines[0] if second_lines else second_text,
+                "confidence": 0.85,
+                "regions": [[line, 0.85, []] for line in regions_lines],
+            }
+
+        if first_text or second_text:
+            regions_lines = _merge_unique(first_lines, second_lines)
+            if not regions_lines:
+                return None
+            return {
+                "text": regions_lines[0],
+                "confidence": 0.85,
+                "regions": [[line, 0.85, []] for line in regions_lines],
+            }
+
+        return None
     except Exception:
         return None
 
@@ -170,92 +205,96 @@ def aggregate_ocr_results(event_id):
         event=event, class_id=3, ocr_processed=True
     )
 
-    if detections.count() < 2:
+    # Basta 1 detección: el checksum ISO 6346 hace muy improbable un falso
+    # positivo, así que no exigimos un mínimo de detecciones.
+    if not detections.exists():
         return
 
-    candidates = []
-
+    votes = []  # lista de (code, source_id) — 1 voto por código por detección
     for d in detections:
         regions = d.ocr_texts or []
-        if not regions:
-            continue
-
         regions_filtered = [r for r in regions if len(r) >= 2 and r[1] >= 0.6]
-        if not regions_filtered:
-            continue
 
-        has_bbox = any(len(r) >= 3 and len(r[2]) > 0 for r in regions_filtered)
+        codigos = candidatos_de_regiones(regions_filtered, d.ocr_text or "")
+        for codigo in codigos:
+            votes.append((codigo, d.source_id))
 
-        if has_bbox:
-            regions_with_bbox = [r for r in regions_filtered if len(r) >= 3 and len(r[2]) > 0]
-            regions_with_bbox.sort(key=lambda r: r[2][0][0])
-            ordered = regions_with_bbox
-        else:
-            ordered = regions_filtered
+    if not votes:
+        # Ningún texto individual contiene por sí solo un código completo y
+        # válido. Antes de rendirnos, probamos a reconstruirlo combinando
+        # fragmentos parciales de distintas lecturas (p.ej. un crop con solo
+        # el prefijo de letras y otro con solo los dígitos).
+        textos = []
+        for d in detections:
+            regions = d.ocr_texts or []
+            for r in regions:
+                if len(r) >= 2 and r[1] >= 0.6 and isinstance(r[0], str) and r[0]:
+                    textos.append(r[0])
+            if d.ocr_text:
+                textos.append(d.ocr_text)
 
-        full_text = "".join(r[0].upper() for r in ordered)
+        codigo = consenso_parcial(textos)
+        if not codigo:
+            return
 
-        found = re.findall(r"[A-Z]{4}\d{7}", full_text)
-        for code in found:
-            if es_contenedor_valido(code):
-                candidates.append(code)
-
-        if d.ocr_text and d.ocr_confidence and d.ocr_confidence >= 0.6:
-            full_main = d.ocr_text.upper()
-            found_main = re.findall(r"[A-Z]{4}\d{7}", full_main)
-            for code in found_main:
-                if es_contenedor_valido(code):
-                    candidates.append(code)
-
-    if not candidates:
-        return
-
-    counter = Counter(candidates)
-    most_common = counter.most_common(1)[0][0]
-
-    if event.container_code != most_common:
-        event.container_code = most_common
-        event.save(update_fields=["container_code"])
+        if event.container_code != codigo:
+            event.container_code = codigo
+            event.save(update_fields=["container_code"])
         logger.info(
-            "Event %s OCR consensus: '%s' (from %d candidates in %d detections)",
-            event_id, most_common, len(candidates), detections.count(),
+            "Event %s OCR partial-consensus: '%s' (from %d texts)",
+            event_id, codigo, len(textos),
         )
+        most_common = codigo
+    else:
+        counter = Counter(code for code, _ in votes)
+        max_votes = max(counter.values())
+        tied = sorted(code for code, n in counter.items() if n == max_votes)
 
+        if len(tied) == 1:
+            most_common = tied[0]
+        else:
+            sources_by_code = defaultdict(set)
+            for code, source_id in votes:
+                if code in tied:
+                    sources_by_code[code].add(source_id)
+            max_sources = max(len(sources_by_code[c]) for c in tied)
+            tied = sorted(c for c in tied if len(sources_by_code[c]) == max_sources)
+            most_common = tied[0]
+            if len(tied) > 1:
+                logger.warning(
+                    "Event %s OCR tie unresolved between %s — picked '%s' (revisar manualmente)",
+                    event_id, tied, most_common,
+                )
 
-def es_contenedor_valido(contenedor):
-    if not isinstance(contenedor, str):
-        return False
+        if event.container_code != most_common:
+            event.container_code = most_common
+            event.save(update_fields=["container_code"])
+            logger.info(
+                "Event %s OCR consensus: '%s' (from %d candidates in %d detections)",
+                event_id, most_common, len(votes), detections.count(),
+            )
 
-    limpio = "".join(c.upper() for c in contenedor if c.isalnum())
-
-    if len(limpio) != 11:
-        return False
-
-    if not re.match(r"^[A-Z]{4}\d{7}$", limpio):
-        return False
-
-    if limpio[3] not in {"U", "J", "Z"}:
-        return False
-
-    valores = {}
-    n = 10
-    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-        if n % 11 == 0:
-            n += 1
-        valores[c] = n
-        n += 1
-
-    total = 0
-    for i in range(10):
-        char = limpio[i]
-        valor = valores[char] if char.isalpha() else int(char)
-        total += valor * (2 ** i)
-
-    checksum = total % 11
-    if checksum == 10:
-        checksum = 0
-
-    return checksum == int(limpio[10])
+    # El voto directo y el consenso parcial ya asignaron (o confirmaron)
+    # event.container_code. Como red de seguridad adicional, buscamos otro
+    # evento con el MISMO código dentro de la ventana de merge: es el caso
+    # de un contenedor partido en 2 eventos consecutivos (uno con código y
+    # otro sin él, o ambos con el mismo código detectado por separado).
+    #
+    # Nota sobre recursión: NO se encola un nuevo aggregate_ocr_results desde
+    # este merge (requeue=False). Ambos eventos ya comparten el mismo código
+    # confirmado, así que no hay nada nuevo que recalcular; encolar aquí solo
+    # generaría una re-ejecución redundante (con CELERY_TASK_ALWAYS_EAGER,
+    # anidada dentro de esta misma llamada) sin beneficio. La búsqueda de
+    # merge, además, siempre excluye al propio evento y el evento fusionado
+    # deja de existir (se borra), así que no hay forma de repetir el mismo
+    # match dos veces.
+    other = _find_merge_candidate_by_code(event, most_common)
+    if other is not None:
+        if event.timestamp_start <= other.timestamp_start:
+            _merge_into(event, other, requeue=False)
+        else:
+            _merge_into(other, event, requeue=False)
+            return  # `event` fue fusionado dentro de `other` y ya no existe
 
 
 @shared_task
@@ -283,7 +322,7 @@ def close_stale_events():
             should_close = True
 
         if not should_close:
-            seal_dets = detections.filter(class_id__in=[0, 2])
+            seal_dets = detections.filter(class_id__in=[0, 1])
             if seal_dets.exists():
                 last_seal = seal_dets.order_by("-timestamp").first()
                 if last_seal.timestamp < seal_threshold:
@@ -317,10 +356,10 @@ def _finalize_event(event):
     if _try_merge_event(event):
         return
 
-    seal_detections = detections.filter(class_id__in=[0, 2])
+    seal_detections = detections.filter(class_id__in=[0, 1])
 
     con_sello_count = seal_detections.filter(class_id=0).count()
-    sin_sello_count = seal_detections.filter(class_id=2).count()
+    sin_sello_count = seal_detections.filter(class_id=1).count()
 
     if con_sello_count == 0 and sin_sello_count == 0:
         event.seal_status = "indeterminado"
@@ -348,8 +387,7 @@ def _finalize_event(event):
         sin_sello_count,
     )
 
-    if event.container_code:
-        aggregate_ocr_results.delay(event.id)
+    aggregate_ocr_results.delay(event.id)
 
 
 def _find_temporal_clusters(detections):
@@ -419,6 +457,7 @@ def _split_event(event, clusters):
             timestamp_start=first_ts,
         )
         dets.update(event=new_event)
+        aggregate_ocr_results.delay(new_event.id)
         logger.info(
             "Split: created event %s from event %s (%d detections)",
             new_event.id, event.id, len(cluster_ids),
@@ -426,7 +465,7 @@ def _split_event(event, clusters):
 
 
 def _try_merge_event(event):
-    from aduana.models import ContainerEvent, ContainerDetection
+    from aduana.models import ContainerEvent
 
     prev = (
         ContainerEvent.objects
@@ -446,6 +485,15 @@ def _try_merge_event(event):
     if gap > MERGE_WINDOW:
         return False
 
+    if prev.container_code and event.container_code and prev.container_code == event.container_code:
+        # Mismo contenedor ya confirmado por código en ambos eventos: el
+        # color no importa, se fusionan igual.
+        logger.info(
+            "Merge: same container_code '%s' between event %s and %s (gap=%.1fs)",
+            prev.container_code, event.id, prev.id, gap,
+        )
+        return _merge_into(prev, event)
+
     evt_color = _get_event_avg_color(event)
     prev_color = _get_event_avg_color(prev)
 
@@ -454,6 +502,21 @@ def _try_merge_event(event):
 
     if _hsv_distance(evt_color, prev_color) > COLOR_MERGE_THRESHOLD:
         return False
+
+    return _merge_into(prev, event)
+
+
+def _merge_into(prev, event, requeue=True):
+    """
+    Fusiona `event` dentro de `prev`: mueve sus detecciones, extiende
+    timestamp_end, borra `event` y (opcionalmente) encola una nueva
+    agregación OCR para `prev`. Devuelve True siempre.
+
+    `requeue=False` se usa cuando el llamador ya sabe que no hace falta
+    recalcular nada (p.ej. el merge por código en aggregate_ocr_results,
+    donde ambos eventos ya comparten el mismo container_code confirmado).
+    """
+    from aduana.models import ContainerDetection
 
     ContainerDetection.objects.filter(event=event).update(event=prev)
     prev.timestamp_end = max(
@@ -464,12 +527,66 @@ def _try_merge_event(event):
     event_id_old = event.id
     event.delete()
 
-    logger.info("Merge: event %s merged into event %s (gap=%.1fs)", event_id_old, prev.id, gap)
+    logger.info("Merge: event %s merged into event %s", event_id_old, prev.id)
 
-    if prev.container_code:
+    if requeue:
         aggregate_ocr_results.delay(prev.id)
 
     return True
+
+
+def _events_gap(a, b):
+    """
+    Distancia temporal (segundos) entre los rangos [a.timestamp_start,
+    a.timestamp_end] y [b.timestamp_start, b.timestamp_end]. Si un evento
+    está abierto (timestamp_end None), se usa su timestamp_start como
+    proxy de "fin" (aún no sabemos cuánto más va a durar). Si los rangos
+    se superponen, la distancia es 0.
+    """
+    a_end = a.timestamp_end or a.timestamp_start
+    b_end = b.timestamp_end or b.timestamp_start
+
+    if a_end < b.timestamp_start:
+        return (b.timestamp_start - a_end).total_seconds()
+    if b_end < a.timestamp_start:
+        return (a.timestamp_start - b_end).total_seconds()
+    return 0.0
+
+
+def _find_merge_candidate_by_code(event, code):
+    """
+    Busca, entre los OTROS eventos con el mismo container_code, el más
+    cercano temporalmente a `event` dentro de MERGE_WINDOW segundos.
+
+    Solo se considera candidato si ambos eventos están cerrados, o si el
+    otro evento está cerrado y `event` sigue abierto (ver spec: no se
+    fusiona si `event` está cerrado y el otro sigue abierto/en curso).
+    Si hay más de un candidato, se elige el más cercano (más conservador).
+    """
+    from aduana.models import ContainerEvent
+
+    if not code:
+        return None
+
+    candidatos = ContainerEvent.objects.filter(container_code=code).exclude(id=event.id)
+
+    mejor = None
+    mejor_gap = None
+    for other in candidatos:
+        both_closed = event.timestamp_end is not None and other.timestamp_end is not None
+        other_closed_event_open = other.timestamp_end is not None and event.timestamp_end is None
+        if not (both_closed or other_closed_event_open):
+            continue
+
+        gap = _events_gap(event, other)
+        if gap >= MERGE_WINDOW:
+            continue
+
+        if mejor is None or gap < mejor_gap:
+            mejor = other
+            mejor_gap = gap
+
+    return mejor
 
 
 def _get_event_avg_color(event):
