@@ -283,7 +283,7 @@ def close_stale_events():
             should_close = True
 
         if not should_close:
-            seal_dets = detections.filter(class_id__in=[0, 2])
+            seal_dets = detections.filter(class_id__in=[0, 1])
             if seal_dets.exists():
                 last_seal = seal_dets.order_by("-timestamp").first()
                 if last_seal.timestamp < seal_threshold:
@@ -317,10 +317,10 @@ def _finalize_event(event):
     if _try_merge_event(event):
         return
 
-    seal_detections = detections.filter(class_id__in=[0, 2])
+    seal_detections = detections.filter(class_id__in=[0, 1])
 
     con_sello_count = seal_detections.filter(class_id=0).count()
-    sin_sello_count = seal_detections.filter(class_id=2).count()
+    sin_sello_count = seal_detections.filter(class_id=1).count()
 
     if con_sello_count == 0 and sin_sello_count == 0:
         event.seal_status = "indeterminado"

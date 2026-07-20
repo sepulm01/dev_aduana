@@ -32,6 +32,7 @@ class ContainerDetection(models.Model):
         (1, "sin_sello"),
         (2, "cont data"),
         (3, "container cod"),
+        (4, "truck"),
     ]
     CLASS_LABELS = {c[0]: c[1] for c in CLASS_CHOICES}
 

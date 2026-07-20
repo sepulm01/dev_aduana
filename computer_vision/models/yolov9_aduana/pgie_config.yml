@@ -3,11 +3,11 @@ property:
   net-scale-factor: 0.0039215697906911373
   model-color-format: 0
   onnx-file: best.onnx
-  model-engine-file: model_b2_gpu0_fp32.engine
+  model-engine-file: /opt/computer_vision/models/yolov9_aduana/model_b2_gpu0_fp32.engine
   labelfile-path: labels.txt
   batch-size: 2
   network-mode: 0
-  num-detected-classes: 4
+  num-detected-classes: 5
   interval: 0
   gie-unique-id: 1
   process-mode: 1
