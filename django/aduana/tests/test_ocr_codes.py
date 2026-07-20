@@ -123,3 +123,26 @@ class ConsensoParcialTests(SimpleTestCase):
 
     def test_textos_vacios_devuelve_none(self):
         self.assertIsNone(consenso_parcial(["", "   ", None]))
+
+
+class CandidatosConOrigenTests(SimpleTestCase):
+    def test_codigo_literal_es_directo(self):
+        from aduana.ocr_codes import candidatos_con_origen
+
+        result = candidatos_con_origen([["EGSU3890244", 0.9, []]])
+        self.assertEqual(result, {"EGSU3890244": True})
+
+    def test_codigo_corregido_no_es_directo(self):
+        from aduana.ocr_codes import candidatos_con_origen
+
+        # MEDU974I579 solo es válido tras corregir I->1.
+        result = candidatos_con_origen([["MEDU974I579", 0.9, []]])
+        self.assertEqual(result, {"MEDU9741579": False})
+
+    def test_directo_no_se_degrada_si_tambien_aparece_corregido(self):
+        from aduana.ocr_codes import candidatos_con_origen
+
+        result = candidatos_con_origen(
+            [["MEDU974I579", 0.9, []], ["MEDU9741579", 0.9, []]]
+        )
+        self.assertEqual(result, {"MEDU9741579": True})

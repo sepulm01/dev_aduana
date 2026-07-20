@@ -6,9 +6,11 @@ from celery import shared_task
 from django.utils import timezone
 
 from aduana.ocr_codes import (  # noqa: F401 (re-exportado)
+    candidatos_con_origen,
     candidatos_de_regiones,
     consenso_parcial,
     es_contenedor_valido,
+    soporte_parcial,
     texto_tiene_codigo_valido,
 )
 
@@ -210,29 +212,32 @@ def aggregate_ocr_results(event_id):
     if not detections.exists():
         return
 
-    votes = []  # lista de (code, source_id) — 1 voto por código por detección
+    # Lista de (code, source_id, es_directo) — 1 voto por código por
+    # detección; es_directo=True si el código apareció literalmente (sin
+    # corrección posicional) en esa detección. `textos` junta todas las
+    # lecturas crudas del evento: se usan para el consenso parcial y como
+    # soporte de desempate.
+    votes = []
+    textos = []
     for d in detections:
         regions = d.ocr_texts or []
         regions_filtered = [r for r in regions if len(r) >= 2 and r[1] >= 0.6]
 
-        codigos = candidatos_de_regiones(regions_filtered, d.ocr_text or "")
-        for codigo in codigos:
-            votes.append((codigo, d.source_id))
+        codigos = candidatos_con_origen(regions_filtered, d.ocr_text or "")
+        for codigo, es_directo in codigos.items():
+            votes.append((codigo, d.source_id, es_directo))
+
+        for r in regions_filtered:
+            if isinstance(r[0], str) and r[0]:
+                textos.append(r[0])
+        if d.ocr_text:
+            textos.append(d.ocr_text)
 
     if not votes:
         # Ningún texto individual contiene por sí solo un código completo y
         # válido. Antes de rendirnos, probamos a reconstruirlo combinando
         # fragmentos parciales de distintas lecturas (p.ej. un crop con solo
         # el prefijo de letras y otro con solo los dígitos).
-        textos = []
-        for d in detections:
-            regions = d.ocr_texts or []
-            for r in regions:
-                if len(r) >= 2 and r[1] >= 0.6 and isinstance(r[0], str) and r[0]:
-                    textos.append(r[0])
-            if d.ocr_text:
-                textos.append(d.ocr_text)
-
         codigo = consenso_parcial(textos)
         if not codigo:
             return
@@ -246,19 +251,39 @@ def aggregate_ocr_results(event_id):
         )
         most_common = codigo
     else:
-        counter = Counter(code for code, _ in votes)
+        counter = Counter(code for code, _, _ in votes)
         max_votes = max(counter.values())
         tied = sorted(code for code, n in counter.items() if n == max_votes)
 
         if len(tied) == 1:
             most_common = tied[0]
         else:
+            # Desempate 1: votos directos (código leído literalmente, sin
+            # corrección posicional — evidencia más fuerte).
+            direct_by_code = Counter()
             sources_by_code = defaultdict(set)
-            for code, source_id in votes:
+            for code, source_id, es_directo in votes:
                 if code in tied:
                     sources_by_code[code].add(source_id)
-            max_sources = max(len(sources_by_code[c]) for c in tied)
-            tied = sorted(c for c in tied if len(sources_by_code[c]) == max_sources)
+                    if es_directo:
+                        direct_by_code[code] += 1
+            max_direct = max(direct_by_code.get(c, 0) for c in tied)
+            tied = sorted(c for c in tied if direct_by_code.get(c, 0) == max_direct)
+
+            # Desempate 2: cantidad de cámaras (source_id) distintas.
+            if len(tied) > 1:
+                max_sources = max(len(sources_by_code[c]) for c in tied)
+                tied = sorted(c for c in tied if len(sources_by_code[c]) == max_sources)
+
+            # Desempate 3: soporte parcial — cuántas lecturas crudas del
+            # evento contienen el prefijo o el cuerpo del código (las
+            # lecturas parciales tipo "EGSU389024" no votan, pero sí
+            # respaldan a un candidato sobre otro).
+            if len(tied) > 1:
+                soporte = {c: soporte_parcial(c, textos) for c in tied}
+                max_soporte = max(soporte.values())
+                tied = sorted(c for c in tied if soporte[c] == max_soporte)
+
             most_common = tied[0]
             if len(tied) > 1:
                 logger.warning(

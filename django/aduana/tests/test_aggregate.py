@@ -100,6 +100,85 @@ class AggregateOcrResultsTests(TestCase):
 
         self.assertEqual(event.container_code, "CXRU1133580")
 
+    def test_empate_gana_el_codigo_leido_literalmente(self):
+        """
+        Regresión del evento 5600 de producción: en un empate de votos, un
+        código leído literalmente (EGSU3890244) debe ganarle a uno que solo
+        existe vía corrección posicional, sin importar el orden alfabético.
+        """
+        event = self._make_event()
+        # Voto directo: el código aparece tal cual en la lectura.
+        self._make_detection(
+            event, class_id=3, offset_seconds=0,
+            ocr_texts=[["EGSU3890244", 0.9, []]], ocr_processed=True,
+        )
+        # Voto corregido: MEDU974I579 solo es válido tras corregir I->1.
+        # Alfabéticamente MEDU... < EGSU... es falso (E<M), así que para que
+        # el test discrimine usamos el par al revés: si ganara el orden
+        # alfabético, ganaría EGSU igual. Agregamos entonces un tercer caso
+        # abajo con el orden alfabético en contra del directo.
+        self._make_detection(
+            event, class_id=3, offset_seconds=0.5,
+            ocr_texts=[["MEDU974I579", 0.9, []]], ocr_processed=True,
+        )
+
+        aggregate_ocr_results(event.id)
+        event.refresh_from_db()
+
+        self.assertEqual(event.container_code, "EGSU3890244")
+
+    def test_empate_directo_gana_aunque_pierda_alfabeticamente(self):
+        """Como el anterior, pero el código directo es alfabéticamente mayor."""
+        event = self._make_event()
+        # Directo: MEDU9741579 leído tal cual (alfabéticamente > EGSU...).
+        self._make_detection(
+            event, class_id=3, offset_seconds=0,
+            ocr_texts=[["MEDU9741579", 0.9, []]], ocr_processed=True,
+        )
+        # Corregido: EGSU389024A -> A->4 -> EGSU3890244 (solo vía corrección).
+        self._make_detection(
+            event, class_id=3, offset_seconds=0.5,
+            ocr_texts=[["EGSU389024A", 0.9, []]], ocr_processed=True,
+        )
+
+        aggregate_ocr_results(event.id)
+        event.refresh_from_db()
+
+        self.assertEqual(event.container_code, "MEDU9741579")
+
+    def test_empate_de_literales_lo_resuelve_el_soporte_parcial(self):
+        """
+        Regresión exacta del evento 5600 de producción: dos lecturas
+        literales que empatan en votos y en cámaras (EGSU3890244 correcto
+        vs ECSU3090244, una lectura errónea que también pasa el checksum).
+        Las lecturas parciales del evento (EGSU389024, EGSU38902...) deben
+        inclinar la balanza hacia EGSU3890244 aunque pierda en orden
+        alfabético.
+        """
+        event = self._make_event()
+        self._make_detection(
+            event, class_id=3, offset_seconds=0,
+            ocr_texts=[["EGSU3890244", 0.9, []]], ocr_processed=True,
+        )
+        self._make_detection(
+            event, class_id=3, offset_seconds=0.5,
+            ocr_texts=[["EC SU30 90 244", 0.9, []]], ocr_processed=True,
+        )
+        # Lecturas parciales: no votan (10 chars) pero respaldan a EGSU.
+        self._make_detection(
+            event, class_id=3, offset_seconds=1.0,
+            ocr_texts=[["EGSU389024", 0.9, []]], ocr_processed=True,
+        )
+        self._make_detection(
+            event, class_id=3, offset_seconds=1.5,
+            ocr_texts=[["EGSU38902", 0.9, []]], ocr_processed=True,
+        )
+
+        aggregate_ocr_results(event.id)
+        event.refresh_from_db()
+
+        self.assertEqual(event.container_code, "EGSU3890244")
+
     def test_codigo_repetido_dentro_de_una_deteccion_cuenta_una_vez(self):
         """
         Una detección que repite el mismo código en varias regiones y en

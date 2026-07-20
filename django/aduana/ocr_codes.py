@@ -202,6 +202,25 @@ def consenso_parcial(textos):
     return None
 
 
+def soporte_parcial(codigo, textos):
+    """
+    Cuenta cuántas lecturas crudas respaldan a `codigo`: textos cuya forma
+    limpia contiene su prefijo de 4 letras o su cuerpo de 7 dígitos. Las
+    lecturas parciales (p.ej. "EGSU389024", 10 chars) no alcanzan a votar
+    como código completo, pero sí sirven para desempatar entre candidatos
+    que empataron en votos.
+    """
+    if not codigo or len(codigo) != 11:
+        return 0
+    prefijo, cuerpo = codigo[:4], codigo[4:]
+    soporte = 0
+    for t in textos or []:
+        limpio = "".join(c.upper() for c in (t or "") if c.isalnum())
+        if prefijo in limpio or cuerpo in limpio:
+            soporte += 1
+    return soporte
+
+
 def candidatos_de_regiones(regions, ocr_text=""):
     """
     Genera el set de códigos de contenedor válidos detectados en una
@@ -210,15 +229,26 @@ def candidatos_de_regiones(regions, ocr_text=""):
     con alguna región, de ahí que el resultado sea un set: cada detección
     vota como máximo una vez por código).
     """
-    candidatos = set()
+    return set(candidatos_con_origen(regions, ocr_text))
+
+
+def candidatos_con_origen(regions, ocr_text=""):
+    """
+    Como candidatos_de_regiones, pero devuelve dict {codigo: es_directo}.
+    `es_directo` es True si el código apareció literalmente en alguna
+    ventana del texto (sin necesitar corrección posicional). Un código
+    leído tal cual es evidencia más fuerte que uno reconstruido por
+    corrección de confusiones, y el desempate del voto lo aprovecha.
+    """
+    candidatos = {}
 
     for texto in _textos_fuente(regions, ocr_text):
         for ventana in ventanas_11(texto):
             if es_contenedor_valido(ventana):
-                candidatos.add(ventana)
+                candidatos[ventana] = True
                 continue
             corregido = corregir_posicional(ventana)
             if corregido and es_contenedor_valido(corregido):
-                candidatos.add(corregido)
+                candidatos.setdefault(corregido, False)
 
     return candidatos
