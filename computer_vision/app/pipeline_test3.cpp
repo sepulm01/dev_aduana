@@ -367,6 +367,7 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 float h = om->detector_bbox_info.org_bbox_coords.height;
                 if (w < CROP_MIN_BBOX_PX || h < CROP_MIN_BBOX_PX) continue;
                 if (om->confidence < get_class_confidence(om->class_id)) continue;
+                if (om->class_id != 0 && om->class_id != 1 && om->class_id != 3) continue;
 
                 if (g_roi_configured) {
                     bool in_roi = false;
