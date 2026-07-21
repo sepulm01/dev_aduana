@@ -37,7 +37,7 @@ def _read_labels(pipeline_id, config_dir):
         with open(labels_path) as f:
             names = [line.strip() for line in f if line.strip()]
             return ";".join(names) + ";"
-    return "con_sello;cont data;sin_sello;container cod;"
+    return "con_sello;sin_sello;cont data;container cod;truck;"
 
 
 def generate_config(devices, output_path, pipeline_id="aduana"):

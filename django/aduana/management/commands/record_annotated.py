@@ -23,8 +23,10 @@ CLASS_COLORS = {
     1: (255, 0, 0),      # sin_sello: red
     2: (255, 255, 0),    # cont data: yellow
     3: (0, 255, 255),    # container cod: cyan
+    4: (128, 128, 128),  # truck: gray
 }
-CLASS_NAMES = {0: 'con_sello', 1: 'sin_sello', 2: 'cont data', 3: 'container cod'}
+CLASS_NAMES = {0: 'con_sello', 1: 'sin_sello', 2: 'cont data', 3: 'container cod', 4: 'truck'}
+CLASS_NAMES = {0: 'con_sello', 1: 'sin_sello', 2: 'cont data', 3: 'container cod', 4: 'truck'}
 
 def capture_snapshot(device, wsdl_dir):
     cam = ONVIFCamera(device.host, device.port, device.username, device.password, wsdl_dir=wsdl_dir)
