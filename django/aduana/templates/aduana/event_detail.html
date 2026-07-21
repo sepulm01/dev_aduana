@@ -63,10 +63,12 @@
                 {% endif %}
             </td>
             <td>
-                {% if det.class_id == 0 %}<span class="badge bg-success">con_sello</span>{% endif %}
-                {% if det.class_id == 1 %}<span class="badge bg-info">cont data</span>{% endif %}
-                {% if det.class_id == 2 %}<span class="badge bg-danger">sin_sello</span>{% endif %}
-                {% if det.class_id == 3 %}<span class="badge bg-warning">container cod</span>{% endif %}
+                {% if det.class_id == 0 %}<span class="badge bg-success">{{ det.get_class_id_display }}</span>
+                {% elif det.class_id == 1 %}<span class="badge bg-danger">{{ det.get_class_id_display }}</span>
+                {% elif det.class_id == 2 %}<span class="badge bg-info">{{ det.get_class_id_display }}</span>
+                {% elif det.class_id == 3 %}<span class="badge bg-warning">{{ det.get_class_id_display }}</span>
+                {% elif det.class_id == 4 %}<span class="badge bg-secondary">{{ det.get_class_id_display }}</span>
+                {% endif %}
             </td>
             <td>{{ det.confidence|floatformat:3 }}</td>
             <td>{{ det.source_id }}</td>
