@@ -296,6 +296,7 @@ int main(int argc, char* argv[]) {
 
     g_object_set(G_OBJECT(nvtracker),
                  "tracker-width", 960, "tracker-height", 544,
+                 "ll-lib-file", "/opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so",
                  "ll-config-file", "/opt/nvidia/deepstream/deepstream-8.0/samples/configs/deepstream-app/config_tracker_IOU.yml",
                  NULL);
 
