@@ -83,10 +83,10 @@ static GstPadProbeReturn roi_logger_probe(GstPad* pad, GstPadProbeInfo* info,
                 if (um->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
                     NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                     if (!ai) continue;
-                    for (auto& kv : ai->roiStatus) {
-                        if (kv.first.find("IN") != std::string::npos)
+                    for (const auto& roi_name : ai->roiStatus) {
+                        if (roi_name.find("IN") != std::string::npos)
                             roi_in[sid]++;
-                        else if (kv.first.find("OUT") != std::string::npos)
+                        else if (roi_name.find("OUT") != std::string::npos)
                             roi_out[sid]++;
                     }
                 }
