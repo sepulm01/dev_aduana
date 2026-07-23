@@ -337,6 +337,36 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                     }
                 }
             }
+
+            for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+                NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
+                if (om->class_id != 4) continue;
+
+                float cx = om->detector_bbox_info.org_bbox_coords.left +
+                           om->detector_bbox_info.org_bbox_coords.width / 2.0f;
+                float norm_x = cx / (float)MUXER_OUTPUT_WIDTH;
+
+                const char* zone;
+                if (sid == 0) {
+                    zone = (norm_x < 0.5) ? "IN" : "OUT";
+                } else {
+                    zone = (norm_x < 0.5) ? "OUT" : "IN";
+                }
+
+                om->text_params.display_text = g_strdup(zone);
+                om->text_params.x_offset = -10;
+                om->text_params.y_offset = -10;
+                om->text_params.font_params.font_size = 16;
+                om->text_params.font_params.font_color.red   = (zone[0] == 'I') ? 0.0f : 1.0f;
+                om->text_params.font_params.font_color.green = (zone[0] == 'I') ? 1.0f : 0.0f;
+                om->text_params.font_params.font_color.blue  = 0.0f;
+                om->text_params.font_params.font_color.alpha = 1.0f;
+                om->text_params.set_bg_clr = 1;
+                om->text_params.text_bg_clr.red   = (zone[0] == 'I') ? 0.0f : 0.5f;
+                om->text_params.text_bg_clr.green = (zone[0] == 'I') ? 0.4f : 0.0f;
+                om->text_params.text_bg_clr.blue  = 0.0f;
+                om->text_params.text_bg_clr.alpha = 0.7f;
+            }
             if (has_obj_in_roi || has_obj_in_lc || has_obj_in_oc) {
                 GstMapInfo inmap = GST_MAP_INFO_INIT;
                 if (gst_buffer_map(buf, &inmap, GST_MAP_READ)) {
@@ -603,6 +633,7 @@ int main(int argc, char* argv[]) {
                *record_queue = NULL, *record_conv = NULL,
                *record_caps = NULL, *record_scale_caps = NULL,
                *record_enc = NULL, *record_parse = NULL,
+               *record_mux = NULL,
                *record_sink = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
@@ -619,7 +650,7 @@ int main(int argc, char* argv[]) {
     int show_display = enable_display_env ? atoi(enable_display_env) : 0;
 
     int do_record = 0;
-    gchar record_path[512] = "/opt/computer_vision/record/output.h264";
+    gchar record_path[512] = "/opt/computer_vision/record/output.mp4";
     int record_bitrate = 2000000;
     int record_width = 1280;
     int record_height = 720;
@@ -866,10 +897,11 @@ int main(int argc, char* argv[]) {
             record_scale_caps = gst_element_factory_make("capsfilter", "record-scale-caps");
             record_enc = gst_element_factory_make("nvv4l2h264enc", "record-enc");
             record_parse = gst_element_factory_make("h264parse", "record-parse");
-            record_sink = gst_element_factory_make("filesink", "record-sink");
+            record_mux   = gst_element_factory_make("qtmux",    "record-mux");
+            record_sink  = gst_element_factory_make("filesink", "record-sink");
 
             if (!record_queue || !record_conv || !record_caps || !record_scale_caps ||
-                !record_enc || !record_parse || !record_sink) {
+                !record_enc || !record_parse || !record_mux || !record_sink) {
                 g_printerr("Failed to create recording elements\n");
                 return -1;
             }
@@ -888,12 +920,12 @@ int main(int argc, char* argv[]) {
                          NULL);
 
             gst_bin_add_many(GST_BIN(pipeline), record_queue, record_conv,
-                             record_caps, record_scale_caps,
-                             record_enc, record_parse, record_sink, NULL);
+                              record_caps, record_scale_caps,
+                              record_enc, record_parse, record_mux, record_sink, NULL);
 
             if (!gst_element_link_many(nvosd, record_queue, record_conv,
                                         record_caps, record_scale_caps,
-                                        record_enc, record_parse, record_sink, NULL)) {
+                                        record_enc, record_parse, record_mux, record_sink, NULL)) {
                 g_printerr("recording branch link failed\n");
                 do_record = 0;
             } else {
