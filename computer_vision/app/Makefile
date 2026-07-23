@@ -15,7 +15,7 @@ SRCS:= pipeline_test3.cpp snapshot_sender.cpp
 
 OBJS:= $(SRCS:.cpp=.o)
 
-PKGS:= gstreamer-1.0
+PKGS:= gstreamer-1.0 cairo
 
 NVDS_SOURCES?=/opt/nvidia/deepstream/deepstream/sources
 

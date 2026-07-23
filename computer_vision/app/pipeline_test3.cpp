@@ -27,6 +27,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <cairo.h>
 
 #define CROP_RECEIVER_HOST "crop-receiver"
 #define CROP_RECEIVER_PORT 12347
@@ -281,6 +282,48 @@ static void publish_detection_json(int dev_id, int source_id,
         "PUBLISH %s %b", channel, msg.c_str(), msg.size());
     if (r) freeReplyObject(r);
     g_mutex_unlock(&redis_mutex);
+}
+
+static void zone_overlay_draw(GstElement* overlay, cairo_t* cr, guint width, guint height, gpointer user_data) {
+    int tile_w = width / 2;
+
+    for (int t = 0; t < 2; t++) {
+        int x0 = t * tile_w;
+        int cx = x0 + tile_w / 2;
+
+        float in_g, in_r, out_g, out_r;
+        if (t == 0) {
+            in_g = 0.15f; in_r = 0.0f;   // cam1: left=IN(green), right=OUT(red)
+            out_g = 0.0f; out_r = 0.15f;
+        } else {
+            in_g = 0.0f; in_r = 0.15f;   // cam2: left=OUT(red), right=IN(green)
+            out_g = 0.15f; out_r = 0.0f;
+        }
+
+        cairo_set_source_rgba(cr, in_r, in_g, 0.0, 0.25);
+        cairo_rectangle(cr, x0, 0, tile_w / 2, height);
+        cairo_fill(cr);
+
+        cairo_set_source_rgba(cr, out_r, out_g, 0.0, 0.25);
+        cairo_rectangle(cr, cx, 0, tile_w / 2, height);
+        cairo_fill(cr);
+
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.8);
+        cairo_set_line_width(cr, 2.0);
+        cairo_move_to(cr, cx, 0);
+        cairo_line_to(cr, cx, height);
+        cairo_stroke(cr);
+
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 24.0);
+
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
+        cairo_move_to(cr, x0 + tile_w * 0.2, 35);
+        cairo_show_text(cr, t == 0 ? "IN" : "OUT");
+
+        cairo_move_to(cr, cx + tile_w * 0.2, 35);
+        cairo_show_text(cr, t == 0 ? "OUT" : "IN");
+    }
 }
 
 static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
@@ -635,6 +678,7 @@ int main(int argc, char* argv[]) {
                *record_enc = NULL, *record_parse = NULL,
                *record_mux = NULL,
                *record_sink = NULL;
+    GstElement *zone_overlay = NULL;
     GstBus* bus = NULL;
     guint bus_watch_id;
     guint i, num_sources = 0;
@@ -850,15 +894,26 @@ int main(int argc, char* argv[]) {
         if (do_record) {
             record_tiler = gst_element_factory_make("nvmultistreamtiler", "record-tiler");
             record_tiler_conv = gst_element_factory_make("nvvideoconvert", "record-tiler-conv");
-            if (!record_tiler || !record_tiler_conv) {
-                g_printerr("Failed to create tiler elements\n");
+            zone_overlay = gst_element_factory_make("cairooverlay", "zone-overlay");
+            if (!record_tiler || !record_tiler_conv || !zone_overlay) {
+                g_printerr("Failed to create tiler/zone elements\n");
                 return -1;
             }
             g_object_set(G_OBJECT(record_tiler), "rows", 1, "columns", 2, NULL);
             RETURN_ON_PARSER_ERROR(nvds_parse_tiler(record_tiler, argv[1], "tiler"));
+            g_signal_connect(zone_overlay, "draw", G_CALLBACK(zone_overlay_draw), NULL);
+
+            GstElement* zone_preconv = gst_element_factory_make("nvvideoconvert", "zone-preconv");
+            GstElement* zone_postconv = gst_element_factory_make("nvvideoconvert", "zone-postconv");
+            GstElement* zone_queue = gst_element_factory_make("queue", "zone-queue");
+            if (!zone_preconv || !zone_postconv || !zone_queue) {
+                g_printerr("Failed to create zone conversion elements\n");
+                return -1;
+            }
 
             gst_bin_add_many(GST_BIN(pipeline), queue1, pgie, queue2, nvtracker,
-                             nvds_analytics, record_tiler, record_tiler_conv, nvosd, NULL);
+                              nvds_analytics, record_tiler, record_tiler_conv,
+                              zone_preconv, zone_queue, zone_overlay, zone_postconv, nvosd, NULL);
 
             if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
                                         NULL)) {
@@ -866,7 +921,7 @@ int main(int argc, char* argv[]) {
                 return -1;
             }
             if (!gst_element_link_many(nvtracker, nvds_analytics, record_tiler, record_tiler_conv,
-                                        nvosd, NULL)) {
+                                        zone_preconv, zone_queue, zone_overlay, zone_postconv, nvosd, NULL)) {
                 g_printerr("tiler link failed\n");
                 return -1;
             }
