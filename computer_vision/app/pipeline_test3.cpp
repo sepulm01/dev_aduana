@@ -897,7 +897,7 @@ int main(int argc, char* argv[]) {
             record_scale_caps = gst_element_factory_make("capsfilter", "record-scale-caps");
             record_enc = gst_element_factory_make("nvv4l2h264enc", "record-enc");
             record_parse = gst_element_factory_make("h264parse", "record-parse");
-            record_mux   = gst_element_factory_make("qtmux",    "record-mux");
+            record_mux   = gst_element_factory_make("mp4mux",    "record-mux");
             record_sink  = gst_element_factory_make("filesink", "record-sink");
 
             if (!record_queue || !record_conv || !record_caps || !record_scale_caps ||
