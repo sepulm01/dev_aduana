@@ -2,12 +2,12 @@
  * Aduana Test — Standalone pipeline for offline video processing.
  * No external dependencies: no crop-receiver, no Redis, no MediaMTX.
  * Reads MP4 files directly via file://, displays in real-time or records to MP4.
+ * Logs ROI status (IN/OUT) per source to console every 1 second.
  */
 #include <gst/gst.h>
 #include <glib.h>
 #include <stdio.h>
 #include <string.h>
-#include <cairo.h>
 #include <cuda_runtime_api.h>
 
 #include "gstnvdsmeta.h"
@@ -53,83 +53,49 @@ static void load_confidence_thresholds() {
     g_print("\n");
 }
 
-/* --- Cairo overlay for IN/OUT zones on the tiled frame --- */
-static void zone_overlay_draw(GstElement* overlay, cairo_t* cr,
-                              guint width, guint height, gpointer user_data) {
-    int tile_w = width / 2;
-    for (int t = 0; t < 2; t++) {
-        int x0 = t * tile_w;
-        int cx = x0 + tile_w / 2;
-        float in_g, in_r, out_g, out_r;
-        if (t == 0) {
-            in_g = 0.15f; in_r = 0.0f;
-            out_g = 0.0f; out_r = 0.15f;
-        } else {
-            in_g = 0.0f; in_r = 0.15f;
-            out_g = 0.15f; out_r = 0.0f;
-        }
-        cairo_set_source_rgba(cr, in_r, in_g, 0.0, 0.25);
-        cairo_rectangle(cr, x0, 0, tile_w / 2, height);
-        cairo_fill(cr);
-        cairo_set_source_rgba(cr, out_r, out_g, 0.0, 0.25);
-        cairo_rectangle(cr, cx, 0, tile_w / 2, height);
-        cairo_fill(cr);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.9);
-        cairo_set_line_width(cr, 3.0);
-        cairo_move_to(cr, cx, 0);
-        cairo_line_to(cr, cx, height);
-        cairo_stroke(cr);
-        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-        cairo_set_font_size(cr, 22.0);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
-        cairo_move_to(cr, x0 + tile_w * 0.20, 34);
-        cairo_show_text(cr, t == 0 ? "IN" : "OUT");
-        cairo_move_to(cr, cx + tile_w * 0.20, 34);
-        cairo_show_text(cr, t == 0 ? "OUT" : "IN");
-    }
-}
+/* --- Pad probe: log ROI counts per source every 1s --- */
+static GstPadProbeReturn roi_logger_probe(GstPad* pad, GstPadProbeInfo* info,
+                                          gpointer user_data) {
+    static guint64 last_log = 0;
+    guint64 now = g_get_monotonic_time();
 
-/* --- Pad probe for per-object IN/OUT overlay on class 4 (truck) --- */
-static GstPadProbeReturn osd_overlay_probe(GstPad* pad, GstPadProbeInfo* info,
-                                           gpointer user_data) {
+    if (now - last_log < 1000000) return GST_PAD_PROBE_OK;  // 1 second throttle
+    last_log = now;
+
     GstBuffer* buf = GST_BUFFER(info->data);
     NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
     if (!batch_meta) return GST_PAD_PROBE_OK;
 
+    int roi_in[2]  = {0, 0};
+    int roi_out[2] = {0, 0};
+
     for (NvDsMetaList* lf = batch_meta->frame_meta_list; lf; lf = lf->next) {
         NvDsFrameMeta* fm = (NvDsFrameMeta*)lf->data;
         int sid = fm->source_id;
+        if (sid < 0 || sid >= 2) continue;
 
         for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
             NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
-            if (om->class_id != 4) continue;
 
-            float cx = om->detector_bbox_info.org_bbox_coords.left +
-                       om->detector_bbox_info.org_bbox_coords.width / 2.0f;
-            float norm_x = cx / (float)MUXER_OUTPUT_WIDTH;
-
-            const char* zone;
-            if (sid == 0) {
-                zone = (norm_x < 0.5) ? "IN" : "OUT";
-            } else {
-                zone = (norm_x < 0.5) ? "OUT" : "IN";
+            for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
+                NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
+                if (!um) continue;
+                if (um->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
+                    NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
+                    if (!ai) continue;
+                    for (auto& kv : ai->roiStatus) {
+                        if (kv.first.find("IN") != std::string::npos)
+                            roi_in[sid]++;
+                        else if (kv.first.find("OUT") != std::string::npos)
+                            roi_out[sid]++;
+                    }
+                }
             }
-
-            om->text_params.display_text = g_strdup(zone);
-            om->text_params.x_offset = -10;
-            om->text_params.y_offset = -10;
-            om->text_params.font_params.font_size = 16;
-            om->text_params.font_params.font_color.red   = (zone[0] == 'I') ? 0.0f : 1.0f;
-            om->text_params.font_params.font_color.green = (zone[0] == 'I') ? 1.0f : 0.0f;
-            om->text_params.font_params.font_color.blue  = 0.0f;
-            om->text_params.font_params.font_color.alpha = 1.0f;
-            om->text_params.set_bg_clr = 1;
-            om->text_params.text_bg_clr.red   = (zone[0] == 'I') ? 0.0f : 0.5f;
-            om->text_params.text_bg_clr.green = (zone[0] == 'I') ? 0.4f : 0.0f;
-            om->text_params.text_bg_clr.blue  = 0.0f;
-            om->text_params.text_bg_clr.alpha = 0.7f;
         }
     }
+
+    g_print("[ROI] src=0: %d IN, %d OUT | src=1: %d IN, %d OUT\n",
+            roi_in[0], roi_out[0], roi_in[1], roi_out[1]);
     return GST_PAD_PROBE_OK;
 }
 
@@ -138,10 +104,8 @@ static void source_setup_callback(GstElement* obj, GstElement* source, gpointer 
     if (g_strrstr(GST_ELEMENT_NAME(source), "rtspsrc") ||
         g_strrstr(G_OBJECT_TYPE_NAME(source), "RTSPSrc")) {
         g_object_set(G_OBJECT(source),
-            "latency", 0,
-            "drop-on-latency", TRUE,
-            "protocols", 4, /* TCP */
-            NULL);
+            "latency", 0, "drop-on-latency", TRUE,
+            "protocols", 4, NULL);
         g_print("[Source setup] rtspsrc latency=0 drop-on-latency=1 protocols=TCP\n");
     }
 }
@@ -166,8 +130,7 @@ static GstElement* create_source_bin(guint index, gchar* uri) {
         G_CALLBACK(+[](GstElement* e, GstPad* pad, gpointer data) {
             GstElement* conv = GST_ELEMENT(data);
             GstPad* sinkpad = gst_element_get_static_pad(conv, "sink");
-            if (!gst_pad_is_linked(sinkpad))
-                gst_pad_link(pad, sinkpad);
+            if (!gst_pad_is_linked(sinkpad)) gst_pad_link(pad, sinkpad);
             gst_object_unref(sinkpad);
         }), nvconv);
 
@@ -176,11 +139,9 @@ static GstElement* create_source_bin(guint index, gchar* uri) {
         return NULL;
     }
 
-    /* Add ghost pad */
     GstPad* srcpad = gst_element_get_static_pad(conv_queue, "src");
     gst_element_add_pad(bin, gst_ghost_pad_new("src", srcpad));
     gst_object_unref(srcpad);
-
     return bin;
 }
 
@@ -195,7 +156,6 @@ int main(int argc, char* argv[]) {
 
     load_confidence_thresholds();
 
-    /* --- read recording config --- */
     int do_record = 0;
     gchar record_path[512] = "/opt/computer_vision/record/output.mp4";
     int record_bitrate = 2000000;
@@ -223,21 +183,16 @@ int main(int argc, char* argv[]) {
     gst_init(&argc, &argv);
     GMainLoop* loop = g_main_loop_new(NULL, FALSE);
 
-    /* --- elements --- */
     GstElement *pipeline = NULL, *streammux = NULL, *pgie = NULL,
                *nvtracker = NULL, *nvds_analytics = NULL,
                *tiler = NULL, *tiler_conv = NULL,
-               *zone_preconv = NULL, *zone_postconv = NULL,
-               *zone_queue = NULL, *zone_overlay = NULL,
-               *nvosd = NULL,
-               *queue1 = NULL, *queue2 = NULL;
+               *nvosd = NULL, *queue1 = NULL, *queue2 = NULL;
     GstElement *record_conv = NULL, *record_caps = NULL, *record_scale_caps = NULL,
                *record_enc = NULL, *record_parse = NULL, *record_mux = NULL,
                *record_sink = NULL;
 
     pipeline = gst_pipeline_new("aduana-test-pipeline");
 
-    /* --- sources: hardcoded file URIs for testing --- */
     const gchar* source_uris[2] = {
         "file:///opt/computer_vision/test/cam1_60s.mp4",
         "file:///opt/computer_vision/test/cam2_60s.mp4"
@@ -262,7 +217,6 @@ int main(int argc, char* argv[]) {
         gchar pad_name[16] = {};
         GstElement* source_bin = create_source_bin(i, (gchar*)source_uris[i]);
         if (!source_bin) return 1;
-
         gst_bin_add(GST_BIN(pipeline), source_bin);
         g_snprintf(pad_name, 15, "sink_%u", i);
         sinkpad = gst_element_request_pad_simple(streammux, pad_name);
@@ -277,7 +231,6 @@ int main(int argc, char* argv[]) {
         gst_object_unref(sinkpad);
     }
 
-    /* --- core pipeline elements --- */
     pgie = gst_element_factory_make("nvinfer", "primary-inference");
     nvtracker = gst_element_factory_make("nvtracker", "nvtracker");
     nvds_analytics = gst_element_factory_make("nvdsanalytics", "analytics");
@@ -290,54 +243,44 @@ int main(int argc, char* argv[]) {
     }
 
     g_object_set(G_OBJECT(pgie),
-                 "config-file-path", "../models/yolov9_aduana/pgie_config.yml",
-                 NULL);
+                 "config-file-path", "../models/yolov9_aduana/pgie_config.yml", NULL);
     RETURN_ON_PARSER_ERROR(nvds_parse_gie(pgie, argv[1], "primary-gie"));
 
     g_object_set(G_OBJECT(nvtracker),
                  "tracker-width", 960, "tracker-height", 544,
-                 "ll-lib-file", "/opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so",
-                 "ll-config-file", "/opt/nvidia/deepstream/deepstream-8.0/samples/configs/deepstream-app/config_tracker_IOU.yml",
+                 "ll-lib-file",
+                 "/opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so",
+                 "ll-config-file",
+                 "/opt/nvidia/deepstream/deepstream-8.0/samples/configs/deepstream-app/config_tracker_IOU.yml",
                  NULL);
 
     RETURN_ON_PARSER_ERROR(nvds_parse_nvdsanalytics(nvds_analytics, argv[1], "analytics"));
 
-    /* --- tiler + zone overlay + tee + OSD --- */
     tiler = gst_element_factory_make("nvmultistreamtiler", "tiler");
     tiler_conv = gst_element_factory_make("nvvideoconvert", "tiler-conv");
     nvosd = gst_element_factory_make("nvdsosd", "nv-onscreendisplay");
-    if (!tiler || !tiler_conv || !nvosd) { g_printerr("tiler/nvosd failed\n"); return 1; }
+    if (!tiler || !tiler_conv || !nvosd) {
+        g_printerr("tiler/nvosd failed\n"); return 1;
+    }
     g_object_set(G_OBJECT(tiler), "rows", 1, "columns", 2, NULL);
     RETURN_ON_PARSER_ERROR(nvds_parse_tiler(tiler, argv[1], "tiler"));
     RETURN_ON_PARSER_ERROR(nvds_parse_osd(nvosd, argv[1], "osd"));
 
-    zone_preconv  = gst_element_factory_make("nvvideoconvert", "zone-preconv");
-    zone_postconv = gst_element_factory_make("nvvideoconvert", "zone-postconv");
-    zone_queue    = gst_element_factory_make("queue", "zone-queue");
-    zone_overlay  = gst_element_factory_make("cairooverlay", "zone-overlay");
-    if (!zone_preconv || !zone_postconv || !zone_queue || !zone_overlay) {
-        g_printerr("zone overlay elements failed\n"); return 1;
-    }
-    g_signal_connect(zone_overlay, "draw", G_CALLBACK(zone_overlay_draw), NULL);
-
     GstElement* out_tee = gst_element_factory_make("tee", "out-tee");
     if (!out_tee) { g_printerr("tee failed\n"); return 1; }
 
-    /* --- link pipeline up to out_tee --- */
     gst_bin_add_many(GST_BIN(pipeline), streammux, queue1, pgie, queue2,
                      nvtracker, nvds_analytics, tiler, tiler_conv,
-                     zone_preconv, zone_queue, zone_overlay, zone_postconv,
                      nvosd, out_tee, NULL);
 
     if (!gst_element_link_many(streammux, queue1, pgie, queue2, nvtracker,
                                 nvds_analytics, tiler, tiler_conv,
-                                zone_preconv, zone_queue, zone_overlay,
-                                zone_postconv, nvosd, out_tee, NULL)) {
+                                nvosd, out_tee, NULL)) {
         g_printerr("Pipeline link failed\n");
         return 1;
     }
 
-    /* --- display branch: tee → queue → sink --- */
+    /* display branch */
     {
         GstElement* display_queue = gst_element_factory_make("queue", "display-queue");
         if (!display_queue) { g_printerr("display queue failed\n"); return 1; }
@@ -346,7 +289,7 @@ int main(int argc, char* argv[]) {
         GstPad* tee_src = gst_element_request_pad_simple(out_tee, "src_%u");
         GstPad* q_sink = gst_element_get_static_pad(display_queue, "sink");
         if (!tee_src || !q_sink || gst_pad_link(tee_src, q_sink) != GST_PAD_LINK_OK) {
-            g_printerr("tee → display link failed\n"); return 1;
+            g_printerr("tee -> display link failed\n"); return 1;
         }
         gst_object_unref(tee_src);
         gst_object_unref(q_sink);
@@ -366,7 +309,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    /* --- recording branch: tee → record --- */
+    /* recording branch */
     if (do_record) {
         gchar scale_caps_str[128];
         g_snprintf(scale_caps_str, sizeof(scale_caps_str),
@@ -410,12 +353,11 @@ int main(int argc, char* argv[]) {
                 GstPad* rec_pad = gst_element_get_static_pad(record_conv, "sink");
                 if (!tee_pad || !rec_pad ||
                     gst_pad_link(tee_pad, rec_pad) != GST_PAD_LINK_OK) {
-                    g_printerr("tee → record link failed\n");
+                    g_printerr("tee -> record link failed\n");
                     do_record = 0;
                 }
                 if (tee_pad) gst_object_unref(tee_pad);
                 if (rec_pad) gst_object_unref(rec_pad);
-
                 if (do_record)
                     g_print("[Record] %s %dx%d bitrate=%d\n",
                             record_path, record_width, record_height, record_bitrate);
@@ -425,13 +367,11 @@ int main(int argc, char* argv[]) {
         g_print("[Record] disabled\n");
     }
 
-    /* --- pad probe for IN/OUT overlay --- */
-    GstPad* osd_pad = gst_element_get_static_pad(nvosd, "sink");
-    gst_pad_add_probe(osd_pad, GST_PAD_PROBE_TYPE_BUFFER,
-                      osd_overlay_probe, NULL, NULL);
-    gst_object_unref(osd_pad);
+    GstPad* probe_pad = gst_element_get_static_pad(nvosd, "sink");
+    gst_pad_add_probe(probe_pad, GST_PAD_PROBE_TYPE_BUFFER,
+                      roi_logger_probe, NULL, NULL);
+    gst_object_unref(probe_pad);
 
-    /* --- bus watch --- */
     GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
     gst_bus_add_watch(bus, [](GstBus* b, GstMessage* msg, gpointer d) -> gboolean {
         GMainLoop* l = (GMainLoop*)d;

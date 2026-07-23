@@ -18,7 +18,7 @@ SRCS2:= aduana_test.cpp
 OBJS:= $(SRCS:.cpp=.o)
 OBJS2:= $(SRCS2:.cpp=.o)
 
-PKGS:= gstreamer-1.0 cairo
+PKGS:= gstreamer-1.0
 
 NVDS_SOURCES?=/opt/nvidia/deepstream/deepstream/sources
 
