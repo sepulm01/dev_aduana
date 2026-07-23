@@ -914,6 +914,9 @@ int main(int argc, char* argv[]) {
                          "bitrate", record_bitrate,
                          "iframeinterval", 30,
                          NULL);
+            g_object_set(G_OBJECT(record_mux),
+                         "fragment-duration", 1000,
+                         NULL);
             g_object_set(G_OBJECT(record_sink),
                          "location", record_path,
                          "sync", FALSE,
