@@ -367,7 +367,7 @@ int main(int argc, char* argv[]) {
         g_print("[Record] disabled\n");
     }
 
-    GstPad* probe_pad = gst_element_get_static_pad(nvosd, "sink");
+    GstPad* probe_pad = gst_element_get_static_pad(nvds_analytics, "src");
     gst_pad_add_probe(probe_pad, GST_PAD_PROBE_TYPE_BUFFER,
                       roi_logger_probe, NULL, NULL);
     gst_object_unref(probe_pad);
