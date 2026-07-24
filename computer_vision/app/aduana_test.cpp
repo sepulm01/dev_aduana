@@ -93,8 +93,9 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                     NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                     if (!ai || ai->lcStatus.empty()) continue;
                     for (const auto& lc : ai->lcStatus) {
-                        g_print("[TRUCK] id=%lu src=%d crossed (line=%s)\n",
-                                om->object_id, sid, lc.c_str());
+                        g_print("[TRUCK] id=%lu src=%d crossed IN->OUT\n",
+                                om->object_id, sid);
+                        break;
                     }
                 }
             }
