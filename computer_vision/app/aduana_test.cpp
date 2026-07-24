@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <cuda_runtime_api.h>
+#include <unordered_map>
 
 #include "gstnvdsmeta.h"
 #include "gstnvdsinfer.h"
@@ -31,6 +32,13 @@
     }
 
 static float g_class_confidence[MAX_CLASSES];
+
+struct TruckState {
+    bool seen_in = false;
+    bool seen_out = false;
+    bool reported = false;
+};
+static std::unordered_map<guint64, TruckState> g_truck_states;
 
 static void load_confidence_thresholds() {
     for (int i = 0; i < MAX_CLASSES; i++)
@@ -96,6 +104,43 @@ static GstPadProbeReturn roi_logger_probe(GstPad* pad, GstPadProbeInfo* info,
 
     g_print("[ROI] src=0: %d IN, %d OUT | src=1: %d IN, %d OUT\n",
             roi_in[0], roi_out[0], roi_in[1], roi_out[1]);
+
+    for (NvDsMetaList* lf = batch_meta->frame_meta_list; lf; lf = lf->next) {
+        NvDsFrameMeta* fm = (NvDsFrameMeta*)lf->data;
+        int sid = fm->source_id;
+        if (sid < 0 || sid >= 2) continue;
+
+        for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+            NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
+            if (om->class_id != 4) continue;
+
+            bool in_roi_in = false, in_roi_out = false;
+            for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
+                NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
+                if (!um) continue;
+                if (um->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
+                    NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
+                    if (!ai) continue;
+                    for (const auto& roi_name : ai->roiStatus) {
+                        if (roi_name.find("IN") != std::string::npos)  in_roi_in = true;
+                        if (roi_name.find("OUT") != std::string::npos) in_roi_out = true;
+                    }
+                }
+            }
+
+            guint64 key = ((guint64)sid << 32) | om->object_id;
+            auto& st = g_truck_states[key];
+
+            if (in_roi_in)  st.seen_in = true;
+            if (in_roi_out) st.seen_out = true;
+
+            if (st.seen_in && st.seen_out && !st.reported) {
+                g_print("[TRUCK] id=%lu src=%d passed IN->OUT\n", om->object_id, sid);
+                st.reported = true;
+            }
+        }
+    }
+
     return GST_PAD_PROBE_OK;
 }
 
@@ -194,8 +239,8 @@ int main(int argc, char* argv[]) {
     pipeline = gst_pipeline_new("aduana-test-pipeline");
 
     const gchar* source_uris[2] = {
-        "file:///opt/computer_vision/test/cam1_60s.mp4",
-        "file:///opt/computer_vision/test/cam2_60s.mp4"
+        "file:///opt/computer_vision/test/cam1_full.mp4",
+        "file:///opt/computer_vision/test/cam2_full.mp4"
     };
     guint num_sources = 2;
     g_print("Num sources: %d\n", num_sources);
