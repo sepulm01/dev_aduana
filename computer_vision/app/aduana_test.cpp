@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <cuda_runtime_api.h>
-#include <unordered_map>
 
 #include "gstnvdsmeta.h"
 #include "gstnvdsinfer.h"
@@ -33,13 +32,6 @@
 
 static float g_class_confidence[MAX_CLASSES];
 
-struct TruckState {
-    bool seen_in = false;
-    bool seen_out = false;
-    bool reported = false;
-};
-static std::unordered_map<guint64, TruckState> g_truck_states;
-
 static void load_confidence_thresholds() {
     for (int i = 0; i < MAX_CLASSES; i++)
         g_class_confidence[i] = DEFAULT_MIN_CONFIDENCE;
@@ -61,49 +53,29 @@ static void load_confidence_thresholds() {
     g_print("\n");
 }
 
-/* --- Pad probe: log ROI counts per source every 1s --- */
-static GstPadProbeReturn roi_logger_probe(GstPad* pad, GstPadProbeInfo* info,
-                                          gpointer user_data) {
+/* --- Pad probe: log source stats + truck line-crossings --- */
+static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
+                                         gpointer user_data) {
     static guint64 last_log = 0;
     guint64 now = g_get_monotonic_time();
-
-    if (now - last_log < 1000000) return GST_PAD_PROBE_OK;  // 1 second throttle
-    last_log = now;
 
     GstBuffer* buf = GST_BUFFER(info->data);
     NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
     if (!batch_meta) return GST_PAD_PROBE_OK;
 
-    int roi_in[2]  = {0, 0};
-    int roi_out[2] = {0, 0};
-
-    for (NvDsMetaList* lf = batch_meta->frame_meta_list; lf; lf = lf->next) {
-        NvDsFrameMeta* fm = (NvDsFrameMeta*)lf->data;
-        int sid = fm->source_id;
-        if (sid < 0 || sid >= 2) continue;
-
-        for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
-            NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
-
-            for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
-                NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
-                if (!um) continue;
-                if (um->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
-                    NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
-                    if (!ai) continue;
-                    for (const auto& roi_name : ai->roiStatus) {
-                        if (roi_name.find("IN") != std::string::npos)
-                            roi_in[sid]++;
-                        else if (roi_name.find("OUT") != std::string::npos)
-                            roi_out[sid]++;
-                    }
-                }
+    if (now - last_log >= 1000000) {
+        last_log = now;
+        int counts[2] = {0, 0};
+        for (NvDsMetaList* lf = batch_meta->frame_meta_list; lf; lf = lf->next) {
+            NvDsFrameMeta* fm = (NvDsFrameMeta*)lf->data;
+            int sid = fm->source_id;
+            if (sid < 0 || sid >= 2) continue;
+            for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+                counts[sid]++;
             }
         }
+        g_print("[SRC] src=0: %d objs | src=1: %d objs\n", counts[0], counts[1]);
     }
-
-    g_print("[ROI] src=0: %d IN, %d OUT | src=1: %d IN, %d OUT\n",
-            roi_in[0], roi_out[0], roi_in[1], roi_out[1]);
 
     for (NvDsMetaList* lf = batch_meta->frame_meta_list; lf; lf = lf->next) {
         NvDsFrameMeta* fm = (NvDsFrameMeta*)lf->data;
@@ -114,29 +86,19 @@ static GstPadProbeReturn roi_logger_probe(GstPad* pad, GstPadProbeInfo* info,
             NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
             if (om->class_id != 4) continue;
 
-            bool in_roi_in = false, in_roi_out = false;
             for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
                 NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
                 if (!um) continue;
                 if (um->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
                     NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
-                    if (!ai) continue;
-                    for (const auto& roi_name : ai->roiStatus) {
-                        if (roi_name.find("IN") != std::string::npos)  in_roi_in = true;
-                        if (roi_name.find("OUT") != std::string::npos) in_roi_out = true;
+                    if (!ai || ai->lcStatus.empty()) continue;
+                    const auto& lc = ai->lcStatus[0];
+                    if (lc.find("crossed") != std::string::npos ||
+                        lc.find("CROSSED") != std::string::npos) {
+                        g_print("[TRUCK] id=%lu src=%d crossed (IN->OUT)\n",
+                                om->object_id, sid);
                     }
                 }
-            }
-
-            guint64 key = ((guint64)sid << 32) | om->object_id;
-            auto& st = g_truck_states[key];
-
-            if (in_roi_in)  st.seen_in = true;
-            if (in_roi_out) st.seen_out = true;
-
-            if (st.seen_in && st.seen_out && !st.reported) {
-                g_print("[TRUCK] id=%lu src=%d passed IN->OUT\n", om->object_id, sid);
-                st.reported = true;
             }
         }
     }
@@ -414,7 +376,7 @@ int main(int argc, char* argv[]) {
 
     GstPad* probe_pad = gst_element_get_static_pad(nvds_analytics, "src");
     gst_pad_add_probe(probe_pad, GST_PAD_PROBE_TYPE_BUFFER,
-                      roi_logger_probe, NULL, NULL);
+                      analytics_probe, NULL, NULL);
     gst_object_unref(probe_pad);
 
     GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
