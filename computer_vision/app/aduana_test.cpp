@@ -334,7 +334,7 @@ int main(int argc, char* argv[]) {
                  "ll-lib-file",
                  "/opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so",
                  "ll-config-file",
-                 "/opt/nvidia/deepstream/deepstream-8.0/samples/configs/deepstream-app/config_tracker_NvDCF_perf.yml",
+                 "/opt/computer_vision/config/config_tracker_IOU.yml",
                  NULL);
 
     RETURN_ON_PARSER_ERROR(nvds_parse_nvdsanalytics(nvds_analytics, argv[1], "analytics"));
