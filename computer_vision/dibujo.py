@@ -146,6 +146,8 @@ def main():
     import numpy as np
 
     cv2.namedWindow("Draw — [ENTER] save  [ESC] quit  [r] reset")
+    cv2.imshow("Draw — [ENTER] save  [ESC] quit  [r] reset", frame)
+    cv2.waitKey(1)
     cv2.setMouseCallback("Draw — [ENTER] save  [ESC] quit  [r] reset", draw_callback, {"img": frame})
 
     print(f"Mode: {mode.upper()}")
