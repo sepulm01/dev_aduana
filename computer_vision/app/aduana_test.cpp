@@ -93,8 +93,14 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                     NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                     if (!ai || ai->lcStatus.empty()) continue;
                     for (const auto& lc : ai->lcStatus) {
-                        g_print("[TRUCK] id=%lu src=%d crossed IN->OUT\n",
-                                om->object_id, sid);
+                        if (GST_CLOCK_TIME_IS_VALID(fm->buf_pts)) {
+                            gdouble ts_sec = (gdouble)fm->buf_pts / (gdouble)GST_SECOND;
+                            g_print("[TRUCK] id=%lu src=%d crossed IN->OUT  ts=%.3fs\n",
+                                    om->object_id, sid, ts_sec);
+                        } else {
+                            g_print("[TRUCK] id=%lu src=%d crossed IN->OUT\n",
+                                    om->object_id, sid);
+                        }
                         break;
                     }
                 }
