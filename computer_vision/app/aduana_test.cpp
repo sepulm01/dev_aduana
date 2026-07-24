@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <cuda_runtime_api.h>
+#include <unordered_map>
+#include <utility>
 
 #include "gstnvdsmeta.h"
 #include "gstnvdsinfer.h"
@@ -32,6 +34,13 @@
 
 static float g_class_confidence[MAX_CLASSES];
 
+struct TruckKey { int sid; guint64 oid; };
+bool operator==(const TruckKey& a, const TruckKey& b) { return a.sid == b.sid && a.oid == b.oid; }
+struct TruckKeyHash { size_t operator()(const TruckKey& k) const { return (size_t)k.sid * 31 + (size_t)k.oid; } };
+
+struct TruckTrack { bool crossed = false; bool in_roi = false; };
+static std::unordered_map<TruckKey, TruckTrack, TruckKeyHash> g_trucks;
+
 static void load_confidence_thresholds() {
     for (int i = 0; i < MAX_CLASSES; i++)
         g_class_confidence[i] = DEFAULT_MIN_CONFIDENCE;
@@ -53,7 +62,7 @@ static void load_confidence_thresholds() {
     g_print("\n");
 }
 
-/* --- Pad probe: log source stats + truck line-crossings --- */
+/* --- Pad probe: log source stats + two-stage truck tracking --- */
 static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                                          gpointer user_data) {
     static guint64 last_log = 0;
@@ -81,29 +90,45 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
         NvDsFrameMeta* fm = (NvDsFrameMeta*)lf->data;
         int sid = fm->source_id;
         if (sid < 0 || sid >= 2) continue;
+        gdouble ts_sec = GST_CLOCK_TIME_IS_VALID(fm->buf_pts)
+            ? (gdouble)fm->buf_pts / (gdouble)GST_SECOND : -1.0;
 
         for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
             NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
             if (om->class_id != 4) continue;
 
+            bool has_lc = false, has_roi = false;
+            std::string roi_name;
+
             for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
                 NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
                 if (!um) continue;
-                if (um->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
-                    NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
-                    if (!ai || ai->lcStatus.empty()) continue;
-                    for (const auto& lc : ai->lcStatus) {
-                        if (GST_CLOCK_TIME_IS_VALID(fm->buf_pts)) {
-                            gdouble ts_sec = (gdouble)fm->buf_pts / (gdouble)GST_SECOND;
-                            g_print("[TRUCK] id=%lu src=%d crossed IN->OUT  ts=%.3fs\n",
-                                    om->object_id, sid, ts_sec);
-                        } else {
-                            g_print("[TRUCK] id=%lu src=%d crossed IN->OUT\n",
-                                    om->object_id, sid);
-                        }
-                        break;
-                    }
+                if (um->base_meta.meta_type != NVDS_USER_OBJ_META_NVDSANALYTICS) continue;
+                NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
+                if (!ai) continue;
+
+                if (!ai->lcStatus.empty()) has_lc = true;
+                for (const auto& r : ai->roiStatus) {
+                    has_roi = true;
+                    if (roi_name.empty()) roi_name = r;
                 }
+            }
+
+            if (!has_lc && !has_roi) continue;
+
+            TruckKey key = {sid, om->object_id};
+            auto& st = g_trucks[key];
+
+            if (has_lc && !st.crossed) {
+                st.crossed = true;
+                g_print("[TRUCK] id=%lu src=%d crossed IN->OUT  ts=%.3fs\n",
+                        om->object_id, sid, ts_sec);
+            }
+
+            if (has_roi && st.crossed && !st.in_roi) {
+                st.in_roi = true;
+                g_print("[TRUCK] id=%lu src=%d IN ROI{%s}  ts=%.3fs\n",
+                        om->object_id, sid, roi_name.c_str(), ts_sec);
             }
         }
     }
