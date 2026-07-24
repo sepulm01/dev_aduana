@@ -330,11 +330,11 @@ int main(int argc, char* argv[]) {
     RETURN_ON_PARSER_ERROR(nvds_parse_gie(pgie, argv[1], "primary-gie"));
 
     g_object_set(G_OBJECT(nvtracker),
-                 "tracker-width", 960, "tracker-height", 544,
+                 "tracker-width", 640, "tracker-height", 384,
                  "ll-lib-file",
                  "/opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so",
                  "ll-config-file",
-                 "/opt/nvidia/deepstream/deepstream-8.0/samples/configs/deepstream-app/config_tracker_IOU.yml",
+                 "/opt/nvidia/deepstream/deepstream-8.0/samples/configs/deepstream-app/config_tracker_NvDCF_perf.yml",
                  NULL);
 
     RETURN_ON_PARSER_ERROR(nvds_parse_nvdsanalytics(nvds_analytics, argv[1], "analytics"));
