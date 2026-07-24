@@ -11,6 +11,8 @@
 #include <cuda_runtime_api.h>
 #include <unordered_map>
 #include <utility>
+#include <cstdio>
+#include <vector>
 
 #include "gstnvdsmeta.h"
 #include "gstnvdsinfer.h"
@@ -40,6 +42,20 @@ struct TruckKeyHash { size_t operator()(const TruckKey& k) const { return (size_
 
 struct TruckTrack { bool crossed = false; bool in_roi = false; };
 static std::unordered_map<TruckKey, TruckTrack, TruckKeyHash> g_trucks;
+static FILE* g_csv = nullptr;
+
+/* AABB containment: is inner's center inside outer's bounding box? */
+static bool center_inside(NvDsObjectMeta* outer, NvDsObjectMeta* inner) {
+    float icx = inner->detector_bbox_info.org_bbox_coords.left
+              + inner->detector_bbox_info.org_bbox_coords.width  * 0.5f;
+    float icy = inner->detector_bbox_info.org_bbox_coords.top
+              + inner->detector_bbox_info.org_bbox_coords.height * 0.5f;
+    float ol = outer->detector_bbox_info.org_bbox_coords.left;
+    float ot = outer->detector_bbox_info.org_bbox_coords.top;
+    float or_ = ol + outer->detector_bbox_info.org_bbox_coords.width;
+    float ob  = ot + outer->detector_bbox_info.org_bbox_coords.height;
+    return icx >= ol && icx <= or_ && icy >= ot && icy <= ob;
+}
 
 static void load_confidence_thresholds() {
     for (int i = 0; i < MAX_CLASSES; i++)
@@ -93,20 +109,20 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
         gdouble ts_sec = GST_CLOCK_TIME_IS_VALID(fm->buf_pts)
             ? (gdouble)fm->buf_pts / (gdouble)GST_SECOND : -1.0;
 
+        /* Pass 1: collect trucks and check line-crossing + ROI */
+        std::vector<NvDsObjectMeta*> trucks;
         for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
             NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
             if (om->class_id != 4) continue;
 
             bool has_lc = false, has_roi = false;
             std::string roi_name;
-
             for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
                 NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
                 if (!um) continue;
                 if (um->base_meta.meta_type != NVDS_USER_OBJ_META_NVDSANALYTICS) continue;
                 NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                 if (!ai) continue;
-
                 if (!ai->lcStatus.empty()) has_lc = true;
                 for (const auto& r : ai->roiStatus) {
                     has_roi = true;
@@ -114,21 +130,51 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                 }
             }
 
-            if (!has_lc && !has_roi) continue;
+            if (has_lc || has_roi) {
+                TruckKey key = {sid, om->object_id};
+                auto& st = g_trucks[key];
 
-            TruckKey key = {sid, om->object_id};
-            auto& st = g_trucks[key];
-
-            if (has_lc && !st.crossed) {
-                st.crossed = true;
-                g_print("[TRUCK] id=%lu src=%d crossed IN->OUT  ts=%.3fs\n",
-                        om->object_id, sid, ts_sec);
+                if (has_lc && !st.crossed) {
+                    st.crossed = true;
+                    if (ts_sec >= 0)
+                        g_print("[TRUCK] id=%lu src=%d crossed IN->OUT  ts=%.3fs\n",
+                                om->object_id, sid, ts_sec);
+                    if (g_csv)
+                        fprintf(g_csv, "%.3f,CROSS,%d,%lu,,,,,\n",
+                                ts_sec, sid, om->object_id);
+                }
+                if (has_roi && st.crossed && !st.in_roi) {
+                    st.in_roi = true;
+                    g_print("[TRUCK] id=%lu src=%d IN ROI{%s}  ts=%.3fs\n",
+                            om->object_id, sid, roi_name.c_str(), ts_sec);
+                    if (g_csv)
+                        fprintf(g_csv, "%.3f,ROI_IN,%d,%lu,,,,,%s\n",
+                                ts_sec, sid, om->object_id, roi_name.c_str());
+                }
             }
+            trucks.push_back(om);
+        }
 
-            if (has_roi && st.crossed && !st.in_roi) {
-                st.in_roi = true;
-                g_print("[TRUCK] id=%lu src=%d IN ROI{%s}  ts=%.3fs\n",
-                        om->object_id, sid, roi_name.c_str(), ts_sec);
+        /* Pass 2: associate non-truck objects to trucks via AABB */
+        for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+            NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
+            int cls = om->class_id;
+            if (cls == 4) continue;
+
+            for (auto* tk : trucks) {
+                if (center_inside(tk, om)) {
+                    const char* cls_name = "?";
+                    if (cls == 0) cls_name = "con_sello";
+                    else if (cls == 1) cls_name = "sin_sello";
+                    else if (cls == 2) cls_name = "cont_data";
+                    else if (cls == 3) cls_name = "container_cod";
+
+                    if (g_csv)
+                        fprintf(g_csv, "%.3f,CARGO,%d,%lu,%s,%.2f,,\n",
+                                ts_sec, sid, tk->object_id, cls_name,
+                                om->confidence);
+                    break; // each object belongs to at most one truck
+                }
             }
         }
     }
@@ -433,10 +479,16 @@ int main(int argc, char* argv[]) {
     gst_object_unref(bus);
 
     g_print("Pipeline playing %s display\n", show_display ? "WITH" : "WITHOUT");
+
+    g_csv = fopen("/opt/computer_vision/record/trucks.csv", "w");
+    if (g_csv)
+        fprintf(g_csv, "ts,event,src,truck,cls,conf,ocr,roi\n");
+
     gst_element_set_state(pipeline, GST_STATE_PLAYING);
     g_main_loop_run(loop);
 
     g_print("Shutting down\n");
+    if (g_csv) { fclose(g_csv); g_csv = nullptr; }
     gst_element_set_state(pipeline, GST_STATE_NULL);
     gst_object_unref(pipeline);
     g_main_loop_unref(loop);
