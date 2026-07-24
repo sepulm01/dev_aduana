@@ -92,11 +92,11 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                 if (um->base_meta.meta_type == NVDS_USER_OBJ_META_NVDSANALYTICS) {
                     NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                     if (!ai || ai->lcStatus.empty()) continue;
-                    const auto& lc = ai->lcStatus[0];
-                    if (lc.find("crossed") != std::string::npos ||
-                        lc.find("CROSSED") != std::string::npos) {
-                        g_print("[TRUCK] id=%lu src=%d crossed (IN->OUT)\n",
-                                om->object_id, sid);
+                    for (const auto& lc : ai->lcStatus) {
+                        if (lc.second.find("crossed") != std::string::npos) {
+                            g_print("[TRUCK] id=%lu src=%d crossed (IN->OUT)  line=%s\n",
+                                    om->object_id, sid, lc.first.c_str());
+                        }
                     }
                 }
             }
