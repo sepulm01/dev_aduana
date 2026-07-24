@@ -145,10 +145,12 @@ def main():
 
     import numpy as np
 
-    cv2.namedWindow("Draw — [ENTER] save  [ESC] quit  [r] reset")
-    cv2.imshow("Draw — [ENTER] save  [ESC] quit  [r] reset", frame)
+    cv2.startWindowThread()
+    wn = "Draw — [ENTER] save  [ESC] quit  [r] reset"
+    cv2.namedWindow(wn)
+    cv2.imshow(wn, frame)
     cv2.waitKey(1)
-    cv2.setMouseCallback("Draw — [ENTER] save  [ESC] quit  [r] reset", draw_callback, {"img": frame})
+    cv2.setMouseCallback(wn, draw_callback, {"img": frame})
 
     print(f"Mode: {mode.upper()}")
     print("Click to add points. [ENTER] to save, [ESC] to quit, [r] to reset")
@@ -168,7 +170,7 @@ def main():
             if len(points) >= 2:
                 cv2.line(display, points[0], points[1], (0, 255, 0), 3)
                 cv2.arrowedLine(display, points[0], points[1], (0, 0, 255), 2, tipLength=0.05)
-        cv2.imshow("Draw — [ENTER] save  [ESC] quit  [r] reset", display)
+        cv2.imshow(wn, display)
 
         key = cv2.waitKey(50) & 0xFF
         if key == 13:  # Enter
