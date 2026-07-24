@@ -1,90 +1,131 @@
 #!/usr/bin/env python3
 """
-Draw ROI polygons / line-crossing on a video frame and save to nvdsanalytics config.
+Draw ROI polygons or line-crossing on a camera frame using matplotlib.
+Saves to /opt/computer_vision/config/config_nvdsanalytics.txt.
 
 Usage:
-  python3 dibujo.py stream-0 [--video PATH]   # draw ROI on stream 0
-  python3 dibujo.py stream-1 --line           # draw line-crossing on stream 1
+  python3 dibujo.py stream-0            # draw polygon ROI
+  python3 dibujo.py stream-0 --line     # draw line-crossing
 """
 
 import argparse
-import cv2
 import os
-import json
-import re
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+from matplotlib.backend_bases import MouseButton
+from matplotlib.patches import Polygon
 
 CONFIG_FILE = "/opt/computer_vision/config/config_nvdsanalytics.txt"
-DEFAULT_VIDEO_0 = "/opt/computer_vision/test/cam1_full.mp4"
-DEFAULT_VIDEO_1 = "/opt/computer_vision/test/cam2_full.mp4"
+FRAME_0 = "/opt/computer_vision/test/cam1_frame.jpg"
+FRAME_1 = "/opt/computer_vision/test/cam2_frame.jpg"
 FRAME_WIDTH = 1920
 FRAME_HEIGHT = 1080
 
 points = []
-drawing = False
-mode = "roi"  # "roi" or "line"
-line_start = None
+mode = "roi"
+ax = None
+poly_patch = None
+line_art = None
+text_ann = None
+fig = None
+stream_idx = 0
+display_width = 1200
+scale = 1.0
 
 
-def draw_callback(event, x, y, flags, param):
-    global points, drawing, line_start
+def redraw():
+    global poly_patch, line_art, text_ann
 
-    img = param["img"]
-    display = img.copy()
+    if poly_patch:
+        poly_patch.remove()
+        poly_patch = None
+    if line_art:
+        line_art.remove()
+        line_art = None
+    if text_ann:
+        text_ann.remove()
+        text_ann = None
 
-    if mode == "roi":
-        for p in points:
-            cv2.circle(display, p, 4, (0, 255, 255), -1)
-        if len(points) > 1:
-            cv2.polylines(display, [np.array(points, dtype=np.int32)], False, (0, 255, 0), 2)
-        if len(points) > 2:
-            cv2.polylines(display, [np.array(points + [points[0]], dtype=np.int32)], True, (0, 255, 0), 2)
+    if mode == "roi" and len(points) >= 2:
+        pts = points
+        if len(pts) > 2:
+            poly_patch = Polygon(pts, closed=True, fill=True, alpha=0.3,
+                                 facecolor="green", edgecolor="lime", linewidth=2)
+        else:
+            poly_patch, = ax.plot([p[0] for p in pts], [p[1] for p in pts], "yo-", lw=2, ms=6)
+        ax.add_patch(poly_patch) if isinstance(poly_patch, Polygon) else None
 
-        if event == cv2.EVENT_LBUTTONDOWN:
-            points.append((x, y))
+    if mode == "line" and len(points) >= 2:
+        xs = [points[0][0], points[1][0]]
+        ys = [points[0][1], points[1][1]]
+        line_art, = ax.plot(xs, ys, "lime", lw=3)
+        ax.annotate("", xy=(xs[1], ys[1]), xytext=(xs[0], ys[0]),
+                    arrowprops=dict(arrowstyle="->", color="red", lw=2))
 
-    elif mode == "line":
-        for p in points:
-            cv2.circle(display, p, 5, (0, 255, 255), -1)
-        if len(points) >= 2:
-            cv2.line(display, points[0], points[1], (0, 255, 0), 3)
-            cv2.arrowedLine(display, points[0], points[1], (0, 0, 255), 2, tipLength=0.05)
+    for x, y in points:
+        dot, = ax.plot(x, y, "yo", ms=5)
+        if not hasattr(redraw, "dots"):
+            redraw.dots = []
+        redraw.dots.append(dot)
 
-        if event == cv2.EVENT_LBUTTONDOWN:
-            if len(points) >= 2:
-                points = []
-            points.append((x, y))
-
-    cv2.imshow("Draw — [ENTER] save  [ESC] quit  [r] reset", display)
-
-
-def extract_frame(video_path):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        print(f"ERROR: Cannot open {video_path}")
-        return None
-
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, total // 3)  # ~33% into video
-    ret, frame = cap.read()
-    cap.release()
-
-    if not ret:
-        print(f"ERROR: Cannot read frame from {video_path}")
-        return None
-
-    h, w = frame.shape[:2]
-    if w > 1200:
-        scale = 1200 / w
-        frame = cv2.resize(frame, (1200, int(h * scale)))
-        print(f"Resized: {w}x{h} -> 1200x{int(h * scale)}")
-
-    FRAME_WIDTH = w  # original width for coordinate scaling
-    return frame, FRAME_WIDTH
+    fig.canvas.draw_idle()
 
 
-def normalize_points(pts, original_width):
-    """Convert display coordinates back to 1920x1080 config space."""
-    return [(round(p[0] * FRAME_WIDTH / 1200), round(p[1] * FRAME_HEIGHT / (original_width * FRAME_HEIGHT / FRAME_WIDTH))) for p in pts]
+def onclick(event):
+    global points
+    if event.inaxes != ax:
+        return
+    if event.button != MouseButton.LEFT:
+        return
+
+    points.append((event.xdata, event.ydata))
+    redraw()
+
+
+def onkey(event):
+    global points
+
+    if event.key == "enter":
+        if mode == "roi" and len(points) < 3:
+            print("Need at least 3 points for a polygon")
+            return
+        if mode == "line" and len(points) < 2:
+            print("Need 2 points for a line")
+            return
+
+        sections, _ = read_config()
+
+        if mode == "roi":
+            scaled = [(round(x * FRAME_WIDTH / display_width),
+                       round(y * FRAME_HEIGHT / (display_width * FRAME_HEIGHT / FRAME_WIDTH)))
+                      for x, y in points]
+            coords = ";".join(f"{p[0]};{p[1]}" for p in scaled)
+            name = input("ROI name: ").strip() or "ROI-stream-" + str(stream_idx)
+            section = f"roi-filtering-stream-{stream_idx}"
+            sections[section] = {"enable": "1", "class-id": "-1", f"roi-{name}": coords}
+            print(f"ROI '{name}' saved to [{section}]")
+        else:
+            scaled = [(round(x * FRAME_WIDTH / display_width),
+                       round(y * FRAME_HEIGHT / (display_width * FRAME_HEIGHT / FRAME_WIDTH)))
+                      for x, y in points[:2]]
+            coords = f"{scaled[0][0]};{scaled[0][1]};{scaled[1][0]};{scaled[1][1]}"
+            name = input("Line name: ").strip() or "LC-stream-" + str(stream_idx)
+            section = f"line-crossing-stream-{stream_idx}"
+            sections[section] = {"enable": "1", "class-id": "4", "mode": "1", f"line-crossing-{name}": coords}
+            print(f"Line '{name}' saved to [{section}]")
+
+        write_config(sections)
+        points = []
+        redraw()
+
+    elif event.key == "escape":
+        plt.close()
+
+    elif event.key == "r":
+        points = []
+        print("Reset")
+        redraw()
 
 
 def read_config():
@@ -118,96 +159,50 @@ def write_config(sections):
 
 
 def main():
-    global mode, points, line_start
+    global mode, points, ax, fig, stream_idx, display_width, scale
 
     parser = argparse.ArgumentParser(description="Draw ROI/line for nvdsanalytics config")
     parser.add_argument("stream", help="stream-0 or stream-1")
-    parser.add_argument("--video", help="Video file path (default: camX_full.mp4)")
     parser.add_argument("--line", action="store_true", help="Draw line-crossing instead of ROI")
     args = parser.parse_args()
 
     if args.stream == "stream-0":
-        video_path = args.video or DEFAULT_VIDEO_0
+        frame_path = FRAME_0
         stream_idx = 0
     elif args.stream == "stream-1":
-        video_path = args.video or DEFAULT_VIDEO_1
+        frame_path = FRAME_1
         stream_idx = 1
     else:
-        print("Usage: python3 dibujo.py stream-0|stream-1 [--line] [--video PATH]")
+        print("Usage: python3 dibujo.py stream-0|stream-1 [--line]")
         return
 
     mode = "line" if args.line else "roi"
 
-    result = extract_frame(video_path)
-    if result is None:
+    if not os.path.exists(frame_path):
+        print(f"ERROR: Frame not found at {frame_path}")
+        print("Extract frames first:")
+        print("  ffmpeg -i /opt/computer_vision/test/cam1_full.mp4 -ss 10 -vframes 1 /opt/computer_vision/test/cam1_frame.jpg")
         return
-    frame, orig_w = result
 
-    import numpy as np
+    img = plt.imread(frame_path)
+    h, w = img.shape[:2]
+    display_width = 1200
+    scale = display_width / w
+    display_height = int(h * scale)
 
-    cv2.startWindowThread()
-    wn = "Draw — [ENTER] save  [ESC] quit  [r] reset"
-    cv2.namedWindow(wn)
-    cv2.imshow(wn, frame)
-    cv2.waitKey(1)
-    cv2.setMouseCallback(wn, draw_callback, {"img": frame})
+    fig, ax = plt.subplots(figsize=(display_width / 100, display_height / 100), dpi=100)
+    ax.imshow(img, extent=[0, display_width, display_height, 0])
+    ax.set_xlim(0, display_width)
+    ax.set_ylim(display_height, 0)
+    ax.set_title(f"stream-{stream_idx} — {mode.upper()}  [click=add] [enter=save] [r=reset] [esc=quit]")
+    ax.axis("off")
 
-    print(f"Mode: {mode.upper()}")
-    print("Click to add points. [ENTER] to save, [ESC] to quit, [r] to reset")
+    fig.canvas.mpl_connect("button_press_event", onclick)
+    fig.canvas.mpl_connect("key_press_event", onkey)
 
-    while True:
-        display = frame.copy()
-        if mode == "roi":
-            for p in points:
-                cv2.circle(display, p, 4, (0, 255, 255), -1)
-            if len(points) > 1:
-                cv2.polylines(display, [np.array(points, dtype=np.int32)], False, (0, 255, 0), 2)
-            if len(points) > 2:
-                cv2.polylines(display, [np.array(points + [points[0]], dtype=np.int32)], True, (0, 255, 0), 2)
-        else:
-            for p in points:
-                cv2.circle(display, p, 5, (0, 255, 255), -1)
-            if len(points) >= 2:
-                cv2.line(display, points[0], points[1], (0, 255, 0), 3)
-                cv2.arrowedLine(display, points[0], points[1], (0, 0, 255), 2, tipLength=0.05)
-        cv2.imshow(wn, display)
-
-        key = cv2.waitKey(50) & 0xFF
-        if key == 13:  # Enter
-            sections, _ = read_config()
-
-            if mode == "roi":
-                if len(points) < 3:
-                    print("Need at least 3 points for a polygon")
-                    continue
-                scaled = normalize_points(points, orig_w)
-                coords = ";".join(f"{p[0]};{p[1]}" for p in scaled)
-                name = input("ROI name: ").strip() or "ROI-" + str(len(points))
-                section = f"roi-filtering-stream-{stream_idx}"
-                sections[section] = {"enable": "1", "class-id": "-1", f"roi-{name}": coords}
-                print(f"ROI '{name}' saved to [{section}]")
-            else:
-                if len(points) < 2:
-                    print("Need 2 points for a line")
-                    continue
-                scaled = normalize_points(points[:2], orig_w)
-                coords = f"{scaled[0][0]};{scaled[0][1]};{scaled[1][0]};{scaled[1][1]}"
-                name = input("Line name: ").strip() or "LC-" + str(stream_idx)
-                section = f"line-crossing-stream-{stream_idx}"
-                sections[section] = {"enable": "1", "class-id": "4", "mode": "1", f"line-crossing-{name}": coords}
-                print(f"Line '{name}' saved to [{section}]")
-
-            write_config(sections)
-            points = []
-            break
-
-        elif key == 27:  # ESC
-            break
-        elif key == ord("r"):
-            points = []
-            print("Reset")
-
-    cv2.destroyAllWindows()
+    print(f"Mode: {mode.upper()}  |  Stream: {stream_idx}")
+    print("Click to add points. [ENTER] save, [r] reset, [ESC] quit")
+    plt.show()
 
 
 if __name__ == "__main__":
