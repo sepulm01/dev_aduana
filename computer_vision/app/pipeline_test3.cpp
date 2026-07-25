@@ -504,37 +504,137 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
     if (!batch_meta) return GST_PAD_PROBE_OK;
 
     for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame; l_frame = l_frame->next) {
-        NvDsFrameMeta* frame_meta = (NvDsFrameMeta*)l_frame->data;
-        if (!frame_meta) continue;
+        NvDsFrameMeta* fm = (NvDsFrameMeta*)l_frame->data;
+        if (!fm) continue;
 
-        guint source_id = frame_meta->source_id;
-        guint pad_index = frame_meta->pad_index;
+        guint source_id   = fm->source_id;
+        guint pad_index   = fm->pad_index;
+        int   device_id   = (pad_index >= 0 && pad_index < MAX_SOURCES)
+                            ? source_to_device[pad_index] : -1;
+        guint64 ts_ms     = (guint64)time(nullptr) * 1000LL;
+        float fw = (float)MUXER_OUTPUT_WIDTH;
+        float fh = (float)MUXER_OUTPUT_HEIGHT;
 
-        for (NvDsMetaList* l_obj = frame_meta->obj_meta_list; l_obj; l_obj = l_obj->next) {
-            NvDsObjectMeta* obj_meta = (NvDsObjectMeta*)l_obj->data;
-            if (!obj_meta) continue;
+        /* Pass 1: collect truck events (class_id=4 with analytics metadata) */
+        struct TruckEvent {
+            NvDsObjectMeta* om;
+            bool is_cross;
+            bool is_roi;
+            std::string roi_name;
+        };
+        std::vector<TruckEvent> truck_events;
 
-            for (NvDsMetaList* l_um = obj_meta->obj_user_meta_list; l_um; l_um = l_um->next) {
+        for (NvDsMetaList* l_obj = fm->obj_meta_list; l_obj; l_obj = l_obj->next) {
+            NvDsObjectMeta* om = (NvDsObjectMeta*)l_obj->data;
+            if (!om || om->class_id != 4) continue;
+
+            bool has_lc = false, has_roi = false;
+            std::string roi_name;
+
+            for (NvDsMetaList* l_um = om->obj_user_meta_list; l_um; l_um = l_um->next) {
                 NvDsUserMeta* um = (NvDsUserMeta*)l_um->data;
-                if (um->base_meta.meta_type == NVDS_USER_FRAME_META_NVDSANALYTICS) {
-                    NvDsAnalyticsObjInfo* aoi = (NvDsAnalyticsObjInfo*)um->user_meta_data;
-                    if (aoi && !aoi->lcStatus.empty()) {
-                        gchar lc_json[256];
-                        g_snprintf(lc_json, sizeof(lc_json),
-                            "{\"device_id\":%d,\"source_id\":%u,\"object_id\":%lu,\"class_id\":%d}",
-                            source_to_device[pad_index], source_id,
-                            obj_meta->object_id, obj_meta->class_id);
-                        g_mutex_lock(&redis_mutex);
-                        if (pub_ctx) {
-                            redisReply* reply = (redisReply*)redisCommand(
-                                pub_ctx, "PUBLISH aduana:lc_event %s", lc_json);
-                            if (reply) freeReplyObject(reply);
-                        }
-                        g_mutex_unlock(&redis_mutex);
-                        g_print("[LC] %s\n", lc_json);
-                    }
+                if (!um) continue;
+                if (um->base_meta.meta_type != NVDS_USER_FRAME_META_NVDSANALYTICS) continue;
+                NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
+                if (!ai) continue;
+                if (!ai->lcStatus.empty()) has_lc = true;
+                for (const auto& rn : ai->roiStatus) {
+                    has_roi = true;
+                    if (roi_name.empty()) roi_name = rn;
                 }
             }
+
+            if (has_lc || has_roi)
+                truck_events.push_back({om, has_lc, has_roi, roi_name});
+        }
+
+        /* Pass 2: for each truck event, find cargo & publish */
+        for (auto& te : truck_events) {
+            std::stringstream json;
+            float tl = te.om->detector_bbox_info.org_bbox_coords.left;
+            float tt = te.om->detector_bbox_info.org_bbox_coords.top;
+            float tw = te.om->detector_bbox_info.org_bbox_coords.width;
+            float th = te.om->detector_bbox_info.org_bbox_coords.height;
+            float tr = tl + tw;
+            float tb = tt + th;
+
+            json << "{"
+                 << "\"event\":"    << (te.is_cross ? "\"CROSS\"" : "\"ROI_IN\"")
+                 << ",\"device_id\":" << device_id
+                 << ",\"source_id\":" << source_id
+                 << ",\"object_id\":" << te.om->object_id
+                 << ",\"class_id\":"  << te.om->class_id
+                 << ",\"timestamp_ms\":" << ts_ms
+                 << ",\"bbox\":{"
+                 << "\"left\":"   << (tl / fw)
+                 << ",\"top\":"    << (tt / fh)
+                 << ",\"width\":"  << (tw / fw)
+                 << ",\"height\":" << (th / fh)
+                 << "}";
+
+            if (!te.roi_name.empty())
+                json << ",\"roi_name\":\"" << te.roi_name << "\"";
+
+            /* Collect cargo: objects of class 0-3 whose center is inside truck bbox */
+            json << ",\"cargo\":[";
+            bool first_cargo = true;
+            for (NvDsMetaList* l_obj = fm->obj_meta_list; l_obj; l_obj = l_obj->next) {
+                NvDsObjectMeta* co = (NvDsObjectMeta*)l_obj->data;
+                if (!co || co->class_id == 4) continue;
+
+                float cx = co->detector_bbox_info.org_bbox_coords.left
+                         + co->detector_bbox_info.org_bbox_coords.width  * 0.5f;
+                float cy = co->detector_bbox_info.org_bbox_coords.top
+                         + co->detector_bbox_info.org_bbox_coords.height * 0.5f;
+
+                if (cx < tl || cx > tr || cy < tt || cy > tb) continue;
+
+                if (!first_cargo) json << ",";
+                first_cargo = false;
+
+                float cl = co->detector_bbox_info.org_bbox_coords.left;
+                float ct = co->detector_bbox_info.org_bbox_coords.top;
+                float cw = co->detector_bbox_info.org_bbox_coords.width;
+                float ch = co->detector_bbox_info.org_bbox_coords.height;
+                json << "{"
+                     << "\"class_id\":"   << co->class_id
+                     << ",\"object_id\":" << co->object_id
+                     << ",\"confidence\":" << co->confidence
+                     << ",\"bbox\":{"
+                     << "\"left\":"   << (cl / fw)
+                     << ",\"top\":"    << (ct / fh)
+                     << ",\"width\":"  << (cw / fw)
+                     << ",\"height\":" << (ch / fh)
+                     << "}}";
+            }
+            json << "]}";
+
+            /* Keep backward-compatible lc_event for CROSS events only */
+            if (te.is_cross) {
+                gchar lc_json_legacy[256];
+                g_snprintf(lc_json_legacy, sizeof(lc_json_legacy),
+                    "{\"device_id\":%d,\"source_id\":%u,\"object_id\":%lu,\"class_id\":%d}",
+                    device_id, source_id, te.om->object_id, te.om->class_id);
+                g_mutex_lock(&redis_mutex);
+                if (pub_ctx) {
+                    redisReply* r = (redisReply*)redisCommand(
+                        pub_ctx, "PUBLISH aduana:lc_event %s", lc_json_legacy);
+                    if (r) freeReplyObject(r);
+                }
+                g_mutex_unlock(&redis_mutex);
+            }
+
+            /* Publish enriched event to new channel */
+            std::string msg = json.str();
+            g_mutex_lock(&redis_mutex);
+            if (pub_ctx) {
+                redisReply* r = (redisReply*)redisCommand(
+                    pub_ctx, "PUBLISH aduana:truck_event %b", msg.c_str(), msg.size());
+                if (r) freeReplyObject(r);
+            }
+            g_mutex_unlock(&redis_mutex);
+
+            g_print("[TRUCK-EVENT] %s\n", msg.c_str());
         }
     }
     return GST_PAD_PROBE_OK;
