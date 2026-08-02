@@ -184,7 +184,7 @@ services:
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
       - ./computer_vision/record:/opt/computer_vision/record
-    command: ["../app/pipeline-test3", "./config_aduana.yml"]
+    command: ["../app/aduana-prod", "./config_aduana.yml"]
 
   nginx:
     image: nginx:alpine

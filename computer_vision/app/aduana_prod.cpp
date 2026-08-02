@@ -42,6 +42,17 @@
 static float g_class_confidence[MAX_CLASSES];
 static bool g_roi_configured = false;
 
+struct TruckKey { int sid; guint64 oid; };
+bool operator==(const TruckKey& a, const TruckKey& b) { return a.sid == b.sid && a.oid == b.oid; }
+struct TruckKeyHash { size_t operator()(const TruckKey& k) const { return (size_t)k.sid * 31 + (size_t)k.oid; } };
+struct TruckState { bool crossed = false; bool in_roi = false; };
+static std::unordered_map<TruckKey, TruckState, TruckKeyHash> g_trucks;
+
+static bool truck_is_active(int sid, guint64 oid) {
+    auto it = g_trucks.find({sid, oid});
+    return it != g_trucks.end() && it->second.crossed && !it->second.in_roi;
+}
+
 /* AABB containment: is inner's center inside outer's bbox? */
 static bool center_inside(NvDsObjectMeta* outer, NvDsObjectMeta* inner) {
     float icx = inner->detector_bbox_info.org_bbox_coords.left
@@ -267,18 +278,36 @@ static void publish_detection_json(int dev_id, int source_id,
     json << "{\"device_id\":" << dev_id
          << ",\"source_id\":" << source_id
          << ",\"frame_num\":" << fm->frame_num
-          << ",\"timestamp_ms\":" << ((guint64)time(nullptr) * 1000LL)
+         << ",\"timestamp_ms\":" << ((guint64)time(nullptr) * 1000LL)
          << ",\"objects\":[";
 
+    float fw = (float)MUXER_OUTPUT_WIDTH;
+    float fh = (float)MUXER_OUTPUT_HEIGHT;
     bool first = true;
+
     for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
         NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
+        if (om->class_id == 4) continue; // trucks not included in detection json
+
+        /* Find active truck containing this object */
+        guint64 truck_id = 0;
+        for (NvDsMetaList* lo2 = fm->obj_meta_list; lo2; lo2 = lo2->next) {
+            NvDsObjectMeta* tk = (NvDsObjectMeta*)lo2->data;
+            if (tk->class_id != 4) continue;
+            if (!truck_is_active(source_id, tk->object_id)) continue;
+            if (center_inside(tk, om)) {
+                truck_id = tk->object_id;
+                break;
+            }
+        }
+        if (truck_id == 0) continue; // not inside any active truck
+
         if (!first) json << ",";
         first = false;
-        float fw = (float)MUXER_OUTPUT_WIDTH;
-        float fh = (float)MUXER_OUTPUT_HEIGHT;
+
         json << "{\"class_id\":" << om->class_id
              << ",\"object_id\":" << om->object_id
+             << ",\"truck_id\":" << truck_id
              << ",\"confidence\":" << om->confidence
              << ",\"bbox\":{"
              << "\"left\":" << (om->detector_bbox_info.org_bbox_coords.left / fw)
@@ -413,16 +442,16 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 if (om->confidence < get_class_confidence(om->class_id)) continue;
                 if (om->class_id != 0 && om->class_id != 1 && om->class_id != 3) continue;
 
-                if (g_roi_configured) {
-                    bool inside_truck = false;
+                /* Only send crop if object is inside an active truck (crossed, not yet in ROI) */
+                {
+                    bool inside_active = false;
                     for (NvDsMetaList* lo2 = fm->obj_meta_list; lo2; lo2 = lo2->next) {
                         NvDsObjectMeta* tk = (NvDsObjectMeta*)lo2->data;
-                        if (tk->class_id == 4 && center_inside(tk, om)) {
-                            inside_truck = true;
-                            break;
-                        }
+                        if (tk->class_id != 4) continue;
+                        if (!truck_is_active(sid, tk->object_id)) continue;
+                        if (center_inside(tk, om)) { inside_active = true; break; }
                     }
-                    if (!inside_truck) continue;
+                    if (!inside_active) continue;
                 }
                 if (now - last_crop_sent < crop_interval) continue;
 
@@ -520,29 +549,11 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
         NvDsFrameMeta* fm = (NvDsFrameMeta*)l_frame->data;
         if (!fm) continue;
 
-        guint source_id   = fm->source_id;
-        guint pad_index   = fm->pad_index;
-        int   device_id   = (pad_index >= 0 && pad_index < MAX_SOURCES)
-                            ? source_to_device[pad_index] : -1;
-        guint64 ts_ms     = (guint64)time(nullptr) * 1000LL;
-        float fw = (float)MUXER_OUTPUT_WIDTH;
-        float fh = (float)MUXER_OUTPUT_HEIGHT;
-
-        /* Pass 1: collect truck events (class_id=4 with analytics metadata) */
-        struct TruckEvent {
-            NvDsObjectMeta* om;
-            bool is_cross;
-            bool is_roi;
-            std::string roi_name;
-        };
-        std::vector<TruckEvent> truck_events;
+        int sid = fm->source_id;
 
         for (NvDsMetaList* l_obj = fm->obj_meta_list; l_obj; l_obj = l_obj->next) {
             NvDsObjectMeta* om = (NvDsObjectMeta*)l_obj->data;
             if (!om || om->class_id != 4) continue;
-
-            bool has_lc = false, has_roi = false;
-            std::string roi_name;
 
             for (NvDsMetaList* l_um = om->obj_user_meta_list; l_um; l_um = l_um->next) {
                 NvDsUserMeta* um = (NvDsUserMeta*)l_um->data;
@@ -550,104 +561,17 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
                 if (um->base_meta.meta_type != NVDS_USER_FRAME_META_NVDSANALYTICS) continue;
                 NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                 if (!ai) continue;
-                if (!ai->lcStatus.empty()) has_lc = true;
-                for (const auto& rn : ai->roiStatus) {
-                    has_roi = true;
-                    if (roi_name.empty()) roi_name = rn;
+
+                if (!ai->lcStatus.empty()) {
+                    g_trucks[{sid, om->object_id}].crossed = true;
+                    g_print("[STATE] truck=%lu src=%d CROSS\n", om->object_id, sid);
+                }
+                if (!ai->roiStatus.empty()) {
+                    g_trucks[{sid, om->object_id}].in_roi = true;
+                    g_print("[STATE] truck=%lu src=%d ROI_IN  roi=%s\n",
+                            om->object_id, sid, ai->roiStatus[0].c_str());
                 }
             }
-
-            if (has_lc || has_roi)
-                truck_events.push_back({om, has_lc, has_roi, roi_name});
-        }
-
-        /* Pass 2: for each truck event, find cargo & publish */
-        for (auto& te : truck_events) {
-            std::stringstream json;
-            float tl = te.om->detector_bbox_info.org_bbox_coords.left;
-            float tt = te.om->detector_bbox_info.org_bbox_coords.top;
-            float tw = te.om->detector_bbox_info.org_bbox_coords.width;
-            float th = te.om->detector_bbox_info.org_bbox_coords.height;
-            float tr = tl + tw;
-            float tb = tt + th;
-
-            json << "{"
-                 << "\"event\":"    << (te.is_cross ? "\"CROSS\"" : "\"ROI_IN\"")
-                 << ",\"device_id\":" << device_id
-                 << ",\"source_id\":" << source_id
-                 << ",\"object_id\":" << te.om->object_id
-                 << ",\"class_id\":"  << te.om->class_id
-                 << ",\"timestamp_ms\":" << ts_ms
-                 << ",\"bbox\":{"
-                 << "\"left\":"   << (tl / fw)
-                 << ",\"top\":"    << (tt / fh)
-                 << ",\"width\":"  << (tw / fw)
-                 << ",\"height\":" << (th / fh)
-                 << "}";
-
-            if (!te.roi_name.empty())
-                json << ",\"roi_name\":\"" << te.roi_name << "\"";
-
-            /* Collect cargo: objects of class 0-3 whose center is inside truck bbox */
-            json << ",\"cargo\":[";
-            bool first_cargo = true;
-            for (NvDsMetaList* l_obj = fm->obj_meta_list; l_obj; l_obj = l_obj->next) {
-                NvDsObjectMeta* co = (NvDsObjectMeta*)l_obj->data;
-                if (!co || co->class_id == 4) continue;
-
-                float cx = co->detector_bbox_info.org_bbox_coords.left
-                         + co->detector_bbox_info.org_bbox_coords.width  * 0.5f;
-                float cy = co->detector_bbox_info.org_bbox_coords.top
-                         + co->detector_bbox_info.org_bbox_coords.height * 0.5f;
-
-                if (cx < tl || cx > tr || cy < tt || cy > tb) continue;
-
-                if (!first_cargo) json << ",";
-                first_cargo = false;
-
-                float cl = co->detector_bbox_info.org_bbox_coords.left;
-                float ct = co->detector_bbox_info.org_bbox_coords.top;
-                float cw = co->detector_bbox_info.org_bbox_coords.width;
-                float ch = co->detector_bbox_info.org_bbox_coords.height;
-                json << "{"
-                     << "\"class_id\":"   << co->class_id
-                     << ",\"object_id\":" << co->object_id
-                     << ",\"confidence\":" << co->confidence
-                     << ",\"bbox\":{"
-                     << "\"left\":"   << (cl / fw)
-                     << ",\"top\":"    << (ct / fh)
-                     << ",\"width\":"  << (cw / fw)
-                     << ",\"height\":" << (ch / fh)
-                     << "}}";
-            }
-            json << "]}";
-
-            /* Keep backward-compatible lc_event for CROSS events only */
-            if (te.is_cross) {
-                gchar lc_json_legacy[256];
-                g_snprintf(lc_json_legacy, sizeof(lc_json_legacy),
-                    "{\"device_id\":%d,\"source_id\":%u,\"object_id\":%lu,\"class_id\":%d}",
-                    device_id, source_id, te.om->object_id, te.om->class_id);
-                g_mutex_lock(&redis_mutex);
-                if (pub_ctx) {
-                    redisReply* r = (redisReply*)redisCommand(
-                        pub_ctx, "PUBLISH aduana:lc_event %s", lc_json_legacy);
-                    if (r) freeReplyObject(r);
-                }
-                g_mutex_unlock(&redis_mutex);
-            }
-
-            /* Publish enriched event to new channel */
-            std::string msg = json.str();
-            g_mutex_lock(&redis_mutex);
-            if (pub_ctx) {
-                redisReply* r = (redisReply*)redisCommand(
-                    pub_ctx, "PUBLISH aduana:truck_event %b", msg.c_str(), msg.size());
-                if (r) freeReplyObject(r);
-            }
-            g_mutex_unlock(&redis_mutex);
-
-            g_print("[TRUCK-EVENT] %s\n", msg.c_str());
         }
     }
     return GST_PAD_PROBE_OK;
