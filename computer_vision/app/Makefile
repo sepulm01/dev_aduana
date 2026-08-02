@@ -5,6 +5,7 @@ endif
 
 APP:= pipeline-test3
 APP2:= aduana-test
+APP3:= aduana-prod
 
 TARGET_DEVICE = $(shell gcc -dumpmachine | cut -f1 -d -)
 
@@ -14,9 +15,11 @@ LIB_INSTALL_DIR?=/opt/nvidia/deepstream/deepstream-$(NVDS_VERSION)/lib/
 
 SRCS:= pipeline_test3.cpp snapshot_sender.cpp
 SRCS2:= aduana_test.cpp
+SRCS3:= aduana_prod.cpp snapshot_sender.cpp
 
 OBJS:= $(SRCS:.cpp=.o)
 OBJS2:= $(SRCS2:.cpp=.o)
+OBJS3:= $(SRCS3:.cpp=.o)
 
 PKGS:= gstreamer-1.0
 
@@ -40,7 +43,7 @@ LIBS2+= -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart -lnvdsgst_helper -lm \
 	-L$(LIB_INSTALL_DIR) -lnvdsgst_meta -lnvds_meta -lnvds_yml_parser \
 	-lcuda -Wl,-rpath,$(LIB_INSTALL_DIR)
 
-all: $(APP) $(APP2)
+all: $(APP) $(APP2) $(APP3)
 
 %.o: %.cpp Makefile
 	$(CXX) -c -o $@ $(CXXFLAGS) $<
@@ -51,5 +54,8 @@ $(APP): $(OBJS) Makefile
 $(APP2): $(OBJS2) Makefile
 	$(CXX) -o $(APP2) $(OBJS2) $(LIBS2)
 
+$(APP3): $(OBJS3) Makefile
+	$(CXX) -o $(APP3) $(OBJS3) $(LIBS)
+
 clean:
-	rm -rf $(OBJS) $(OBJS2) $(APP) $(APP2)
+	rm -rf $(OBJS) $(OBJS2) $(OBJS3) $(APP) $(APP2) $(APP3)

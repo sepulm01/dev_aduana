@@ -25,4 +25,4 @@ RUN mkdir -p /opt/computer_vision/record
 ENV DISPLAY=${DISPLAY}
 ENV RECORD_OUTPUT=1
 ENTRYPOINT ["/opt/nvidia/deepstream/deepstream-8.0/entrypoint.sh"]
-CMD ["../app/pipeline-test3", "./config_aduana.yml"]
+CMD ["../app/aduana-prod", "./config_aduana.yml"]
