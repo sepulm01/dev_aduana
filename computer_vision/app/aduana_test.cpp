@@ -277,8 +277,8 @@ int main(int argc, char* argv[]) {
     pipeline = gst_pipeline_new("aduana-test-pipeline");
 
     const gchar* source_uris[2] = {
-        "file:///opt/computer_vision/test/cam1_full.mp4",
-        "file:///opt/computer_vision/test/cam2_full.mp4"
+        "file:///opt/computer_vision/test/cam1_2m.mp4",
+        "file:///opt/computer_vision/test/cam2_2m.mp4"
     };
     guint num_sources = 2;
     g_print("Num sources: %d\n", num_sources);
