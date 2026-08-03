@@ -13,6 +13,7 @@
 #include <utility>
 #include <cstdio>
 #include <vector>
+#include <sstream>
 
 #include "gstnvdsmeta.h"
 #include "gstnvdsinfer.h"
@@ -99,7 +100,7 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                 counts[sid]++;
             }
         }
-        g_print("[SRC] src=0: %d objs | src=1: %d objs\n", counts[0], counts[1]);
+//        g_print("[SRC] src=0: %d objs | src=1: %d objs\n", counts[0], counts[1]);
     }
 
     for (NvDsMetaList* lf = batch_meta->frame_meta_list; lf; lf = lf->next) {
@@ -175,6 +176,47 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                                 om->confidence);
                     break; // each object belongs to at most one truck
                 }
+            }
+        }
+
+        /* Print Redis-style JSON for objects inside active trucks */
+        {
+            static guint64 last_json_print = 0;
+            if (now - last_json_print >= 1000000) {
+                last_json_print = now;
+                float fw = (float)MUXER_OUTPUT_WIDTH;
+                float fh = (float)MUXER_OUTPUT_HEIGHT;
+                std::stringstream json;
+                json << "{\"source_id\":" << sid
+                     << ",\"frame_num\":" << fm->frame_num
+                     << ",\"ts\":" << ts_sec
+                     << ",\"objects\":[";
+                bool first = true;
+                for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+                    NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
+                    if (om->class_id == 4) continue;
+                    guint64 truck_id = 0;
+                    for (auto* tk : trucks) {
+                        auto it = g_trucks.find({sid, tk->object_id});
+                        if (it != g_trucks.end() && it->second.crossed && !it->second.in_roi
+                            && center_inside(tk, om)) {
+                            truck_id = tk->object_id; break;
+                        }
+                    }
+                    if (truck_id == 0) continue;
+                    if (!first) json << ",";
+                    first = false;
+                    json << "{\"cls\":" << om->class_id
+                         << ",\"truck\":" << truck_id
+                         << ",\"conf\":" << om->confidence
+                         << ",\"bbox\":[" << (om->detector_bbox_info.org_bbox_coords.left/fw)
+                         << "," << (om->detector_bbox_info.org_bbox_coords.top/fh)
+                         << "," << (om->detector_bbox_info.org_bbox_coords.width/fw)
+                         << "," << (om->detector_bbox_info.org_bbox_coords.height/fh)
+                         << "]}";
+                }
+                json << "]}";
+                if (!first) g_print("[JSON] %s\n", json.str().c_str());
             }
         }
     }
@@ -277,8 +319,8 @@ int main(int argc, char* argv[]) {
     pipeline = gst_pipeline_new("aduana-test-pipeline");
 
     const gchar* source_uris[2] = {
-        "file:///opt/computer_vision/test/cam1_2m.mp4",
-        "file:///opt/computer_vision/test/cam2_2m.mp4"
+        "file:///opt/computer_vision/test/cam1_seg3.mp4",
+        "file:///opt/computer_vision/test/cam2_seg3.mp4"
     };
     guint num_sources = 2;
     g_print("Num sources: %d\n", num_sources);
@@ -334,7 +376,7 @@ int main(int argc, char* argv[]) {
                  "ll-lib-file",
                  "/opt/nvidia/deepstream/deepstream-8.0/lib/libnvds_nvmultiobjecttracker.so",
                  "ll-config-file",
-                 "/opt/computer_vision/config/config_tracker_IOU.yml",
+                 "/opt/computer_vision/config/config_tracker_NvSORT.yml",
                  NULL);
 
     RETURN_ON_PARSER_ERROR(nvds_parse_nvdsanalytics(nvds_analytics, argv[1], "analytics"));

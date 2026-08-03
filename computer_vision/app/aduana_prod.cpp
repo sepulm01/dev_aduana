@@ -601,17 +601,6 @@ static gboolean bus_call(GstBus* bus, GstMessage* msg, gpointer data) {
     return TRUE;
 }
 
-static void source_pad_added(GstElement* el, GstPad* pad, gpointer data) {
-    GstPad* sink = (GstPad*)data;
-    GstCaps* caps = gst_pad_get_current_caps(pad);
-    const GstStructure* str = gst_caps_get_structure(caps, 0);
-    const gchar* name = gst_structure_get_name(str);
-    if (!strncmp(name, "video", 5) || !strncmp(name, "video/x-raw", 11)) {
-        gst_pad_link(pad, sink);
-    }
-    gst_caps_unref(caps);
-}
-
 static void source_setup_callback(GstElement* uridecodebin, GstElement* source, gpointer user_data) {
     if (g_strrstr(G_OBJECT_TYPE_NAME(G_OBJECT(source)), "RTSPSrc")) {
         g_object_set(G_OBJECT(source),
@@ -644,18 +633,22 @@ static GstElement* create_source_bin(guint index, gchar* uri) {
 
     gst_bin_add_many(GST_BIN(bin), uri_decode_bin, nvconv, conv_queue, NULL);
 
-    GstPad* nvconv_sink_pad = gst_element_get_static_pad(nvconv, "sink");
-    g_signal_connect(G_OBJECT(uri_decode_bin), "pad-added",
-                     G_CALLBACK(source_pad_added), nvconv_sink_pad);
-    gst_object_unref(nvconv_sink_pad);
+    g_signal_connect(uri_decode_bin, "pad-added",
+        G_CALLBACK(+[](GstElement* e, GstPad* pad, gpointer data) {
+            GstElement* conv = GST_ELEMENT(data);
+            GstPad* sinkpad = gst_element_get_static_pad(conv, "sink");
+            if (!gst_pad_is_linked(sinkpad)) gst_pad_link(pad, sinkpad);
+            gst_object_unref(sinkpad);
+        }), nvconv);
 
-    gst_element_link_many(nvconv, conv_queue, NULL);
+    if (!gst_element_link(nvconv, conv_queue)) {
+        g_printerr("nvconv → queue link failed\n");
+        return NULL;
+    }
 
-    GstPad* pad = gst_element_get_static_pad(conv_queue, "src");
-    GstPad* ghost = gst_ghost_pad_new("src", pad);
-    gst_pad_set_active(ghost, TRUE);
-    gst_element_add_pad(bin, ghost);
-    gst_object_unref(pad);
+    GstPad* srcpad = gst_element_get_static_pad(conv_queue, "src");
+    gst_element_add_pad(bin, gst_ghost_pad_new("src", srcpad));
+    gst_object_unref(srcpad);
 
     return bin;
 }
@@ -751,10 +744,11 @@ int main(int argc, char* argv[]) {
     if (!pipeline || !streammux) return -1;
     gst_bin_add(GST_BIN(pipeline), streammux);
 
-    GList* src_list = NULL;
-    RETURN_ON_PARSER_ERROR(nvds_parse_source_list(&src_list, argv[1], "source-list"));
-    GList* temp = src_list;
-    while (temp) { num_sources++; temp = temp->next; }
+    const gchar* source_uris[] = {
+        "file:///opt/computer_vision/test/cam1_seg3.mp4",
+        "file:///opt/computer_vision/test/cam2_seg3.mp4"
+    };
+    num_sources = 2;
     g_print("Num sources: %d\n", num_sources);
 
     for (i = 0; i < num_sources; i++) {
@@ -762,8 +756,7 @@ int main(int argc, char* argv[]) {
         gchar pad_name[16] = {};
         GstElement* source_bin = NULL;
 
-        if (!src_list || !src_list->data) continue;
-        source_bin = create_source_bin(i, (gchar*)src_list->data);
+        source_bin = create_source_bin(i, (gchar*)source_uris[i]);
         if (!source_bin) return -1;
 
         gst_bin_add(GST_BIN(pipeline), source_bin);
@@ -778,9 +771,7 @@ int main(int argc, char* argv[]) {
         }
         gst_object_unref(srcpad);
         gst_object_unref(sinkpad);
-        src_list = src_list->next;
     }
-    g_list_free(src_list);
 
     pgie = gst_element_factory_make("nvinfer", "primary-inference");
     nvtracker = gst_element_factory_make("nvtracker", "nvtracker");
