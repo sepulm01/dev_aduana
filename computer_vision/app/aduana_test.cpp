@@ -509,11 +509,14 @@ int main(int argc, char* argv[]) {
     g_crop_sock.fd = -1; g_crop_sock.ok = false;
     g_crop_obj_ctr = 0;
 
-    /* Snapshots */
-    roi_snap = new SnapshotSender("snapshot-receiver", 12348, "roi");
-    lc_snap  = new SnapshotSender("snapshot-receiver", 12348, "lc");
-    oc_snap  = new SnapshotSender("snapshot-receiver", 12348, "oc");
-    roi_snap->start(); lc_snap->start(); oc_snap->start();
+    /* Snapshots (only if SNAPSHOT_HOST is set) */
+    const char* snap_host = getenv("SNAPSHOT_HOST");
+    if (snap_host) {
+        roi_snap = new SnapshotSender(snap_host, 12348, "roi");
+        lc_snap  = new SnapshotSender(snap_host, 12348, "lc");
+        oc_snap  = new SnapshotSender(snap_host, 12348, "oc");
+        roi_snap->start(); lc_snap->start(); oc_snap->start();
+    }
 
     /* Pipeline */
     GstElement *pipeline = NULL, *streammux = NULL, *pgie = NULL,
