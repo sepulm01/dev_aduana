@@ -14,7 +14,7 @@ NVDS_VERSION:=8.0
 LIB_INSTALL_DIR?=/opt/nvidia/deepstream/deepstream-$(NVDS_VERSION)/lib/
 
 SRCS:= pipeline_test3.cpp snapshot_sender.cpp
-SRCS2:= aduana_test.cpp
+SRCS2:= aduana_test.cpp snapshot_sender.cpp
 SRCS3:= aduana_prod.cpp snapshot_sender.cpp
 
 OBJS:= $(SRCS:.cpp=.o)
@@ -41,7 +41,8 @@ LIBS2:= $(shell pkg-config --libs $(PKGS))
 
 LIBS2+= -L/usr/local/cuda-$(CUDA_VER)/lib64/ -lcudart -lnvdsgst_helper -lm \
 	-L$(LIB_INSTALL_DIR) -lnvdsgst_meta -lnvds_meta -lnvds_yml_parser \
-	-lcuda -Wl,-rpath,$(LIB_INSTALL_DIR)
+	-lcuda -Wl,-rpath,$(LIB_INSTALL_DIR) \
+	-lhiredis -lnvds_batch_jpegenc
 
 all: $(APP) $(APP2) $(APP3)
 
