@@ -281,8 +281,10 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
 
         /* Pass 2: Crop sending + CARGO association */
         {
-            static guint64 last_crop_sent = 0;
+            static guint64 last_crop_time = 0;
             guint64 crop_interval = 1000000 / CROP_MAX_FPS;
+            int crops_this_frame = 0;
+            const int MAX_CROPS_PER_FRAME = 6;
             std::vector<const NvDsObjectMeta*> crop_objs;
 
             for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
@@ -319,8 +321,9 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                                 ts_sec, sid, tk->object_id, cls_name, om->confidence);
                 }
 
-                /* Crop encoding */
-                if (true) {
+                /* Crop encoding (up to MAX_CROPS_PER_FRAME per frame, rate-limited) */
+                if (crops_this_frame < MAX_CROPS_PER_FRAME &&
+                    now - last_crop_time >= crop_interval) {
                     NvDsObjEncUsrArgs objData = {};
                     objData.saveImg = FALSE;
                     objData.attachUsrMeta = TRUE;
@@ -334,6 +337,8 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                         if (surf) {
                             nvds_obj_enc_process(g_crop_enc_ctx, &objData, surf, om, fm);
                             crop_objs.push_back(om);
+                            last_crop_time = now;
+                            crops_this_frame++;
                         }
                         gst_buffer_unmap(buf, &inmap);
                     }
