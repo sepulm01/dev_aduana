@@ -320,7 +320,7 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                 }
 
                 /* Crop encoding */
-                if (now - last_crop_sent >= crop_interval) {
+                if (true) {
                     NvDsObjEncUsrArgs objData = {};
                     objData.saveImg = FALSE;
                     objData.attachUsrMeta = TRUE;
@@ -334,7 +334,6 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                         if (surf) {
                             nvds_obj_enc_process(g_crop_enc_ctx, &objData, surf, om, fm);
                             crop_objs.push_back(om);
-                            last_crop_sent = now;
                         }
                         gst_buffer_unmap(buf, &inmap);
                     }
