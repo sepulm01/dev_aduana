@@ -195,6 +195,7 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /dev/dri:/dev/dri:rw
+      - ./computer_vision/app:/opt/computer_vision/app
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
       - ./computer_vision/record:/opt/computer_vision/record
