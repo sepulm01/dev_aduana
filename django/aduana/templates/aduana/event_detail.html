@@ -73,12 +73,14 @@
             <div class="seal-row seal-row-{{ row|length }}">
             {% for cell in row %}
                 <div class="seal-cell seal-{{ cell.css }}">
-                    <div class="seal-pos">{{ cell.pos }}</div>
-                    {% if cell.crop %}
-                    <a href="/media/{{ cell.crop }}" target="_blank">
-                        <img src="/media/{{ cell.crop }}" class="seal-crop">
-                    </a>
-                    {% endif %}
+                    <div class="seal-imgwrap">
+                        {% if cell.crop %}
+                        <a href="/media/{{ cell.crop }}" target="_blank">
+                            <img src="/media/{{ cell.crop }}" class="seal-crop">
+                        </a>
+                        {% endif %}
+                        <span class="seal-pos-badge">{{ cell.pos }}</span>
+                    </div>
                     <div class="seal-status">{{ cell.label }}</div>
                     {% if cell.conf %}<div class="seal-conf">{{ cell.conf }} · n={{ cell.n }}</div>{% endif %}
                 </div>
@@ -94,7 +96,13 @@
 .seal-row-2 { grid-template-columns: repeat(2, 1fr); }
 .seal-row-4 { grid-template-columns: repeat(4, 1fr); }
 .seal-cell { border: 1px solid #ccc; border-radius: 6px; padding: 10px; text-align: center; }
-.seal-pos { font-weight: bold; font-size: 1.1em; }
+.seal-imgwrap { position: relative; display: inline-block; }
+.seal-pos-badge {
+    position: absolute; top: 2px; left: 2px;
+    background: #1f2937; color: #fff; font-weight: bold;
+    border-radius: 4px; padding: 1px 8px; font-size: 1.05em;
+    line-height: 1.4; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+}
 .seal-con_sello { background: #d4edda; border-color: #28a745; }
 .seal-sin_sello { background: #f8d7da; border-color: #dc3545; }
 .seal-sin_deteccion { background: #e2e3e5; border-color: #adb5bd; }
