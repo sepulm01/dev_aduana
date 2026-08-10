@@ -38,6 +38,32 @@
     </div>
 </div>
 
+{% if seal_cells %}
+<div class="card mt-4">
+    <div class="card-header">Grilla de Sellos (puerta vista desde atrás)</div>
+    <div class="card-body">
+        <div class="seal-grid">
+        {% for cell in seal_cells %}
+            <div class="seal-cell seal-{{ cell.css }}">
+                <div class="seal-pos">{{ cell.pos }}</div>
+                <div class="seal-status">{{ cell.label }}</div>
+                {% if cell.conf %}<div class="seal-conf">{{ cell.conf }} · n={{ cell.n }}</div>{% endif %}
+            </div>
+        {% endfor %}
+        </div>
+    </div>
+</div>
+<style>
+.seal-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 640px; }
+.seal-cell { border: 1px solid #ccc; border-radius: 6px; padding: 10px; text-align: center; }
+.seal-pos { font-weight: bold; font-size: 1.1em; }
+.seal-con_sello { background: #d4edda; border-color: #28a745; }
+.seal-sin_sello { background: #f8d7da; border-color: #dc3545; }
+.seal-sin_deteccion { background: #e2e3e5; border-color: #adb5bd; }
+.seal-conf { font-size: 0.75em; color: #666; margin-top: 4px; }
+</style>
+{% endif %}
+
 <h3 class="mt-4">Detecciones ({{ detections.count }})</h3>
 <table class="table table-sm table-striped">
     <thead>

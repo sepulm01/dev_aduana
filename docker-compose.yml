@@ -57,6 +57,9 @@ services:
       - ./mediamtx/mediamtx.yml:/app/mediamtx.yml
       - ./django/aduana/models.py:/app/aduana/models.py:ro
       - ./django/aduana/tasks.py:/app/aduana/tasks.py:ro
+      - ./django/aduana/views.py:/app/aduana/views.py:ro
+      - ./django/aduana/templates:/app/aduana/templates:ro
+      - ./django/aduana/migrations:/app/aduana/migrations:ro
       - ./django/config/urls.py:/app/config/urls.py:ro
     depends_on:
       postgres:
@@ -99,6 +102,7 @@ services:
       - ./django/media:/app/media
       - ./django/aduana/models.py:/app/aduana/models.py:ro
       - ./django/aduana/tasks.py:/app/aduana/tasks.py:ro
+      - ./django/aduana/migrations:/app/aduana/migrations:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -164,6 +168,7 @@ services:
       - ./django/aduana/models.py:/app/aduana/models.py:ro
       - ./django/aduana/tasks.py:/app/aduana/tasks.py:ro
       - ./django/aduana/management/commands/crop_receiver.py:/app/aduana/management/commands/crop_receiver.py:ro
+      - ./django/aduana/migrations:/app/aduana/migrations:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -587,6 +587,7 @@ def _finalize_event(event):
     )
 
     ocr_event.delay(event.id)
+    analyze_seals.delay(event.id)
 
 
 def _find_temporal_clusters(detections):
@@ -726,3 +727,173 @@ def _get_event_avg_color(event):
     avg_s = sum(c[1] for c in colors) / len(colors)
     avg_v = sum(c[2] for c in colors) / len(colors)
     return avg_h, avg_s, avg_v
+
+
+# ---------------------------------------------------------------------------
+# Seal grid analysis (door positions 1-8)
+# ---------------------------------------------------------------------------
+
+SEAL_CLUSTER_DIST = 0.03      # max normalized distance to merge track fragments
+SEAL_ROW_GAP = 0.02           # min y gap between top/bottom rows
+SEAL_COL_GAP_FACTOR = 1.5     # column gap = factor x median column spacing
+
+
+def _seal_grid_for_source(event, sid):
+    """Build door-position map for one camera using velocity-compensated
+    canonical positions. Returns dict {pos: {...}} or None."""
+    import numpy as np
+
+    dets = list(
+        event.detections.filter(source_id=sid, class_id__in=[0, 1])
+        .order_by("timestamp")
+        .values("object_id", "class_id", "confidence", "timestamp",
+                "bbox_left", "bbox_top", "bbox_width", "bbox_height")
+    )
+    if not dets:
+        return None
+
+    t0 = dets[0]["timestamp"].timestamp()
+    tracks = {}
+    for d in dets:
+        cx = d["bbox_left"] + d["bbox_width"] / 2
+        cy = d["bbox_top"] + d["bbox_height"] / 2
+        tracks.setdefault(d["object_id"], []).append(
+            (d["timestamp"].timestamp() - t0, cx, cy, d["class_id"], d["confidence"])
+        )
+
+    # Shared velocity: the door is rigid, all seals translate together.
+    vels = []
+    for oid, pts in tracks.items():
+        if len(pts) < 3:
+            continue
+        ts = np.array([p[0] for p in pts])
+        xs = np.array([p[1] for p in pts])
+        ys = np.array([p[2] for p in pts])
+        vels.append((np.polyfit(ts, xs, 1)[0], np.polyfit(ts, ys, 1)[0]))
+    vx = float(np.median([v[0] for v in vels])) if vels else 0.0
+    vy = float(np.median([v[1] for v in vels])) if vels else 0.0
+
+    t_ref = (dets[-1]["timestamp"].timestamp() - t0) / 2
+
+    # Canonical position per track: collapse each trajectory to t_ref.
+    canons = []
+    for oid, pts in tracks.items():
+        ts = np.array([p[0] for p in pts])
+        xs = np.array([p[1] for p in pts])
+        ys = np.array([p[2] for p in pts])
+        cx = float(np.mean(xs + vx * (t_ref - ts)))
+        cy = float(np.mean(ys + vy * (t_ref - ts)))
+        cls = Counter(p[3] for p in pts).most_common(1)[0][0]
+        conf = float(np.mean([p[4] for p in pts]))
+        canons.append({"x": cx, "y": cy, "cls": cls, "conf": conf, "n": len(pts)})
+
+    if not canons:
+        return None
+
+    # Cluster fragments of the same physical seal (biggest tracks first).
+    clusters = []
+    for c in sorted(canons, key=lambda c: -c["n"]):
+        placed = False
+        for cl in clusters:
+            if (cl["x"] - c["x"]) ** 2 + (cl["y"] - c["y"]) ** 2 < SEAL_CLUSTER_DIST ** 2:
+                tot = cl["n"] + c["n"]
+                cl["x"] = (cl["x"] * cl["n"] + c["x"] * c["n"]) / tot
+                cl["y"] = (cl["y"] * cl["n"] + c["y"] * c["n"]) / tot
+                cl["conf"] = (cl["conf"] * cl["n"] + c["conf"] * c["n"]) / tot
+                cl["votes"][c["cls"]] = cl["votes"].get(c["cls"], 0) + c["n"]
+                cl["n"] = tot
+                placed = True
+                break
+        if not placed:
+            clusters.append({"x": c["x"], "y": c["y"], "conf": c["conf"],
+                             "n": c["n"], "votes": {c["cls"]: c["n"]}})
+
+    # Split rows by largest y gap.
+    clusters.sort(key=lambda c: c["y"])
+    if len(clusters) < 2:
+        rows = [clusters, []]
+    else:
+        gaps = [(clusters[i + 1]["y"] - clusters[i]["y"], i)
+                for i in range(len(clusters) - 1)]
+        max_gap, split_i = max(gaps)
+        if max_gap > SEAL_ROW_GAP:
+            rows = [clusters[:split_i + 1], clusters[split_i + 1:]]
+        else:
+            rows = [clusters, []]
+
+    grid = {}
+    for row_i, row in enumerate(rows):
+        row = sorted(row, key=lambda c: c["x"])
+        if not row:
+            continue
+        xs = [c["x"] for c in row]
+        spacings = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
+        med_sp = float(np.median(spacings)) if spacings else 0.0
+        col = 0
+        for i, c in enumerate(row):
+            if i == 0:
+                col = 1
+            else:
+                gap = xs[i] - xs[i - 1]
+                if med_sp > 0 and gap > SEAL_COL_GAP_FACTOR * med_sp:
+                    col += max(2, int(round(gap / med_sp)))
+                else:
+                    col += 1
+            col = min(col, 4)
+            pos = row_i * 4 + col
+            status = "con_sello" if max(c["votes"], key=c["votes"].get) == 0 else "sin_sello"
+            grid[str(pos)] = {
+                "status": status,
+                "conf": round(c["conf"], 3),
+                "n": c["n"],
+                "src": sid,
+            }
+    return grid
+
+
+def _merge_seal_grids(g0, g1):
+    """Union of both cameras' grids; same physical position in both.
+    Prefer the reading with more detections."""
+    if not g0 and not g1:
+        return {}
+    if not g0:
+        return g1
+    if not g1:
+        return g0
+    merged = dict(g0)
+    for pos, info in g1.items():
+        if pos not in merged or info.get("n", 0) > merged[pos].get("n", 0):
+            merged[pos] = info
+    return merged
+
+
+@shared_task
+def analyze_seals(event_id):
+    """Assign door positions 1-8 to seal detections of an event.
+
+    The door layout is fixed: top row 1-4, bottom row 5-8 (seen from behind,
+    same orientation in both cameras). Computed with velocity-compensated
+    canonical positions so truck movement and tracker fragmentation do not
+    affect the assignment.
+    """
+    from aduana.models import ContainerEvent
+
+    try:
+        event = ContainerEvent.objects.get(id=event_id)
+    except ContainerEvent.DoesNotExist:
+        return
+
+    grids = {}
+    for sid in (0, 1):
+        g = _seal_grid_for_source(event, sid)
+        if g:
+            grids[sid] = g
+
+    merged = _merge_seal_grids(grids.get(0), grids.get(1))
+    for pos in range(1, 9):
+        merged.setdefault(str(pos), {"status": "sin detección"})
+
+    event.seal_grid = merged
+    event.save(update_fields=["seal_grid"])
+    found = sum(1 for v in merged.values() if v["status"] != "sin detección")
+    logger.info("Event %s seal grid: %d/8 positions detected", event_id, found)

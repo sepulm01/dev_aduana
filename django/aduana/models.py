@@ -14,6 +14,7 @@ class ContainerEvent(models.Model):
         max_length=16, default="processing", choices=SEAL_CHOICES
     )
     seal_confidence = models.FloatField(default=0.0)
+    seal_grid = models.JSONField(default=dict, blank=True)
     timestamp_start = models.DateTimeField(db_index=True)
     timestamp_end = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -18,5 +18,29 @@ def event_detail(request, event_id):
     return render(
         request,
         "aduana/event_detail.html",
-        {"event": event, "detections": detections},
+        {"event": event, "detections": detections, "seal_cells": _seal_cells(event)},
     )
+
+
+def _seal_cells(event):
+    """Build the 2x4 door grid cells from event.seal_grid for the template."""
+    grid = event.seal_grid or {}
+    if not grid:
+        return None
+    labels = {
+        "con_sello": ("✔ con sello", "con_sello"),
+        "sin_sello": ("✖ sin sello", "sin_sello"),
+    }
+    cells = []
+    for pos in range(1, 9):
+        info = grid.get(str(pos)) or {}
+        status = info.get("status", "sin detección")
+        label, css = labels.get(status, ("— sin detección", "sin_deteccion"))
+        cells.append({
+            "pos": pos,
+            "label": label,
+            "css": css,
+            "conf": info.get("conf"),
+            "n": info.get("n"),
+        })
+    return cells

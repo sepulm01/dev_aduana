@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('aduana', '0001_initial'),
+        ('aduana', '0002_frame_num'),
     ]
 
     operations = [
