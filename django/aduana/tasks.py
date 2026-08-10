@@ -814,8 +814,9 @@ def capture_event_frames(event_id):
 
 
 SEAL_CLUSTER_DIST = 0.03      # max normalized distance to merge track fragments
-SEAL_ROW_GAP = 0.02           # min y gap between top/bottom rows
-SEAL_COL_GAP_FACTOR = 1.5     # column gap = factor x median column spacing
+SEAL_ROW_GAP = 0.035          # min y gap between door rows
+SEAL_COL_GAP_FACTOR = 1.8     # column gap = factor x median column spacing
+SEAL_ROW_LAYOUT = [2, 2, 4]   # columns per row: top 1-2, middle 3-4, bottom 5-8
 
 
 def _seal_grid_for_source(event, sid):
@@ -888,29 +889,51 @@ def _seal_grid_for_source(event, sid):
             clusters.append({"x": c["x"], "y": c["y"], "conf": c["conf"],
                              "n": c["n"], "votes": {c["cls"]: c["n"]}})
 
-    # Split rows by largest y gap.
+    # Split into row bands (top 1-2 / middle 3-4 / bottom 5-8) by y gaps.
     clusters.sort(key=lambda c: c["y"])
-    if len(clusters) < 2:
-        rows = [clusters, []]
-    else:
-        gaps = [(clusters[i + 1]["y"] - clusters[i]["y"], i)
-                for i in range(len(clusters) - 1)]
-        max_gap, split_i = max(gaps)
-        if max_gap > SEAL_ROW_GAP:
-            rows = [clusters[:split_i + 1], clusters[split_i + 1:]]
+    bands = [[clusters[0]]]
+    for i in range(1, len(clusters)):
+        if clusters[i]["y"] - clusters[i - 1]["y"] > SEAL_ROW_GAP:
+            bands.append([])
+        bands[-1].append(clusters[i])
+
+    # Merge down to at most 3 bands (smallest band merges into nearest by y).
+    while len(bands) > 3:
+        sizes = [sum(c["n"] for c in b) for b in bands]
+        centers = [float(np.mean([c["y"] for c in b])) for b in bands]
+        i = sizes.index(min(sizes))
+        if i == 0:
+            tgt = 1
+        elif i == len(bands) - 1:
+            tgt = i - 1
         else:
-            rows = [clusters, []]
+            tgt = (i - 1 if abs(centers[i - 1] - centers[i]) < abs(centers[i + 1] - centers[i])
+                   else i + 1)
+        bands[tgt].extend(bands[i])
+        del bands[i]
+
+    # Map bands to layout rows: [top(1-2), middle(3-4), bottom(5-8)]
+    if len(bands) == 3:
+        row_idx = [0, 1, 2]
+    elif len(bands) == 2:
+        c0 = float(np.mean([c["y"] for c in bands[0]]))
+        c1 = float(np.mean([c["y"] for c in bands[1]]))
+        row_idx = [0, 2] if abs(c1 - c0) > 2 * SEAL_ROW_GAP else [0, 1]
+    else:
+        row_idx = [2]  # single band: bottom row (the 4 seal points)
 
     grid = {}
-    for row_i, row in enumerate(rows):
-        row = sorted(row, key=lambda c: c["x"])
-        if not row:
-            continue
-        xs = [c["x"] for c in row]
+    for band_i, band in enumerate(bands):
+        r = row_idx[band_i]
+        ncols = SEAL_ROW_LAYOUT[r]
+        base = 1 + sum(SEAL_ROW_LAYOUT[:r])  # first position of the row: 1, 3, 5
+
+        band = sorted(band, key=lambda c: c["x"])
+        xs = [c["x"] for c in band]
         spacings = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
         med_sp = float(np.median(spacings)) if spacings else 0.0
         col = 0
-        for i, c in enumerate(row):
+        for i, c in enumerate(band):
             if i == 0:
                 col = 1
             else:
@@ -919,15 +942,18 @@ def _seal_grid_for_source(event, sid):
                     col += max(2, int(round(gap / med_sp)))
                 else:
                     col += 1
-            col = min(col, 4)
-            pos = row_i * 4 + col
+            col = min(col, ncols)
+            pos = base + col - 1
             status = "con_sello" if max(c["votes"], key=c["votes"].get) == 0 else "sin_sello"
-            grid[str(pos)] = {
+            cell = {
                 "status": status,
                 "conf": round(c["conf"], 3),
                 "n": c["n"],
                 "src": sid,
             }
+            # Keep the cluster with more detections on column collisions
+            if str(pos) not in grid or grid[str(pos)]["n"] < c["n"]:
+                grid[str(pos)] = cell
     return grid
 
 

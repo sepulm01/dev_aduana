@@ -68,19 +68,26 @@
 <div class="card mt-4">
     <div class="card-header">Grilla de Sellos (puerta vista desde atrás)</div>
     <div class="card-body">
-        <div class="seal-grid">
-        {% for cell in seal_cells %}
-            <div class="seal-cell seal-{{ cell.css }}">
-                <div class="seal-pos">{{ cell.pos }}</div>
-                <div class="seal-status">{{ cell.label }}</div>
-                {% if cell.conf %}<div class="seal-conf">{{ cell.conf }} · n={{ cell.n }}</div>{% endif %}
+        <div class="seal-rows">
+        {% for row in seal_cells %}
+            <div class="seal-row seal-row-{{ row|length }}">
+            {% for cell in row %}
+                <div class="seal-cell seal-{{ cell.css }}">
+                    <div class="seal-pos">{{ cell.pos }}</div>
+                    <div class="seal-status">{{ cell.label }}</div>
+                    {% if cell.conf %}<div class="seal-conf">{{ cell.conf }} · n={{ cell.n }}</div>{% endif %}
+                </div>
+            {% endfor %}
             </div>
         {% endfor %}
         </div>
     </div>
 </div>
 <style>
-.seal-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 640px; }
+.seal-rows { display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
+.seal-row { display: grid; gap: 8px; }
+.seal-row-2 { grid-template-columns: repeat(2, 1fr); }
+.seal-row-4 { grid-template-columns: repeat(4, 1fr); }
 .seal-cell { border: 1px solid #ccc; border-radius: 6px; padding: 10px; text-align: center; }
 .seal-pos { font-weight: bold; font-size: 1.1em; }
 .seal-con_sello { background: #d4edda; border-color: #28a745; }

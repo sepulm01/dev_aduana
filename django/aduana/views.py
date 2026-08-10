@@ -23,7 +23,11 @@ def event_detail(request, event_id):
 
 
 def _seal_cells(event):
-    """Build the 2x4 door grid cells from event.seal_grid for the template."""
+    """Build the door seal grid cells from event.seal_grid for the template.
+
+    Physical layout (door seen from behind): top row 1-2, middle row 3-4,
+    bottom row 5-8.
+    """
     grid = event.seal_grid or {}
     if not grid:
         return None
@@ -31,16 +35,19 @@ def _seal_cells(event):
         "con_sello": ("✔ con sello", "con_sello"),
         "sin_sello": ("✖ sin sello", "sin_sello"),
     }
-    cells = []
-    for pos in range(1, 9):
-        info = grid.get(str(pos)) or {}
-        status = info.get("status", "sin detección")
-        label, css = labels.get(status, ("— sin detección", "sin_deteccion"))
-        cells.append({
-            "pos": pos,
-            "label": label,
-            "css": css,
-            "conf": info.get("conf"),
-            "n": info.get("n"),
-        })
-    return cells
+    rows = []
+    for row_positions in ([1, 2], [3, 4], [5, 6, 7, 8]):
+        cells = []
+        for pos in row_positions:
+            info = grid.get(str(pos)) or {}
+            status = info.get("status", "sin detección")
+            label, css = labels.get(status, ("— sin detección", "sin_deteccion"))
+            cells.append({
+                "pos": pos,
+                "label": label,
+                "css": css,
+                "conf": info.get("conf"),
+                "n": info.get("n"),
+            })
+        rows.append(cells)
+    return rows
