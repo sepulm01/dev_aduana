@@ -42,6 +42,7 @@ computer_vision/config/core
 # DeepStream models (large binary files)
 *.pt
 *.onnx
+*.onnx.data
 *.engine
 *.tlt
 *.trt
