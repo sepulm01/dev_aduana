@@ -66,3 +66,10 @@ computer_vision/app/pipeline-test3
 # Generated DeepStream configs (contain credentials)
 computer_vision/config/config*.yml
 computer_vision/config/config_nvdsanalytics.txt
+# Test/prod binaries compiled in-tree (persist via volume mount)
+computer_vision/app/aduana-test
+computer_vision/app/aduana-prod
+
+# Runtime outputs
+computer_vision/record/trucks.csv
+ocr_vl/models/

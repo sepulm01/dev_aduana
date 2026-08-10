@@ -14,7 +14,7 @@ from shapely.geometry import Point, Polygon
 logger = logging.getLogger("crop_receiver")
 
 END_MARKER = b"END!"
-HEADER_FMT = "<IIIQ5fIQI"
+HEADER_FMT = "<IIIQ5fIQIQ"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
 GAP_THRESHOLD = 3.0
@@ -187,6 +187,7 @@ class CropReceiver:
                     frame_num = pkt[9]
                     timestamp_ms = pkt[10]
                     jpeg_size = pkt[11]
+                    truck_id = pkt[12]
 
                     if len(jpeg_bytes) != jpeg_size:
                         logger.warning(
@@ -200,6 +201,7 @@ class CropReceiver:
                             source_id=source_id,
                             class_id=class_id,
                             object_id=object_id,
+                            truck_id=truck_id,
                             confidence=confidence,
                             bbox_left=bbox_left,
                             bbox_top=bbox_top,
@@ -220,7 +222,7 @@ class CropReceiver:
             except Exception:
                 pass
 
-    def _process_crop(self, device_id, source_id, class_id, object_id,
+    def _process_crop(self, device_id, source_id, class_id, object_id, truck_id,
                       confidence, bbox_left, bbox_top, bbox_width, bbox_height,
                       frame_num, timestamp_ms, jpeg_bytes):
         from django.utils import timezone as dj_timezone
@@ -242,6 +244,7 @@ class CropReceiver:
                 source_id=source_id,
                 class_id=class_id,
                 object_id=object_id,
+                truck_id=truck_id,
                 frame_num=frame_num,
                 confidence=confidence,
                 bbox_left=bbox_left,
@@ -274,17 +277,60 @@ class CropReceiver:
 
             detection.save()
 
-            if class_id == 3 and not detection.ocr_processed:
-                from aduana.tasks import process_ocr
-                process_ocr.delay(detection.id)
+            # OCR runs once per event at close time (ocr_event task), not per crop.
 
         except Exception as e:
             logger.error("_process_crop error: %s", e)
+
+    CROSS_CAM_WINDOW = 12.0  # seconds: same physical truck seen by the other camera
 
     def _find_or_create_event(self, detection):
         from aduana.models import ContainerEvent
 
         ts = detection.timestamp
+
+        # Truck-based grouping: one event per physical truck passage.
+        # The pipeline only sends crops for objects inside an active truck,
+        # so every detection carries truck_id (> 0) and source_id.
+        if detection.truck_id:
+            event = (
+                ContainerEvent.objects
+                .filter(
+                    seal_status="processing",
+                    detections__source_id=detection.source_id,
+                    detections__truck_id=detection.truck_id,
+                    detections__timestamp__gte=ts - timedelta(seconds=20),
+                )
+                .order_by("-timestamp_start")
+                .first()
+            )
+            if event:
+                return event
+
+            # New truck on this camera: reuse an open event from the OTHER camera
+            # if it overlaps in time and color matches (same physical truck).
+            new_color = (detection.dominant_color_h, detection.dominant_color_s,
+                         detection.dominant_color_v)
+            recent_open = (
+                ContainerEvent.objects
+                .filter(seal_status="processing",
+                        timestamp_start__gte=ts - timedelta(seconds=self.CROSS_CAM_WINDOW))
+                .order_by("-timestamp_start")
+            )
+            for cand in recent_open:
+                cand_colors = [
+                    (d.dominant_color_h, d.dominant_color_s, d.dominant_color_v)
+                    for d in cand.detections.all()[:20]
+                    if d.dominant_color_h is not None
+                ]
+                if new_color[0] is not None and cand_colors:
+                    avg = tuple(sum(c[i] for c in cand_colors) / len(cand_colors) for i in range(3))
+                    if _hsv_distance(new_color, avg) > COLOR_THRESHOLD:
+                        continue  # different container color → different truck
+                return cand
+
+            return ContainerEvent.objects.create(seal_status="processing", timestamp_start=ts)
+
         window_start = ts - timedelta(seconds=15)
 
         event = (
@@ -347,6 +393,16 @@ class Command(BaseCommand):
     def handle(self, **options):
         host = os.environ.get("CROP_RECEIVER_HOST", "0.0.0.0")
         port = int(os.environ.get("CROP_RECEIVER_PORT", 12347))
+        try:
+            from aduana.tasks import check_ocr_vl_health
+            if not check_ocr_vl_health():
+                self.stderr.write(self.style.ERROR(
+                    "*** ALARMA: OCR-VL no responde. El OCR NO funcionara. ***"
+                ))
+        except ImportError:
+            self.stderr.write(self.style.WARNING(
+                "check_ocr_vl_health no disponible, omitiendo health check"
+            ))
         receiver = CropReceiver(host, port)
         try:
             receiver.start()

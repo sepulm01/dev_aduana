@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from collections import Counter
 from datetime import timedelta
 
@@ -8,12 +9,46 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+OCR_VL_URL = "http://ocr-vl:5002"
+_ocr_vl_down_logged = False
+_ocr_vl_health = {"ok": None, "ts": 0.0}
+
 GAP_CLUSTER_THRESHOLD = 3.0
 COLOR_SPLIT_THRESHOLD = 0.25
 COLOR_MERGE_THRESHOLD = 0.20
 MERGE_WINDOW = 30
 MIN_CLUSTER_SIZE = 3
 GAP_CROSS_SOURCE = 5.0
+OCR_EVENT_MAX_CROPS = 12
+OCR_EVENT_MAX_PER_OBJ = 3
+
+
+def check_ocr_vl_health(ttl=30.0):
+    global _ocr_vl_down_logged
+    now = time.monotonic()
+    if _ocr_vl_health["ts"] and now - _ocr_vl_health["ts"] < ttl:
+        return _ocr_vl_health["ok"]
+
+    ok = False
+    try:
+        import requests
+        resp = requests.get(f"{OCR_VL_URL}/health", timeout=3)
+        ok = resp.status_code == 200
+    except Exception:
+        ok = False
+
+    _ocr_vl_health["ok"] = ok
+    _ocr_vl_health["ts"] = now
+
+    if ok:
+        if _ocr_vl_down_logged:
+            logger.critical("*** ALARMA RESUELTA: OCR-VL vuelve a responder ***")
+            _ocr_vl_down_logged = False
+    elif not _ocr_vl_down_logged:
+        logger.critical("*** ALARMA: OCR-VL (%s) no responde. El OCR de contenedores NO funcionara. ***",
+                        OCR_VL_URL)
+        _ocr_vl_down_logged = True
+    return ok
 
 
 def _hsv_distance(c1, c2):
@@ -33,19 +68,42 @@ def process_ocr(detection_id):
         logger.warning("process_ocr: detection %s not found", detection_id)
         return
 
-    if detection.class_id != 3:
+    if detection.class_id != 3 or detection.ocr_processed:
+        return
+
+    # Only the best crop per (event, object_id) runs OCR — the rest are near-duplicates.
+    if detection.event_id:
+        siblings = ContainerDetection.objects.filter(
+            event_id=detection.event_id,
+            object_id=detection.object_id,
+            class_id=3,
+        )
+        best = siblings.order_by("-confidence", "-id").first()
+        if best and best.id != detection.id:
+            detection.ocr_processed = True
+            detection.save(update_fields=["ocr_processed"])
+            return
+        # If a sibling already produced text, no need to OCR again
+        if siblings.exclude(id=detection.id).filter(
+            ocr_processed=True, ocr_text__gt=""
+        ).exists():
+            detection.ocr_processed = True
+            detection.save(update_fields=["ocr_processed"])
+            return
+
+    if not check_ocr_vl_health():
         return
 
     try:
         result = _run_paddle_ocr(detection.crop.path)
     except Exception as e:
-        logger.error("PaddleOCR failed for detection %s: %s", detection_id, e)
+        logger.critical("*** ALARMA: OCR-VL error irrecuperable para deteccion %s: %s", detection_id, e)
         detection.ocr_processed = True
         detection.save(update_fields=["ocr_processed"])
         return
 
     if result:
-        detection.ocr_text = result["text"]
+        detection.ocr_text = result["text"][:64]
         detection.ocr_confidence = result["confidence"]
         detection.ocr_texts = result["regions"]
         detection.ocr_processed = True
@@ -67,79 +125,37 @@ def process_ocr(detection_id):
 
 def _run_paddle_ocr(image_path):
     try:
-        result = _run_ocr_vl(image_path)
-        if result:
-            return result
+        return _run_ocr_vl(image_path)
     except Exception as e:
-        logger.warning("OCR-VL failed, falling back to PaddleOCR: %s", e)
-
-    try:
-        from paddleocr import PaddleOCR
-    except ImportError:
-        logger.error("PaddleOCR not installed")
+        logger.error("OCR-VL failed: %s", e)
         return None
 
-    ocr = PaddleOCR(lang="en", use_angle_cls=True, show_log=False, det_db_thresh=0.15)
-    results = ocr.ocr(image_path)
 
-    if not results or not results[0]:
-        return None
-
-    from PIL import Image
-
-    img = Image.open(image_path)
-    img_w, img_h = img.size
-
-    regions = []
-    best_text = ""
-    best_conf = 0.0
-
-    for region in results[0]:
-        text = region[1][0].strip()
-        conf = float(region[1][1])
-        if text and conf >= 0.6:
-            bbox = region[0]
-            normalized_bbox = [[p[0] / img_w, p[1] / img_h] for p in bbox]
-            regions.append([text, conf, normalized_bbox])
-            if conf > best_conf:
-                best_text = text
-                best_conf = conf
-
-    if not regions:
-        return None
-
-    return {
-        "text": best_text,
-        "confidence": best_conf,
-        "regions": regions,
-    }
+def _ocr_vl_call(image_path, endpoint):
+    import requests
+    with open(image_path, "rb") as f:
+        resp = requests.post(f"{OCR_VL_URL}/{endpoint}", files={"file": f}, timeout=30)
+    if resp.status_code != 200:
+        return ""
+    text = resp.json().get("text", "")
+    # Spotting output appends location tokens like <|LOC_81|>
+    return re.sub(r"<\|[A-Z]+_\d+\|>", "", text).strip()
 
 
 def _run_ocr_vl(image_path):
     try:
-        import requests
-    except ImportError:
-        return None
+        from PIL import Image
+        img = Image.open(image_path)
+        tall = img.size[1] > img.size[0] * 1.2  # vertical text reads better via spotting
+    except Exception:
+        tall = False
 
-    OCR_VL_URL = "http://ocr-vl:5002"
-
+    order = ("spotting", "ocr") if tall else ("ocr", "spotting")
     try:
-        with open(image_path, "rb") as f:
-            # Try OCR mode first
-            resp = requests.post(f"{OCR_VL_URL}/ocr", files={"file": f}, timeout=10)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        raw_text = data.get("text", "").strip()
-
-        # If OCR mode returned nothing, try spotting mode (for vertical text)
-        if not raw_text:
-            with open(image_path, "rb") as f:
-                resp2 = requests.post(f"{OCR_VL_URL}/spotting", files={"file": f}, timeout=10)
-            if resp2.status_code == 200:
-                data2 = resp2.json()
-                raw_text = data2.get("text", "").strip()
-
+        for endpoint in order:
+            raw_text = _ocr_vl_call(image_path, endpoint)
+            if raw_text:
+                break
         if not raw_text:
             return None
 
@@ -157,6 +173,80 @@ def _run_ocr_vl(image_path):
 
 
 @shared_task
+def ocr_event(event_id):
+    """OCR the best class-3 crops of an event (called once at event close).
+
+    Picks up to OCR_EVENT_MAX_CROPS crops, preferring high confidence and
+    distinct objects, then aggregates the candidates.
+    """
+    from aduana.models import ContainerDetection, ContainerEvent
+
+    try:
+        event = ContainerEvent.objects.get(id=event_id)
+    except ContainerEvent.DoesNotExist:
+        return
+
+    dets = list(
+        ContainerDetection.objects.filter(event=event, class_id=3)
+        .order_by("-confidence")
+    )
+    if not dets:
+        return
+
+    # Prefer distinct objects: at most N crops per object_id
+    picked = []
+    per_obj = Counter()
+    for d in dets:
+        if per_obj[d.object_id] >= OCR_EVENT_MAX_PER_OBJ:
+            continue
+        picked.append(d)
+        per_obj[d.object_id] += 1
+        if len(picked) >= OCR_EVENT_MAX_CROPS:
+            break
+
+    check_ocr_vl_health()  # alarm logging only; never gates the OCR pass
+
+    for d in picked:
+        if d.ocr_processed and d.ocr_text:
+            continue
+        try:
+            result = _run_paddle_ocr(d.crop.path)
+        except Exception as e:
+            logger.error("ocr_event %s det %s: %s", event_id, d.id, e)
+            result = None
+        if result:
+            d.ocr_text = result["text"][:64]
+            d.ocr_confidence = result["confidence"]
+            d.ocr_texts = result["regions"]
+            d.save(update_fields=["ocr_text", "ocr_confidence", "ocr_texts"])
+            logger.info("ocr_event %s det %s: %r", event_id, d.id, result["text"])
+        d.ocr_processed = True
+        d.save(update_fields=["ocr_processed"])
+
+    aggregate_ocr_results(event_id)
+
+    # Second pass on remaining crops if no code was found
+    event.refresh_from_db()
+    if not event.container_code:
+        rest = [d for d in dets if d not in picked and not (d.ocr_processed and d.ocr_text)]
+        for d in rest[:OCR_EVENT_MAX_CROPS]:
+            try:
+                result = _run_paddle_ocr(d.crop.path)
+            except Exception:
+                result = None
+            if result:
+                d.ocr_text = result["text"][:64]
+                d.ocr_confidence = result["confidence"]
+                d.ocr_texts = result["regions"]
+                d.save(update_fields=["ocr_text", "ocr_confidence", "ocr_texts"])
+                logger.info("ocr_event %s pass2 det %s: %r", event_id, d.id, result["text"])
+            d.ocr_processed = True
+            d.save(update_fields=["ocr_processed"])
+        if rest:
+            aggregate_ocr_results(event_id)
+
+
+@shared_task
 def aggregate_ocr_results(event_id):
     from aduana.models import ContainerDetection, ContainerEvent
 
@@ -170,56 +260,66 @@ def aggregate_ocr_results(event_id):
         event=event, class_id=3, ocr_processed=True
     )
 
-    if detections.count() < 2:
+    if not detections.exists():
         return
 
-    candidates = []
-
+    # Vote: one vote per detection per code (best tier wins inside a detection).
+    # code -> [points, distinct raw reads, strict reads, detection ids]
+    TIER_PTS = {"strict": 2, "repaired": 1, "raw": 0}
+    TIER_RANK = {"strict": 2, "repaired": 1, "raw": 0}
+    votes = {}
     for d in detections:
-        regions = d.ocr_texts or []
-        if not regions:
-            continue
+        per_code = {}
+        for code, tier, rawseg in _extract_codes(d):
+            if code not in per_code or TIER_RANK[tier] > TIER_RANK[per_code[code][0]]:
+                per_code[code] = (tier, rawseg)
+        for code, (tier, rawseg) in per_code.items():
+            ent = votes.setdefault(code, [0, set(), 0, set()])
+            ent[0] += TIER_PTS[tier]
+            ent[1].add(rawseg)
+            ent[3].add(d.id)
+            if tier == "strict":
+                ent[2] += 1
 
-        regions_filtered = [r for r in regions if len(r) >= 2 and r[1] >= 0.6]
-        if not regions_filtered:
-            continue
-
-        has_bbox = any(len(r) >= 3 and len(r[2]) > 0 for r in regions_filtered)
-
-        if has_bbox:
-            regions_with_bbox = [r for r in regions_filtered if len(r) >= 3 and len(r[2]) > 0]
-            regions_with_bbox.sort(key=lambda r: r[2][0][0])
-            ordered = regions_with_bbox
-        else:
-            ordered = regions_filtered
-
-        full_text = "".join(r[0].upper() for r in ordered)
-
-        found = re.findall(r"[A-Z]{4}\d{7}", full_text)
-        for code in found:
-            if es_contenedor_valido(code):
-                candidates.append(code)
-
-        if d.ocr_text and d.ocr_confidence and d.ocr_confidence >= 0.6:
-            full_main = d.ocr_text.upper()
-            found_main = re.findall(r"[A-Z]{4}\d{7}", full_main)
-            for code in found_main:
-                if es_contenedor_valido(code):
-                    candidates.append(code)
-
-    if not candidates:
+    if not votes:
         return
 
-    counter = Counter(candidates)
-    most_common = counter.most_common(1)[0][0]
+    # Raw-only codes backed by >= 3 distinct detections get a bonus
+    # (a physically painted label can have an invalid check digit).
+    for code, ent in votes.items():
+        if ent[2] == 0 and ent[0] == 0 and len(ent[3]) >= 3:
+            ent[0] += 2
+
+    # Winner: most points; ties -> more distinct raw reads; then more strict reads
+    most_common = max(votes.items(), key=lambda kv: (kv[1][0], len(kv[1][1]), kv[1][2]))[0]
+    n_strict = sum(v[2] for v in votes.values())
 
     if event.container_code != most_common:
         event.container_code = most_common
         event.save(update_fields=["container_code"])
         logger.info(
-            "Event %s OCR consensus: '%s' (from %d candidates in %d detections)",
-            event_id, most_common, len(candidates), detections.count(),
+            "Event %s OCR consensus: '%s' (codes=%d strict_reads=%d, %d detections)",
+            event_id, most_common, len(votes), n_strict, detections.count(),
         )
+
+
+def _compute_check_digit(code10):
+    """ISO 6346 check digit from the first 10 chars (4 letters + 6 digits)."""
+    valores = {}
+    n = 10
+    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        if n % 11 == 0:
+            n += 1
+        valores[c] = n
+        n += 1
+
+    total = 0
+    for i in range(10):
+        ch = code10[i]
+        v = valores[ch] if ch.isalpha() else int(ch)
+        total += v * (2 ** i)
+    d = total % 11
+    return 0 if d == 10 else d
 
 
 def es_contenedor_valido(contenedor):
@@ -237,25 +337,163 @@ def es_contenedor_valido(contenedor):
     if limpio[3] not in {"U", "J", "Z"}:
         return False
 
-    valores = {}
-    n = 10
-    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-        if n % 11 == 0:
-            n += 1
-        valores[c] = n
-        n += 1
+    return _compute_check_digit(limpio[:10]) == int(limpio[10])
 
-    total = 0
-    for i in range(10):
-        char = limpio[i]
-        valor = valores[char] if char.isalpha() else int(char)
-        total += valor * (2 ** i)
 
-    checksum = total % 11
-    if checksum == 10:
-        checksum = 0
+def _es_formato_valido(code):
+    limpio = re.sub(r"\s+", "", code.upper())
+    if len(limpio) != 11:
+        return False
+    if not re.match(r"^[A-Z]{4}\d{7}$", limpio):
+        return False
+    if limpio[3] not in {"U", "J", "Z"}:
+        return False
+    return True
 
-    return checksum == int(limpio[10])
+
+# Digit<->letter confusion sets for OCR repair (position-aware)
+_L2D = {"O": "0", "D": "0", "Q": "0", "I": "1", "L": "1", "Z": "2",
+        "S": "5", "G": "6", "B": "8"}
+_D2L = {"0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B"}
+
+
+def _normalize_positions(seg):
+    """Fix digit<->letter confusion at known positions (4 letters + 7 digits)."""
+    out = []
+    changed = False
+    for i, ch in enumerate(seg):
+        if i < 4:
+            if ch.isdigit() and ch in _D2L:
+                ch = _D2L[ch]
+                changed = True
+        else:
+            if ch.isalpha() and ch in _L2D:
+                ch = _L2D[ch]
+                changed = True
+        out.append(ch)
+    return "".join(out), changed
+
+
+def _to_valid_code(seg):
+    """Convert a raw alnum segment into an ISO 6346 code when possible.
+
+    Returns (code, strict): strict=True only if the code was read exactly
+    as a checksum-valid string. Repairs:
+      - digit/letter confusion at known positions (O<->0, I<->1, ...)
+      - missing last digit (4 letters + 6 digits) -> compute check digit
+      - wrong last digit -> recompute check digit (checksum fails but the
+        first 10 chars are usually read correctly by the VL model)
+    """
+    seg, normalized = _normalize_positions(seg)
+    if not re.match(r"^[A-Z]{4}\d{6,7}$", seg):
+        return None, False
+    if seg[3] not in "UJZ":
+        # Category letter (U/J/Z) is often misread (U<->L/I etc). Try U/J/Z,
+        # checksum still gates the result (only applies to full 11-char reads).
+        if len(seg) == 11:
+            for cat in "UJZ":
+                cand = seg[:3] + cat + seg[4:]
+                if es_contenedor_valido(cand):
+                    return cand, False
+        return None, False
+
+    if len(seg) == 11:
+        if not normalized and es_contenedor_valido(seg):
+            return seg, True
+        # Trust the first 10 chars, recompute the check digit
+        return seg[:10] + str(_compute_check_digit(seg[:10])), False
+
+    # 4 letters + 6 digits: check digit missing -> compute it
+    return seg + str(_compute_check_digit(seg)), False
+
+
+def _extract_codes(detection):
+    """Return list of (code, tier, raw_segment) candidates from one detection.
+
+    tier: strict = checksum-valid as read; repaired = fixed via normalization,
+          check-digit recovery, or reversed read; raw = format-valid as-is
+          (physical label may have a bad check digit).
+    """
+    out = []
+    texts = []
+    if detection.ocr_text:
+        texts.append(detection.ocr_text)
+    for r in (detection.ocr_texts or []):
+        if len(r) >= 2 and r[1] >= 0.6:
+            texts.append(r[0])
+    texts = list(dict.fromkeys(texts))  # dedupe identical lines
+
+    for t in texts:
+        clean = re.sub(r"\s+", "", t.upper())
+        for m in re.finditer(r"[A-Z0-9]{4}[0-9A-Z]{6,7}", clean):
+            seg = m.group(0)
+            code, is_strict = _to_valid_code(seg)
+            if code:
+                out.append((code, "strict" if is_strict else "repaired", seg))
+        # Reversed reads: "389111 TEMU 22G1" (serial before owner code)
+        for m in re.finditer(r"(\d{6})([A-Z]{4})", clean):
+            owner, serial = m.group(2), m.group(1)
+            if owner[3] not in "UJZ":
+                continue
+            code, _ = _to_valid_code(owner + serial)
+            if code:
+                out.append((code, "repaired", m.group(0)))
+        for m in re.finditer(r"[A-Z]{4}\d{7}", clean):
+            c = m.group(0)
+            if c[3] in "UJZ":
+                out.append((c, "raw", c))
+    return out
+
+
+def _levenshtein(s1, s2):
+    if len(s1) < len(s2):
+        return _levenshtein(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    prev = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        curr = [i + 1]
+        for j, c2 in enumerate(s2):
+            curr.append(min(
+                prev[j + 1] + 1,
+                curr[j] + 1,
+                prev[j] + (0 if c1 == c2 else 1),
+            ))
+        prev = curr
+    return prev[-1]
+
+
+def _fuzzy_consensus(codes, min_votes=2, max_distance=2):
+    if not codes:
+        return None
+
+    counter = dict()
+    for c in codes:
+        code = re.sub(r"\s+", "", c.upper())
+        if _es_formato_valido(code):
+            counter[code] = counter.get(code, 0) + 1
+
+    if not counter:
+        return None
+
+    unique = list(counter.keys())
+    neighbors = {c: counter[c] for c in unique}
+
+    for i in range(len(unique)):
+        for j in range(i + 1, len(unique)):
+            dist = _levenshtein(unique[i], unique[j])
+            if dist <= max_distance:
+                neighbors[unique[i]] += counter[unique[j]]
+                neighbors[unique[j]] += counter[unique[i]]
+
+    if not neighbors:
+        return None
+
+    best = max(neighbors, key=lambda c: (neighbors[c], counter[c]))
+    if neighbors[best] < min_votes:
+        return None
+
+    return best
 
 
 @shared_task
@@ -348,8 +586,7 @@ def _finalize_event(event):
         sin_sello_count,
     )
 
-    if event.container_code:
-        aggregate_ocr_results.delay(event.id)
+    ocr_event.delay(event.id)
 
 
 def _find_temporal_clusters(detections):
@@ -468,6 +705,8 @@ def _try_merge_event(event):
 
     if prev.container_code:
         aggregate_ocr_results.delay(prev.id)
+    else:
+        ocr_event.delay(prev.id)
 
     return True
 

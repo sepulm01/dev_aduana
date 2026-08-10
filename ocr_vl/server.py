@@ -5,6 +5,7 @@ import logging
 import torch
 from PIL import Image
 from fastapi import FastAPI, File, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
 logging.basicConfig(level=logging.INFO)
@@ -32,16 +33,17 @@ app = FastAPI()
 
 @app.post("/ocr")
 async def ocr_image(file: UploadFile = File(...)):
-    return await _process_image(file, "OCR:")
+    contents = await file.read()
+    return await run_in_threadpool(_process_image_sync, contents, "OCR:")
 
 
 @app.post("/spotting")
 async def spotting_image(file: UploadFile = File(...)):
-    return await _process_image(file, "Spotting:")
-
-
-async def _process_image(file: UploadFile, task: str):
     contents = await file.read()
+    return await run_in_threadpool(_process_image_sync, contents, "Spotting:")
+
+
+def _process_image_sync(contents: bytes, task: str):
     image = Image.open(io.BytesIO(contents)).convert("RGB")
 
     messages = [

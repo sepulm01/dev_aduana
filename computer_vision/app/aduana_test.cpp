@@ -17,6 +17,8 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <errno.h>
+#include <chrono>
 
 #include "gstnvdsmeta.h"
 #include "gstnvdsinfer.h"
@@ -41,9 +43,9 @@ extern "C" {
 #define CROP_RECEIVER_PORT 12347
 #define CROP_END_MARKER "END!"
 #define CROP_MIN_BBOX_PX 20
-#define CROP_MAX_FPS 15
 #define CROP_MIN_OCR_BYTES 3000
 #define SNAP_COOLDOWN_US 500000
+#define FRAME_SKIP 0  // 0=every frame, 1=every other frame, N=process 1 out of (N+1)
 
 #define RETURN_ON_PARSER_ERROR(parse_expr) \
     if (NVDS_YAML_PARSER_SUCCESS != parse_expr) { \
@@ -56,7 +58,12 @@ static float g_class_confidence[MAX_CLASSES];
 struct TruckKey { int sid; guint64 oid; };
 bool operator==(const TruckKey& a, const TruckKey& b) { return a.sid == b.sid && a.oid == b.oid; }
 struct TruckKeyHash { size_t operator()(const TruckKey& k) const { return (size_t)k.sid * 31 + (size_t)k.oid; } };
-struct TruckTrack { bool crossed = false; bool in_roi = false; };
+struct TruckTrack {
+    bool crossed = false;
+    bool in_roi = false;
+    float bbox_l = 0, bbox_t = 0, bbox_w = 0, bbox_h = 0;
+    guint64 last_seen = 0;  // monotonic us
+};
 static std::unordered_map<TruckKey, TruckTrack, TruckKeyHash> g_trucks;
 static FILE* g_csv = nullptr;
 
@@ -71,6 +78,9 @@ static const gchar* g_sources_key = "deepstream:sources:aduana:1";
 static NvDsObjEncCtxHandle g_crop_enc_ctx = NULL;
 static struct { int fd = -1; bool ok = false; } g_crop_sock;
 static guint64 g_crop_obj_ctr = 0;
+/* Per-object rate limit: same object at most one crop every CROP_OBJ_MIN_INTERVAL_US */
+static std::unordered_map<guint64, guint64> g_last_crop_per_obj;
+#define CROP_OBJ_MIN_INTERVAL_US 200000
 
 #pragma pack(push, 1)
 struct CropPacket {
@@ -80,6 +90,7 @@ struct CropPacket {
     uint32_t frame_num;
     uint64_t timestamp_ms;
     uint32_t jpeg_size;
+    uint64_t truck_id;
 };
 #pragma pack(pop)
 
@@ -100,6 +111,29 @@ static bool center_inside(NvDsObjectMeta* outer, NvDsObjectMeta* inner) {
     float or_ = ol + outer->detector_bbox_info.org_bbox_coords.width;
     float ob  = ot + outer->detector_bbox_info.org_bbox_coords.height;
     return icx >= ol && icx <= or_ && icy >= ot && icy <= ob;
+}
+
+static bool center_inside_bbox(NvDsObjectMeta* inner, float ol, float ot, float orr, float obb) {
+    float icx = inner->detector_bbox_info.org_bbox_coords.left
+              + inner->detector_bbox_info.org_bbox_coords.width  * 0.5f;
+    float icy = inner->detector_bbox_info.org_bbox_coords.top
+              + inner->detector_bbox_info.org_bbox_coords.height * 0.5f;
+    return icx >= ol && icx <= orr && icy >= ot && icy <= obb;
+}
+
+/* Find active (crossed, not in ROI, recently seen) truck containing the object.
+   Uses persistent g_trucks state so association survives frame misses. */
+static guint64 find_active_truck(int sid, NvDsObjectMeta* om, guint64 now) {
+    for (auto& kv : g_trucks) {
+        const TruckKey& key = kv.first;
+        const TruckTrack& st = kv.second;
+        if (key.sid != sid || !st.crossed || st.in_roi) continue;
+        if (now - st.last_seen > 2000000) continue;  // 2s freshness
+        if (center_inside_bbox(om, st.bbox_l, st.bbox_t,
+                               st.bbox_l + st.bbox_w, st.bbox_t + st.bbox_h))
+            return key.oid;
+    }
+    return 0;
 }
 
 static void load_confidence_thresholds() {
@@ -140,13 +174,29 @@ static bool connect_crop_receiver() {
     if (connect(g_crop_sock.fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         close(g_crop_sock.fd); g_crop_sock.fd = -1; return false;
     }
+    /* Send timeout: never block the pipeline more than 1s on a slow receiver */
+    struct timeval tv = {1, 0};
+    setsockopt(g_crop_sock.fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     g_crop_sock.ok = true;
     g_print("[Crop] Connected to crop-receiver:%d\n", CROP_RECEIVER_PORT);
     return true;
 }
 
+/* Write all bytes or fail (send() can return partial writes). */
+static bool send_all(int fd, const void* data, size_t len) {
+    const char* p = (const char*)data;
+    size_t off = 0;
+    while (off < len) {
+        ssize_t s = send(fd, p + off, len - off, MSG_NOSIGNAL);
+        if (s < 0) { if (errno == EINTR) continue; return false; }
+        if (s == 0) return false;
+        off += (size_t)s;
+    }
+    return true;
+}
+
 static bool send_crop(const NvDsObjectMeta* om, const NvDsFrameMeta* fm,
-                      int dev_id, int sid) {
+                      int dev_id, int sid, guint64 truck_id = 0) {
     if (!g_crop_sock.ok && !connect_crop_receiver()) return false;
 
     for (NvDsMetaList* lum = om->obj_user_meta_list; lum; lum = lum->next) {
@@ -167,17 +217,16 @@ static bool send_crop(const NvDsObjectMeta* om, const NvDsFrameMeta* fm,
         pkt.bbox_width   = om->detector_bbox_info.org_bbox_coords.width / fw;
         pkt.bbox_height  = om->detector_bbox_info.org_bbox_coords.height / fh;
         pkt.frame_num    = (uint32_t)fm->frame_num;
-        pkt.timestamp_ms = (uint64_t)(time(nullptr) * 1000LL);
+        pkt.timestamp_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
         pkt.jpeg_size    = (uint32_t)enc->outLen;
+        pkt.truck_id     = truck_id;
 
         if (om->class_id == 3 && enc->outLen < CROP_MIN_OCR_BYTES) return false;
 
-        ssize_t s = send(g_crop_sock.fd, enc->outBuffer, enc->outLen, MSG_NOSIGNAL);
-        if (s < 0) { close(g_crop_sock.fd); g_crop_sock.ok = false; return false; }
-        s = send(g_crop_sock.fd, CROP_END_MARKER, strlen(CROP_END_MARKER), MSG_NOSIGNAL);
-        if (s < 0) { close(g_crop_sock.fd); g_crop_sock.ok = false; return false; }
-        s = send(g_crop_sock.fd, &pkt, sizeof(pkt), MSG_NOSIGNAL);
-        if (s < 0) { close(g_crop_sock.fd); g_crop_sock.ok = false; return false; }
+        if (!send_all(g_crop_sock.fd, enc->outBuffer, enc->outLen)) { close(g_crop_sock.fd); g_crop_sock.ok = false; return false; }
+        if (!send_all(g_crop_sock.fd, CROP_END_MARKER, strlen(CROP_END_MARKER))) { close(g_crop_sock.fd); g_crop_sock.ok = false; return false; }
+        if (!send_all(g_crop_sock.fd, &pkt, sizeof(pkt))) { close(g_crop_sock.fd); g_crop_sock.ok = false; return false; }
         return true;
     }
     return false;
@@ -222,10 +271,18 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
         /* Snapshot check */
         bool has_roi = false, has_lc = false, has_oc = false;
         /* Pass 1: collect trucks + analytics events */
-        std::vector<NvDsObjectMeta*> trucks;
         for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
             NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
             if (om->class_id != 4) continue;
+
+            /* Track every detected truck: bbox + freshness for persistent association */
+            TruckKey key = {sid, om->object_id};
+            auto& st = g_trucks[key];
+            st.bbox_l = om->detector_bbox_info.org_bbox_coords.left;
+            st.bbox_t = om->detector_bbox_info.org_bbox_coords.top;
+            st.bbox_w = om->detector_bbox_info.org_bbox_coords.width;
+            st.bbox_h = om->detector_bbox_info.org_bbox_coords.height;
+            st.last_seen = now;
 
             bool lc = false, roi = false;
             std::string rn;
@@ -244,8 +301,6 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
             }
 
             if (lc || roi) {
-                TruckKey key = {sid, om->object_id};
-                auto& st = g_trucks[key];
                 if (lc && !st.crossed) {
                     st.crossed = true;
                     if (ts_sec >= 0)
@@ -261,7 +316,6 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                                        ts_sec, sid, om->object_id, rn.c_str());
                 }
             }
-            trucks.push_back(om);
         }
 
         /* Snapshot send full frame */
@@ -281,11 +335,8 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
 
         /* Pass 2: Crop sending + CARGO association */
         {
-            static guint64 last_crop_time = 0;
-            guint64 crop_interval = 1000000 / CROP_MAX_FPS;
             int crops_this_frame = 0;
             const int MAX_CROPS_PER_FRAME = 6;
-            std::vector<const NvDsObjectMeta*> crop_objs;
 
             for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
                 NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
@@ -298,15 +349,8 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                 if (w < CROP_MIN_BBOX_PX || h < CROP_MIN_BBOX_PX) continue;
                 if (om->confidence < g_class_confidence[cls]) continue;
 
-                bool inside_active = false;
-                for (auto* tk : trucks) {
-                    auto it = g_trucks.find({sid, tk->object_id});
-                    if (it != g_trucks.end() && it->second.crossed && !it->second.in_roi
-                        && center_inside(tk, om)) {
-                        inside_active = true; break;
-                    }
-                }
-                if (!inside_active) continue;
+                guint64 active_truck_id = find_active_truck(sid, om, now);
+                if (!active_truck_id) continue;
 
                 /* CARGO CSV */
                 const char* cls_name = "?";
@@ -315,20 +359,35 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                 else if (cls == 2) cls_name = "cont_data";
                 else if (cls == 3) cls_name = "container_cod";
 
-                for (auto* tk : trucks) {
-                    if (center_inside(tk, om) && g_csv)
-                        fprintf(g_csv, "%.3f,CARGO,%d,%lu,%s,%.2f,,\n",
-                                ts_sec, sid, tk->object_id, cls_name, om->confidence);
-                }
+                if (g_csv)
+                    fprintf(g_csv, "%.3f,CARGO,%d,%lu,%s,%.2f,,\n",
+                            ts_sec, sid, active_truck_id, cls_name, om->confidence);
 
-                /* Crop encoding (up to MAX_CROPS_PER_FRAME per frame, rate-limited) */
-                if (crops_this_frame < MAX_CROPS_PER_FRAME &&
-                    now - last_crop_time >= crop_interval) {
+                /* Crop encoding (up to MAX_CROPS_PER_FRAME per frame,
+                   per-object rate limit: same object at most one crop / 200ms) */
+                if (crops_this_frame < MAX_CROPS_PER_FRAME) {
+                    auto it_last = g_last_crop_per_obj.find(om->object_id);
+                    if (it_last != g_last_crop_per_obj.end() &&
+                        now - it_last->second < CROP_OBJ_MIN_INTERVAL_US)
+                        continue;
                     NvDsObjEncUsrArgs objData = {};
                     objData.saveImg = FALSE;
                     objData.attachUsrMeta = TRUE;
                     objData.quality = 80;
                     objData.objNum = (int)(++g_crop_obj_ctr);
+
+                    /* Expand bbox so edge characters of the code are not cut off.
+                       Container codes are vertical: generous vertical padding. */
+                    auto* rp = &om->rect_params;
+                    auto* db = &om->detector_bbox_info.org_bbox_coords;
+                    float orig_l = rp->left, orig_t = rp->top, orig_w = rp->width, orig_h = rp->height;
+                    float pad_x = orig_w * 0.15f, pad_y = orig_h * 0.30f;
+                    float nl = MAX(0.0f, orig_l - pad_x);
+                    float nt = MAX(0.0f, orig_t - pad_y);
+                    float nw = MIN((float)MUXER_OUTPUT_WIDTH - nl, orig_w + 2 * pad_x);
+                    float nh = MIN((float)MUXER_OUTPUT_HEIGHT - nt, orig_h + 2 * pad_y);
+                    rp->left = nl; rp->top = nt; rp->width = nw; rp->height = nh;
+                    db->left = nl; db->top = nt; db->width = nw; db->height = nh;
 
                     NvBufSurface* surf = NULL;
                     GstMapInfo inmap = GST_MAP_INFO_INIT;
@@ -336,21 +395,20 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                         surf = (NvBufSurface*)inmap.data;
                         if (surf) {
                             nvds_obj_enc_process(g_crop_enc_ctx, &objData, surf, om, fm);
-                            crop_objs.push_back(om);
-                            last_crop_time = now;
+                            nvds_obj_enc_finish(g_crop_enc_ctx);
+                            if (send_crop(om, fm, dev_id, sid, active_truck_id))
+                                g_print("[Crop] dev=%d src=%d cls=%d obj=%lu truck=%lu\n",
+                                        dev_id, sid, om->class_id, om->object_id,
+                                        active_truck_id);
+                            g_last_crop_per_obj[om->object_id] = now;
                             crops_this_frame++;
                         }
                         gst_buffer_unmap(buf, &inmap);
                     }
-                }
-            }
 
-            if (!crop_objs.empty()) {
-                nvds_obj_enc_finish(g_crop_enc_ctx);
-                for (auto* om : crop_objs) {
-                    if (send_crop(om, fm, dev_id, sid))
-                        g_print("[Crop] dev=%d src=%d cls=%d obj=%lu\n",
-                                dev_id, sid, om->class_id, om->object_id);
+                    /* Restore original bbox (keeps OSD boxes correct) */
+                    rp->left = orig_l; rp->top = orig_t; rp->width = orig_w; rp->height = orig_h;
+                    db->left = orig_l; db->top = orig_t; db->width = orig_w; db->height = orig_h;
                 }
             }
         }
@@ -370,14 +428,7 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                 for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
                     NvDsObjectMeta* om = (NvDsObjectMeta*)lo->data;
                     if (om->class_id == 4) continue;
-                    guint64 truck_id = 0;
-                    for (auto* tk : trucks) {
-                        auto it = g_trucks.find({sid, tk->object_id});
-                        if (it != g_trucks.end() && it->second.crossed && !it->second.in_roi
-                            && center_inside(tk, om)) {
-                            truck_id = tk->object_id; break;
-                        }
-                    }
+                    guint64 truck_id = find_active_truck(sid, om, now);
                     if (truck_id == 0) continue;
                     if (!first) json << ",";
                     first = false;
@@ -402,6 +453,24 @@ static GstPadProbeReturn analytics_probe(GstPad* pad, GstPadProbeInfo* info,
                     g_mutex_unlock(&redis_mutex);
                 }
             }
+        }
+    }
+
+    /* Prune stale trucks (not seen for 60s) and old per-object rate-limit entries */
+    static guint64 last_prune = 0;
+    if (now - last_prune >= 10000000) {
+        last_prune = now;
+        for (auto it = g_trucks.begin(); it != g_trucks.end();) {
+            if (now - it->second.last_seen > 60000000)
+                it = g_trucks.erase(it);
+            else
+                ++it;
+        }
+        for (auto it = g_last_crop_per_obj.begin(); it != g_last_crop_per_obj.end();) {
+            if (now - it->second > 60000000)
+                it = g_last_crop_per_obj.erase(it);
+            else
+                ++it;
         }
     }
 
@@ -436,6 +505,19 @@ static void source_setup_callback(GstElement* obj, GstElement* source, gpointer 
                      "protocols", 4, NULL);
         g_print("[Source setup] rtspsrc latency=0 drop-on-latency=1 protocols=TCP\n");
     }
+}
+
+/* --- Frame-skip probes (per-source counters: balanced dropping) --- */
+static guint64 g_frame_skip_ctr[MAX_SOURCES] = {0};
+
+static GstPadProbeReturn frame_skip_probe(GstPad* pad, GstPadProbeInfo* info, gpointer data) {
+    if (FRAME_SKIP == 0) return GST_PAD_PROBE_OK;
+    int sid = GPOINTER_TO_INT(data);
+    if (sid < 0 || sid >= MAX_SOURCES) return GST_PAD_PROBE_OK;
+    g_frame_skip_ctr[sid]++;
+    if ((g_frame_skip_ctr[sid] % (FRAME_SKIP + 1)) != 0)
+        return GST_PAD_PROBE_OK;
+    return GST_PAD_PROBE_DROP;
 }
 
 /* --- Source bin: uridecodebin → nvvideoconvert → queue --- */
@@ -556,6 +638,8 @@ int main(int argc, char* argv[]) {
         sinkpad = gst_element_request_pad_simple(streammux, pad_name);
         srcpad = gst_element_get_static_pad(source_bin, "src");
         if (!srcpad || gst_pad_link(srcpad, sinkpad) != GST_PAD_LINK_OK) return 1;
+        if (FRAME_SKIP > 0)
+            gst_pad_add_probe(srcpad, GST_PAD_PROBE_TYPE_BUFFER, frame_skip_probe, GINT_TO_POINTER((int)i), NULL);
         gst_object_unref(srcpad); gst_object_unref(sinkpad);
     }
 

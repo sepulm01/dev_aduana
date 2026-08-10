@@ -55,6 +55,9 @@ services:
       - ./django/media:/app/media
       - ./django/static/img:/app/static/img:ro
       - ./mediamtx/mediamtx.yml:/app/mediamtx.yml
+      - ./django/aduana/models.py:/app/aduana/models.py:ro
+      - ./django/aduana/tasks.py:/app/aduana/tasks.py:ro
+      - ./django/config/urls.py:/app/config/urls.py:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,6 +97,8 @@ services:
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
       - ./django/media:/app/media
+      - ./django/aduana/models.py:/app/aduana/models.py:ro
+      - ./django/aduana/tasks.py:/app/aduana/tasks.py:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -156,6 +161,9 @@ services:
     volumes:
       - ./django/media:/app/media
       - ./computer_vision/models:/opt/computer_vision/models
+      - ./django/aduana/models.py:/app/aduana/models.py:ro
+      - ./django/aduana/tasks.py:/app/aduana/tasks.py:ro
+      - ./django/aduana/management/commands/crop_receiver.py:/app/aduana/management/commands/crop_receiver.py:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -219,9 +227,10 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all
       - HF_HOME=/app/.cache/huggingface
     ports:
-      - "5002:5002"
+      - "5003:5002"
     volumes:
       - ./ocr_vl/models:/app/.cache/huggingface
+      - ./ocr_vl/server.py:/app/server.py:ro
 
 networks:
   default:

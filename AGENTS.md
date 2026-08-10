@@ -68,6 +68,19 @@ docker compose logs -f django-http
 - **Migrations run automatically** via `docker-entrypoint.sh` with a PostgreSQL advisory lock (`pg_advisory_lock(123456)`).
 - **Generated configs are gitignored**: `computer_vision/config/config*.yml` and `computer_vision/config/config_nvdsanalytics.txt` contain credentials and must never be committed.
 
+## Recent changes (Aug 2026)
+
+- **CropPacket v3 (64 bytes)**: agregado `uint64_t truck_id` al final del struct (`IIIQ5fIQIQ`). `crop_receiver.py` parsea y guarda en `ContainerDetection.truck_id` (migración 0006). Cada crop viaja con el ID del camión activo que lo contiene.
+- **Eventos por camión**: `_find_or_create_event` agrupa por `(source_id, truck_id)` — un evento por pasada física de camión. Merge cross-cámara por ventana temporal (12s) + color HSV. Ya no se usa la heurística temporal como mecanismo principal.
+- **OCR a nivel evento** (`ocr_event` task): corre al cierre del evento (`_finalize_event`), no por crop. Top-12 crops cls3 por confianza (máx 3 por object_id), segundo pase si no hay código. ~90% menos llamadas al VL que por-crop.
+- **Reparación ISO 6346**: `_to_valid_code` — recomputo de dígito verificador (función determinista de los 10 primeros), normalización posicional dígito↔letra (O↔0, I↔1, S↔5, B↔8, G↔6, Z↔2), reparación de letra de categoría (pos 3 → U/J/Z si checksum valida), lecturas invertidas (`\d{6}[A-Z]{4}`). Votación: un voto por detección por código, strict=2pts/repaired=1, desempate por diversidad de lecturas crudas. Raw (checksum inválido) suma si ≥3 detecciones (etiqueta física puede tener check mal pintado — caso HLBU6192440 confirmado).
+- **Texto vertical**: `_run_ocr_vl` es aspect-aware — crops altos (h > 1.2×w) van primero a `/spotting` (modo para texto rotado), luego `/ocr`. Limpia tokens `<|LOC_*|>` del output de spotting.
+- **ocr-vl threadpool**: `server.py` corre `model.generate` en `run_in_threadpool` — antes bloqueaba el event loop y `/health` daba timeout durante inferencia, lo que activaba falsas alarmas de OCR caído. Health check ahora tiene TTL 30s y nunca bloquea el OCR (solo alarmas).
+- **Fixes críticos C++**: encoding JPEG por objeto (el batch encoder corrumpía crops 2..N — faltaban 6 bytes de header JFIF), rate-limit de crops por object_id (200ms) en vez de global (el global dejaba 1 crop por batch y mataba los sellos), expansión de bbox +30% vertical antes del encode (dígitos extremos del código ya no se cortan), timestamps con `std::chrono` (ms reales), frame-skip por fuente (balanceado), `send_all` contra writes parciales TCP, `SO_SNDTIMEO` 1s (pipeline nunca se bloquea por receiver lento), purga de `g_trucks` (60s).
+- **Precisión test** (videos cam1/cam2, 15 camiones): 13/15 códigos correctos. Los 2 fallos son eventos sin detecciones cls3 del modelo. Seal classes (0/1) fluyen a Django.
+- **docker-compose**: archivos fuente montados como volúmenes (`models.py`, `tasks.py`, `crop_receiver.py`, `urls.py`, `ocr_vl/server.py`) — los `restart` ya no pierden cambios. ocr-vl en puerto host 5003 (5002 lo usa yolo_server local).
+- **Media serving**: `config/urls.py` sirve `/media/` en DEBUG (los crops eran 404 en :8008).
+
 ## Recent changes (Jul 2026)
 
 - **Project renamed** from `mediamtx-manager` to `aduana`. Volume names preserved with explicit `external: true` entries.
