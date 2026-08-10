@@ -38,6 +38,32 @@
     </div>
 </div>
 
+{% if event.frame_src0 or event.frame_src1 %}
+<div class="card mt-4">
+    <div class="card-header">Frames de referencia</div>
+    <div class="card-body">
+        <div class="d-flex gap-3 flex-wrap">
+            {% if event.frame_src0 %}
+            <div>
+                <div class="text-muted small mb-1">Cámara 1 (lateral)</div>
+                <a href="{{ event.frame_src0.url }}" target="_blank">
+                    <img src="{{ event.frame_src0.url }}" style="max-width:640px;width:100%;border:1px solid #ccc;border-radius:6px;">
+                </a>
+            </div>
+            {% endif %}
+            {% if event.frame_src1 %}
+            <div>
+                <div class="text-muted small mb-1">Cámara 2 (puertas)</div>
+                <a href="{{ event.frame_src1.url }}" target="_blank">
+                    <img src="{{ event.frame_src1.url }}" style="max-width:640px;width:100%;border:1px solid #ccc;border-radius:6px;">
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% if seal_cells %}
 <div class="card mt-4">
     <div class="card-header">Grilla de Sellos (puerta vista desde atrás)</div>

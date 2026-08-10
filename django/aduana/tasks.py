@@ -588,6 +588,7 @@ def _finalize_event(event):
 
     ocr_event.delay(event.id)
     analyze_seals.delay(event.id)
+    capture_event_frames.delay(event.id)
 
 
 def _find_temporal_clusters(detections):
@@ -732,6 +733,85 @@ def _get_event_avg_color(event):
 # ---------------------------------------------------------------------------
 # Seal grid analysis (door positions 1-8)
 # ---------------------------------------------------------------------------
+
+EVENT_FRAME_FPS = 20.0        # test videos are 20 fps (production too)
+PIPELINE_CONFIG = "/opt/computer_vision/config/config_aduana_test.yml"
+
+
+def _source_video_paths():
+    """Map source index -> video file path from the pipeline config source-list."""
+    try:
+        with open(PIPELINE_CONFIG) as f:
+            text = f.read()
+        m = re.search(r'list:\s*"([^"]+)"', text)
+        if not m:
+            return {}
+        uris = m.group(1).split(";")
+        return {i: u.replace("file://", "") for i, u in enumerate(uris)}
+    except OSError:
+        return {}
+
+
+@shared_task
+def capture_event_frames(event_id):
+    """Extract the best full frame per camera for an event (test/MP4 flow).
+
+    Best frame per source = the frame with the most seal detections;
+    ties broken by most total detections, then max confidence sum.
+    Production (RTSP) uses pipeline-side capture instead (no file to seek).
+    """
+    import subprocess
+    from collections import defaultdict
+    from django.core.files.base import ContentFile
+    from aduana.models import ContainerEvent
+
+    try:
+        event = ContainerEvent.objects.get(id=event_id)
+    except ContainerEvent.DoesNotExist:
+        return
+
+    videos = _source_video_paths()
+    if not videos:
+        return
+
+    changed = False
+    for sid, vpath in videos.items():
+        dets = event.detections.filter(source_id=sid)
+        if not dets.exists():
+            continue
+
+        per_frame = defaultdict(lambda: [0, 0, 0.0])  # seals, total, conf sum
+        for d in dets.values("frame_num", "class_id", "confidence"):
+            fn = d["frame_num"]
+            per_frame[fn][1] += 1
+            per_frame[fn][2] += d["confidence"]
+            if d["class_id"] in (0, 1):
+                per_frame[fn][0] += 1
+        if not per_frame:
+            continue
+
+        best_fn = max(per_frame.items(), key=lambda kv: (kv[1][0], kv[1][1], kv[1][2]))[0]
+        seconds = best_fn / EVENT_FRAME_FPS
+        try:
+            out = subprocess.run(
+                ["ffmpeg", "-y", "-ss", f"{seconds:.3f}", "-i", vpath,
+                 "-vf", "scale=1280:-2", "-frames:v", "1", "-q:v", "2",
+                 "-f", "image2", "-"],
+                capture_output=True, timeout=120,
+            )
+            if out.returncode == 0 and out.stdout:
+                getattr(event, f"frame_src{sid}").save(
+                    f"event_{event_id}_src{sid}.jpg", ContentFile(out.stdout), save=False
+                )
+                changed = True
+                logger.info("Event %s src%d: frame %d (t=%.1fs) captured",
+                            event_id, sid, best_fn, seconds)
+        except Exception as e:
+            logger.warning("capture_event_frames %s src%d: %s", event_id, sid, e)
+
+    if changed:
+        event.save(update_fields=["frame_src0", "frame_src1"])
+
 
 SEAL_CLUSTER_DIST = 0.03      # max normalized distance to merge track fragments
 SEAL_ROW_GAP = 0.02           # min y gap between top/bottom rows

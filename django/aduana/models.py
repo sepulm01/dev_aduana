@@ -15,6 +15,8 @@ class ContainerEvent(models.Model):
     )
     seal_confidence = models.FloatField(default=0.0)
     seal_grid = models.JSONField(default=dict, blank=True)
+    frame_src0 = models.ImageField(upload_to="frames/", blank=True, null=True)
+    frame_src1 = models.ImageField(upload_to="frames/", blank=True, null=True)
     timestamp_start = models.DateTimeField(db_index=True)
     timestamp_end = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
