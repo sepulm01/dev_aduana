@@ -48,6 +48,7 @@ def _seal_cells(event):
                 "css": css,
                 "conf": info.get("conf"),
                 "n": info.get("n"),
+                "crop": info.get("crop") or "",
             })
         rows.append(cells)
     return rows

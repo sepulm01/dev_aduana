@@ -74,6 +74,11 @@
             {% for cell in row %}
                 <div class="seal-cell seal-{{ cell.css }}">
                     <div class="seal-pos">{{ cell.pos }}</div>
+                    {% if cell.crop %}
+                    <a href="/media/{{ cell.crop }}" target="_blank">
+                        <img src="/media/{{ cell.crop }}" class="seal-crop">
+                    </a>
+                    {% endif %}
                     <div class="seal-status">{{ cell.label }}</div>
                     {% if cell.conf %}<div class="seal-conf">{{ cell.conf }} · n={{ cell.n }}</div>{% endif %}
                 </div>
@@ -94,6 +99,7 @@
 .seal-sin_sello { background: #f8d7da; border-color: #dc3545; }
 .seal-sin_deteccion { background: #e2e3e5; border-color: #adb5bd; }
 .seal-conf { font-size: 0.75em; color: #666; margin-top: 4px; }
+.seal-crop { max-width: 100%; max-height: 140px; border-radius: 4px; margin: 4px 0; display: block; }
 </style>
 {% endif %}
 

@@ -827,8 +827,8 @@ def _seal_grid_for_source(event, sid):
     dets = list(
         event.detections.filter(source_id=sid, class_id__in=[0, 1])
         .order_by("timestamp")
-        .values("object_id", "class_id", "confidence", "timestamp",
-                "bbox_left", "bbox_top", "bbox_width", "bbox_height")
+        .values("id", "object_id", "class_id", "confidence", "timestamp",
+                "bbox_left", "bbox_top", "bbox_width", "bbox_height", "crop")
     )
     if not dets:
         return None
@@ -839,7 +839,8 @@ def _seal_grid_for_source(event, sid):
         cx = d["bbox_left"] + d["bbox_width"] / 2
         cy = d["bbox_top"] + d["bbox_height"] / 2
         tracks.setdefault(d["object_id"], []).append(
-            (d["timestamp"].timestamp() - t0, cx, cy, d["class_id"], d["confidence"])
+            (d["timestamp"].timestamp() - t0, cx, cy, d["class_id"], d["confidence"],
+             d["id"], d["crop"])
         )
 
     # Shared velocity: the door is rigid, all seals translate together.
@@ -866,7 +867,10 @@ def _seal_grid_for_source(event, sid):
         cy = float(np.mean(ys + vy * (t_ref - ts)))
         cls = Counter(p[3] for p in pts).most_common(1)[0][0]
         conf = float(np.mean([p[4] for p in pts]))
-        canons.append({"x": cx, "y": cy, "cls": cls, "conf": conf, "n": len(pts)})
+        # Best crop of this track = highest confidence detection with an image
+        best = max(pts, key=lambda p: p[4])
+        canons.append({"x": cx, "y": cy, "cls": cls, "conf": conf, "n": len(pts),
+                       "crop": best[6]})
 
     if not canons:
         return None
@@ -883,11 +887,14 @@ def _seal_grid_for_source(event, sid):
                 cl["conf"] = (cl["conf"] * cl["n"] + c["conf"] * c["n"]) / tot
                 cl["votes"][c["cls"]] = cl["votes"].get(c["cls"], 0) + c["n"]
                 cl["n"] = tot
+                if c["conf"] > cl["conf"]:
+                    cl["crop"] = c["crop"]  # keep the sharpest image
                 placed = True
                 break
         if not placed:
             clusters.append({"x": c["x"], "y": c["y"], "conf": c["conf"],
-                             "n": c["n"], "votes": {c["cls"]: c["n"]}})
+                             "n": c["n"], "votes": {c["cls"]: c["n"]},
+                             "crop": c["crop"]})
 
     # Split into row bands (top 1-2 / middle 3-4 / bottom 5-8) by y gaps.
     clusters.sort(key=lambda c: c["y"])
@@ -950,6 +957,7 @@ def _seal_grid_for_source(event, sid):
                 "conf": round(c["conf"], 3),
                 "n": c["n"],
                 "src": sid,
+                "crop": c.get("crop", ""),
             }
             # Keep the cluster with more detections on column collisions
             if str(pos) not in grid or grid[str(pos)]["n"] < c["n"]:
