@@ -247,8 +247,8 @@ networks:
 
 volumes:
   postgres_data:
-    name: mediamtx-manager_postgres_data
+    name: ${POSTGRES_VOLUME_NAME:-mediamtx-manager_postgres_data}
     external: true
   redis_data:
-    name: mediamtx-manager_redis_data
+    name: ${REDIS_VOLUME_NAME:-mediamtx-manager_redis_data}
     external: true
