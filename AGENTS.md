@@ -85,7 +85,7 @@ docker compose logs -f django-http
 
 ## Recent changes (Jul 2026)
 
-- **Project renamed** from `mediamtx-manager` to `aduana`. Volume names preserved with explicit `external: true` entries.
+- **Project renamed** from `mediamtx-manager` to `aduana`. External volume names parameterized via `POSTGRES_VOLUME_NAME`/`REDIS_VOLUME_NAME` in `.env` (dev machine: `mediamtx-manager_*`; production 172.16.150.50: `aduana_*`).
 - **ONVIF socket timeout**: `socket.setdefaulttimeout(15)` in `onvif_utils/client.py` — prevents infinite hangs.
 - **add_device sync**: Now fetches stream URIs + syncs MediaMTX inline (no Celery dependency for the critical path).
 - **MediaMTX persistence**: Paths now written to `mediamtx/mediamtx.yml` via YAML (not just API). Config reloaded via `docker kill -s USR1`.
