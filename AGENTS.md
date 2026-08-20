@@ -82,6 +82,11 @@ docker compose logs -f django-http
 - **Precisión test** (videos cam1/cam2, 15 camiones): 13/15 códigos correctos. Los 2 fallos son eventos sin detecciones cls3 del modelo. Seal classes (0/1) fluyen a Django.
 - **docker-compose**: archivos fuente montados como volúmenes (`models.py`, `tasks.py`, `views.py`, `crop_receiver.py`, `urls.py`, `templates/`, `migrations/`, `ocr_vl/server.py`, `computer_vision/app/`) — los `restart` ya no pierden cambios. `computer_vision/app/` montado: el binario se compila con `make` dentro del contenedor y persiste en el host (sin rebuild de imagen). ocr-vl en puerto host 5003 (5002 lo usa yolo_server local).
 - **Media serving**: `config/urls.py` sirve `/media/` en DEBUG (los crops eran 404 en :8008).
+- **Deploy producción (172.16.150.50, 19 Ago)**: servidor ahora corre rama `main`. La rama `feature/ocr-aggregation-improvements` (suite de tests + `ocr_codes.py`, implementación anterior del OCR) quedó respaldada en GitHub, pendiente de merge. Migraciones: la DB remota tenía `0003_ocr_texts` sin `0002_frame_num` (recriada localmente) — se resolvió insertando el row en `django_migrations` (la columna ya existía), luego 0006–0009 aplicaron normal.
+- **aduana_prod.cpp parsea `source-list` del yml** (`nvds_parse_source_list`, mismo patrón que `pipeline_test3.cpp`): antes tenía hardcodeados los MP4 de test e ignoraba `config_aduana.yml`, lo que tiraba el pipeline en producción. NUNCA hardcodear fuentes — las cámaras vienen del config generado desde la DB.
+- **Engine TensorRT path quirk**: nvinfer serializa el engine a `computer_vision/config/` pero lo lee de `models/yolov9_aduana/model_b2_gpu0_fp32.engine` (path absoluto en `pgie_config.yml`). Si falta ahí, cada restart recompila (~80s). Mantener copia del engine en `models/yolov9_aduana/` en cada máquina (es GPU-específico: no copiar entre RTX 5060 y 4080).
+- **django/.dockerignore**: excluye `media/` del build context (6.3 GB de crops en producción cancelaban el build). `media/` está montada como volumen en todo servicio que la usa (django-http, celery-worker, crop-receiver, nginx), así que no se pierde nada.
+- **Badge de posición de sello**: `seal-pos-badge` en `event_detail.html` ya no se superpone al crop (inline-block arriba de la imagen, antes absolute top-left).
 
 ## Recent changes (Jul 2026)
 
