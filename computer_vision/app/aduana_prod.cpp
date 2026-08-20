@@ -744,11 +744,10 @@ int main(int argc, char* argv[]) {
     if (!pipeline || !streammux) return -1;
     gst_bin_add(GST_BIN(pipeline), streammux);
 
-    const gchar* source_uris[] = {
-        "file:///opt/computer_vision/test/cam1_seg3.mp4",
-        "file:///opt/computer_vision/test/cam2_seg3.mp4"
-    };
-    num_sources = 2;
+    GList* src_list = NULL;
+    RETURN_ON_PARSER_ERROR(nvds_parse_source_list(&src_list, argv[1], "source-list"));
+    GList* temp = src_list;
+    while (temp) { num_sources++; temp = temp->next; }
     g_print("Num sources: %d\n", num_sources);
 
     for (i = 0; i < num_sources; i++) {
@@ -756,7 +755,8 @@ int main(int argc, char* argv[]) {
         gchar pad_name[16] = {};
         GstElement* source_bin = NULL;
 
-        source_bin = create_source_bin(i, (gchar*)source_uris[i]);
+        if (!src_list || !src_list->data) continue;
+        source_bin = create_source_bin(i, (gchar*)src_list->data);
         if (!source_bin) return -1;
 
         gst_bin_add(GST_BIN(pipeline), source_bin);
@@ -771,7 +771,9 @@ int main(int argc, char* argv[]) {
         }
         gst_object_unref(srcpad);
         gst_object_unref(sinkpad);
+        src_list = src_list->next;
     }
+    g_list_free(src_list);
 
     pgie = gst_element_factory_make("nvinfer", "primary-inference");
     nvtracker = gst_element_factory_make("nvtracker", "nvtracker");
