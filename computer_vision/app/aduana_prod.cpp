@@ -566,10 +566,23 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
                     g_trucks[{sid, om->object_id}].crossed = true;
                     g_print("[STATE] truck=%lu src=%d CROSS\n", om->object_id, sid);
                 }
-                if (!ai->roiStatus.empty()) {
-                    g_trucks[{sid, om->object_id}].in_roi = true;
-                    g_print("[STATE] truck=%lu src=%d ROI_IN  roi=%s\n",
-                            om->object_id, sid, ai->roiStatus[0].c_str());
+                /* Production cameras have no LC lines: use ROI names instead.
+                   "entrada" = truck entered the inspection zone (cross trigger),
+                   "salida"  = truck leaving (deactivates). LC lines still work
+                   when configured (test setup). */
+                for (const auto& rn : ai->roiStatus) {
+                    if (rn.find("entrada") != std::string::npos &&
+                        !g_trucks[{sid, om->object_id}].crossed) {
+                        g_trucks[{sid, om->object_id}].crossed = true;
+                        g_print("[STATE] truck=%lu src=%d CROSS (roi=%s)\n",
+                                om->object_id, sid, rn.c_str());
+                    }
+                    if (rn.find("salida") != std::string::npos &&
+                        !g_trucks[{sid, om->object_id}].in_roi) {
+                        g_trucks[{sid, om->object_id}].in_roi = true;
+                        g_print("[STATE] truck=%lu src=%d ROI_IN  roi=%s\n",
+                                om->object_id, sid, rn.c_str());
+                    }
                 }
             }
         }
