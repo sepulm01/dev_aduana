@@ -109,6 +109,7 @@ struct CropPacket {
     uint32_t frame_num;
     uint64_t timestamp_ms;
     uint32_t jpeg_size;
+    uint64_t truck_id;
 };
 #pragma pack(pop)
 
@@ -174,6 +175,7 @@ struct CropPending {
     NvDsFrameMeta*  fm;
     int             dev_id;
     int             source_id;
+    guint64         truck_id;
 };
 
 struct ProbeData {
@@ -248,6 +250,7 @@ static bool send_crop(const CropPending& cp) {
         pkt.timestamp_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         pkt.jpeg_size    = (uint32_t)enc->outLen;
+        pkt.truck_id     = cp.truck_id;
 
         if (cp.om->class_id == 3 && enc->outLen < CROP_MIN_OCR_BYTES) {
             return false;
@@ -443,16 +446,14 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 if (om->class_id != 0 && om->class_id != 1 && om->class_id != 3) continue;
 
                 /* Only send crop if object is inside an active truck (crossed, not yet in ROI) */
-                {
-                    bool inside_active = false;
-                    for (NvDsMetaList* lo2 = fm->obj_meta_list; lo2; lo2 = lo2->next) {
-                        NvDsObjectMeta* tk = (NvDsObjectMeta*)lo2->data;
-                        if (tk->class_id != 4) continue;
-                        if (!truck_is_active(sid, tk->object_id)) continue;
-                        if (center_inside(tk, om)) { inside_active = true; break; }
-                    }
-                    if (!inside_active) continue;
+                guint64 truck_oid = 0;
+                for (NvDsMetaList* lo2 = fm->obj_meta_list; lo2; lo2 = lo2->next) {
+                    NvDsObjectMeta* tk = (NvDsObjectMeta*)lo2->data;
+                    if (tk->class_id != 4) continue;
+                    if (!truck_is_active(sid, tk->object_id)) continue;
+                    if (center_inside(tk, om)) { truck_oid = tk->object_id; break; }
                 }
+                if (!truck_oid) continue;
                 if (now - last_crop_sent < crop_interval) continue;
 
                 CropPending cp;
@@ -460,6 +461,7 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 cp.fm        = fm;
                 cp.dev_id    = dev_id;
                 cp.source_id = sid;
+                cp.truck_id  = truck_oid;
 
                 NvDsObjEncUsrArgs objData = {};
                 objData.saveImg       = FALSE;
@@ -490,8 +492,15 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 }
                 NvBufSurface* surf = (NvBufSurface*)inmap.data;
                 if (surf) {
+                    /* Encode + finish PER OBJECT: batching multiple objects per
+                       finish corrupts crops 2..N (truncated JFIF header). */
                     nvds_obj_enc_process(g_crop_enc_ctx, &objData, surf, om, fm);
-                    crop_queue.push_back(cp);
+                    nvds_obj_enc_finish(g_crop_enc_ctx);
+                    if (send_crop(cp)) {
+                        g_print("[Crop] dev=%d src=%d cls=%d obj=%lu truck=%lu\n",
+                                cp.dev_id, cp.source_id, cp.om->class_id,
+                                cp.om->object_id, cp.truck_id);
+                    }
                 }
                 gst_buffer_unmap(buf, &inmap);
 
@@ -501,17 +510,6 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 om->detector_bbox_info.org_bbox_coords.height = orig_h;
 
                 last_crop_sent = now;
-            }
-
-            if (!crop_queue.empty()) {
-                nvds_obj_enc_finish(g_crop_enc_ctx);
-                for (auto& cp : crop_queue) {
-                    if (send_crop(cp)) {
-                        g_print("[Crop] dev=%d src=%d cls=%d obj=%lu\n",
-                                cp.dev_id, cp.source_id,
-                                cp.om->class_id, cp.om->object_id);
-                    }
-                }
             }
         }
     }
