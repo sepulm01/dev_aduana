@@ -564,7 +564,7 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
             for (NvDsMetaList* l_um = om->obj_user_meta_list; l_um; l_um = l_um->next) {
                 NvDsUserMeta* um = (NvDsUserMeta*)l_um->data;
                 if (!um) continue;
-                if (um->base_meta.meta_type != NVDS_USER_FRAME_META_NVDSANALYTICS) continue;
+                if (um->base_meta.meta_type != NVDS_USER_OBJ_META_NVDSANALYTICS) continue;
                 NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                 if (!ai) continue;
                 has_ai = true;
