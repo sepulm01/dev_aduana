@@ -545,6 +545,11 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
     NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
     if (!batch_meta) return GST_PAD_PROBE_OK;
 
+    static guint64 last_dbg = 0;
+    guint64 now_dbg = g_get_monotonic_time();
+    bool dbg = (now_dbg - last_dbg > 1000000); /* 1 debug print per second max */
+    if (dbg) last_dbg = now_dbg;
+
     for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame; l_frame = l_frame->next) {
         NvDsFrameMeta* fm = (NvDsFrameMeta*)l_frame->data;
         if (!fm) continue;
@@ -555,12 +560,24 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
             NvDsObjectMeta* om = (NvDsObjectMeta*)l_obj->data;
             if (!om || om->class_id != 4) continue;
 
+            bool has_ai = false;
             for (NvDsMetaList* l_um = om->obj_user_meta_list; l_um; l_um = l_um->next) {
                 NvDsUserMeta* um = (NvDsUserMeta*)l_um->data;
                 if (!um) continue;
                 if (um->base_meta.meta_type != NVDS_USER_FRAME_META_NVDSANALYTICS) continue;
                 NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                 if (!ai) continue;
+                has_ai = true;
+
+                if (dbg) {
+                    auto& rc = om->rect_params;
+                    std::string rois, lcs;
+                    for (const auto& s : ai->roiStatus) { if (!rois.empty()) rois += ","; rois += s; }
+                    for (const auto& s : ai->lcStatus) { if (!lcs.empty()) lcs += ","; lcs += s; }
+                    g_print("[DBG] truck=%lu src=%d ctr=(%.0f,%.0f) conf=%.2f roi=[%s] lc=[%s]\n",
+                            om->object_id, sid, rc.left + rc.width / 2, rc.top + rc.height / 2,
+                            om->confidence, rois.c_str(), lcs.c_str());
+                }
 
                 if (!ai->lcStatus.empty()) {
                     g_trucks[{sid, om->object_id}].crossed = true;
@@ -584,6 +601,12 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
                                 om->object_id, sid, rn.c_str());
                     }
                 }
+            }
+            if (dbg && !has_ai) {
+                auto& rc = om->rect_params;
+                g_print("[DBG] truck=%lu src=%d ctr=(%.0f,%.0f) conf=%.2f SIN meta analytics\n",
+                        om->object_id, sid, rc.left + rc.width / 2, rc.top + rc.height / 2,
+                        om->confidence);
             }
         }
     }
