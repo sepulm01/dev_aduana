@@ -665,21 +665,29 @@ def _split_event(event, clusters):
 
 
 def _try_merge_event(event):
-    from django.db.models import Q
+    from django.db.models import Min, Max, Q
     from aduana.models import ContainerEvent, ContainerDetection
 
-    # Candidates: events that overlap in time (or are still open) or closed
-    # within MERGE_WINDOW before this event started. Both cameras watch the
-    # same single-lane zone, so events whose time ranges overlap are
-    # necessarily the same physical truck passage — merge unconditionally.
-    event_start = event.timestamp_start
-    event_end = event.timestamp_end or timezone.now()
-    win_start = event_start - timedelta(seconds=MERGE_WINDOW)
+    # Merge by ACTIVITY overlap, not by the event's timestamp_start/end:
+    # timestamp_end includes the close-timeout tail (~15s of silence), which
+    # would chain consecutive trucks that pass in close succession. The
+    # activity window [first det, last det] reflects when the truck was
+    # actually visible. Both cameras watch the same single-lane zone, so
+    # overlapping activity means the same physical truck passage.
+    def activity(ev):
+        agg = ContainerDetection.objects.filter(event=ev).aggregate(
+            first=Min("timestamp"), last=Max("timestamp"))
+        if not agg["first"]:
+            return ev.timestamp_start, ev.timestamp_start
+        return agg["first"], agg["last"]
+
+    ev_first, ev_last = activity(event)
+    win_start = ev_first - timedelta(seconds=MERGE_WINDOW)
 
     cands = (
         ContainerEvent.objects
         .filter(seal_status__in=["processing", "con_sello", "sin_sello", "indeterminado"],
-                timestamp_start__lte=event_end)  # never merge into future events
+                timestamp_start__lte=ev_last)  # never merge into future events
         .filter(Q(timestamp_end__isnull=True) | Q(timestamp_end__gte=win_start))
         .exclude(id=event.id)
         .order_by("-timestamp_start")
@@ -688,23 +696,17 @@ def _try_merge_event(event):
     prev = None
     consecutive = None
     for cand in cands[:10]:
-        cand_end = cand.timestamp_end
-        if cand_end is None:
-            overlaps = cand.timestamp_start <= event_end
-        else:
-            overlaps = (cand.timestamp_start <= event_end
-                        and cand_end >= event_start)
-        if overlaps:
-            prev = cand
+        c_first, c_last = activity(cand)
+        if c_first <= ev_last and c_last >= ev_first:
+            prev = cand  # activity windows intersect → same physical truck
             break
-        if consecutive is None and cand_end is not None:
-            consecutive = cand  # latest non-overlapping closed event in window
+        if consecutive is None and cand.timestamp_end is not None:
+            consecutive = cand  # latest closed non-overlapping event
 
     overlap_merge = prev is not None
     if prev is None:
-        # No temporal overlap: consecutive events may still be the same truck,
-        # but could also be two different trucks — keep the color check as a
-        # safeguard for that ambiguous case.
+        # Consecutive events (gap between activity windows): may be the same
+        # truck or two different ones — keep the color check as a safeguard.
         prev = consecutive
         if prev is None:
             return False
@@ -718,9 +720,10 @@ def _try_merge_event(event):
     was_open = prev.timestamp_end is None
     update_fields = ["timestamp_start"]
     ContainerDetection.objects.filter(event=event).update(event=prev)
-    prev.timestamp_start = min(prev.timestamp_start, event_start)
+    prev.timestamp_start = min(prev.timestamp_start, event.timestamp_start)
     if not was_open:
-        prev.timestamp_end = max(prev.timestamp_end, event_end)
+        prev.timestamp_end = max(prev.timestamp_end,
+                                 event.timestamp_end or timezone.now())
         update_fields.append("timestamp_end")
     prev.save(update_fields=update_fields)
     event_id_old = event.id
