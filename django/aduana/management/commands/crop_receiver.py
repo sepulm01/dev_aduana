@@ -307,26 +307,22 @@ class CropReceiver:
             if event:
                 return event
 
-            # New truck on this camera: reuse an open event from the OTHER camera
-            # if it overlaps in time and color matches (same physical truck).
-            new_color = (detection.dominant_color_h, detection.dominant_color_s,
-                         detection.dominant_color_v)
-            recent_open = (
+            # New truck on this camera: reuse an open event from the OTHER
+            # camera that overlaps in time. The inspection zone is
+            # single-lane, so two different trucks cannot be passing at the
+            # same time — temporal overlap alone is sufficient evidence.
+            # (HSV color veto removed: the two cameras expose/WB the same
+            # container very differently, making cross-camera color
+            # comparison unreliable.)
+            cand = (
                 ContainerEvent.objects
                 .filter(seal_status="processing",
                         timestamp_start__gte=ts - timedelta(seconds=self.CROSS_CAM_WINDOW))
+                .exclude(detections__source_id=detection.source_id)
                 .order_by("-timestamp_start")
+                .first()
             )
-            for cand in recent_open:
-                cand_colors = [
-                    (d.dominant_color_h, d.dominant_color_s, d.dominant_color_v)
-                    for d in cand.detections.all()[:20]
-                    if d.dominant_color_h is not None
-                ]
-                if new_color[0] is not None and cand_colors:
-                    avg = tuple(sum(c[i] for c in cand_colors) / len(cand_colors) for i in range(3))
-                    if _hsv_distance(new_color, avg) > COLOR_THRESHOLD:
-                        continue  # different container color → different truck
+            if cand:
                 return cand
 
             return ContainerEvent.objects.create(seal_status="processing", timestamp_start=ts)

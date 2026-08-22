@@ -665,45 +665,57 @@ def _split_event(event, clusters):
 
 
 def _try_merge_event(event):
+    from django.db.models import Q
     from aduana.models import ContainerEvent, ContainerDetection
 
+    # Candidates: events that overlap in time (or are still open) or closed
+    # within MERGE_WINDOW before this event started. Both cameras watch the
+    # same single-lane zone, so events overlapping in time are necessarily
+    # the same physical truck passage — merge them unconditionally.
+    win_start = event.timestamp_start - timedelta(seconds=MERGE_WINDOW)
     prev = (
         ContainerEvent.objects
-        .filter(
-            timestamp_end__isnull=False,
-            timestamp_end__lt=event.timestamp_start,
-            seal_status__in=["con_sello", "sin_sello", "indeterminado"],
-        )
-        .order_by("-timestamp_end")
+        .filter(seal_status__in=["processing", "con_sello", "sin_sello", "indeterminado"])
+        .filter(Q(timestamp_end__isnull=True) | Q(timestamp_end__gte=win_start))
+        .exclude(id=event.id)
+        .order_by("-timestamp_start")
         .first()
     )
 
     if prev is None:
         return False
 
-    gap = (event.timestamp_start - prev.timestamp_end).total_seconds()
-    if gap > MERGE_WINDOW:
-        return False
+    overlaps = prev.timestamp_end is None or prev.timestamp_end >= event.timestamp_start
+    if not overlaps:
+        gap = (event.timestamp_start - prev.timestamp_end).total_seconds()
+        if gap > MERGE_WINDOW:
+            return False
+        # Consecutive non-overlapping events may be two different trucks;
+        # keep the color check as a safeguard.
+        evt_color = _get_event_avg_color(event)
+        prev_color = _get_event_avg_color(prev)
+        if evt_color is None or prev_color is None:
+            return False
+        if _hsv_distance(evt_color, prev_color) > COLOR_MERGE_THRESHOLD:
+            return False
 
-    evt_color = _get_event_avg_color(event)
-    prev_color = _get_event_avg_color(prev)
-
-    if evt_color is None or prev_color is None:
-        return False
-
-    if _hsv_distance(evt_color, prev_color) > COLOR_MERGE_THRESHOLD:
-        return False
-
+    was_open = prev.timestamp_end is None
+    update_fields = ["timestamp_start"]
     ContainerDetection.objects.filter(event=event).update(event=prev)
-    prev.timestamp_end = max(
-        prev.timestamp_end or timezone.now(),
-        event.timestamp_end or timezone.now(),
-    )
-    prev.save(update_fields=["timestamp_end"])
+    prev.timestamp_start = min(prev.timestamp_start, event.timestamp_start)
+    if not was_open:
+        prev.timestamp_end = max(prev.timestamp_end, event.timestamp_end or timezone.now())
+        update_fields.append("timestamp_end")
+    prev.save(update_fields=update_fields)
     event_id_old = event.id
     event.delete()
 
-    logger.info("Merge: event %s merged into event %s (gap=%.1fs)", event_id_old, prev.id, gap)
+    logger.info("Merge: event %s merged into event %s (overlap=%s)", event_id_old, prev.id, overlaps)
+
+    if was_open:
+        # The surviving event is still accumulating detections; it will run
+        # seal/OCR analysis when it closes.
+        return True
 
     if prev.container_code:
         aggregate_ocr_results.delay(prev.id)
