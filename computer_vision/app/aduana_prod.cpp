@@ -299,9 +299,6 @@ static bool send_frame_snapshot(NvBufSurface* surf, NvDsFrameMeta* fm,
     objData.attachUsrMeta = TRUE;
     objData.quality = 70;
     objData.objNum = (int)(++g_crop_obj_ctr);
-    objData.scaleImg = TRUE;
-    objData.scaledWidth = 960;
-    objData.scaledHeight = 540;
 
     db->left = 0; db->top = 0; db->width = fw; db->height = fh;
     rp->left = 0; rp->top = 0; rp->width = fw; rp->height = fh;
@@ -319,7 +316,10 @@ static bool send_frame_snapshot(NvBufSurface* surf, NvDsFrameMeta* fm,
         if (!um || um->base_meta.meta_type != NVDS_CROP_IMAGE_META) continue;
         enc = (NvDsObjEncOutParams*)um->user_meta_data;
     }
-    if (!enc || !enc->outBuffer || enc->outLen == 0) return false;
+    if (!enc || !enc->outBuffer || enc->outLen == 0) {
+        g_print("[Frame] src=%d encode produced no meta\n", sid);
+        return false;
+    }
 
     CropPacket pkt;
     memset(&pkt, 0, sizeof(pkt));
@@ -607,6 +607,8 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                     if (surf && send_frame_snapshot(surf, fm, dev_id, sid, act_truck)) {
                         g_last_frame_snap[sid] = now;
                         g_print("[Frame] src=%d truck=%lu snapshot sent\n", sid, act_truck);
+                    } else {
+                        g_print("[Frame] src=%d truck=%lu snapshot FAILED\n", sid, act_truck);
                     }
                     gst_buffer_unmap(buf, &snapmap);
                 }
