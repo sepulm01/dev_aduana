@@ -229,6 +229,12 @@ class CropReceiver:
 
         from aduana.models import ContainerDetection
 
+        # Full-frame reference snapshot (class_id 99): sent by the pipeline
+        # while a truck is active. Not a detection — attach to the open event.
+        if class_id == 99:
+            self._process_frame_snapshot(source_id, truck_id, timestamp_ms, jpeg_bytes)
+            return
+
         try:
             device = None
             try:
@@ -281,6 +287,39 @@ class CropReceiver:
 
         except Exception as e:
             logger.error("_process_crop error: %s", e)
+
+    def _process_frame_snapshot(self, source_id, truck_id, timestamp_ms, jpeg_bytes):
+        """Attach a full-frame snapshot (class_id 99) to the open event for
+        this source/truck. Overwrites the previous one (last frame of the
+        pass wins — the door is most visible at the end)."""
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
+
+        from aduana.models import ContainerEvent
+
+        field = f"frame_src{source_id}"
+        try:
+            qs = ContainerEvent.objects.filter(
+                seal_status="processing", detections__source_id=source_id)
+            ev = None
+            if truck_id:
+                ev = (qs.filter(detections__truck_id=truck_id)
+                        .order_by("-timestamp_start").first())
+            if ev is None:
+                ev = qs.order_by("-timestamp_start").first()
+            if ev is None:
+                return  # no open event: discard
+
+            old = getattr(ev, field)
+            if old:
+                default_storage.delete(str(old))
+            name = f"frames/src{source_id}_{int(timestamp_ms)}.jpg"
+            path = default_storage.save(name, ContentFile(jpeg_bytes))
+            setattr(ev, field, path)
+            ev.save(update_fields=[field])
+            logger.info("Frame snapshot: event %s %s <- %s", ev.id, field, path)
+        except Exception as e:
+            logger.error("_process_frame_snapshot error: %s", e)
 
     CROSS_CAM_WINDOW = 12.0  # seconds: same physical truck seen by the other camera
 

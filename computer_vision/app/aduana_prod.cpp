@@ -35,6 +35,8 @@
 #define CROP_MIN_BBOX_PX 20
 #define CROP_MAX_FPS 15
 #define CROP_MIN_OCR_BYTES 3000
+#define FRAME_SNAP_CLASS 99             /* full-frame reference snapshot */
+#define FRAME_SNAP_INTERVAL_US 3000000  /* one per source every 3s while truck active */
 #define DEFAULT_MIN_CONFIDENCE 0.6f
 #define MAX_CLASSES 16
 #define CONFIDENCE_CONFIG "/opt/computer_vision/config/confidence_thresholds.txt"
@@ -165,6 +167,7 @@ static GMutex redis_mutex;
 static redisContext* pub_ctx = NULL;
 static int source_to_device[MAX_SOURCES];
 static guint64 frame_counts[MAX_SOURCES];
+static guint64 g_last_frame_snap[MAX_SOURCES] = {};
 static const char* g_sources_key = "deepstream:sources:main";
 
 static NvDsObjEncCtxHandle g_crop_enc_ctx = NULL;
@@ -269,6 +272,78 @@ static bool send_crop(const CropPending& cp) {
         return true;
     }
     return false;
+}
+
+/* Send a full-frame reference snapshot through the crop socket as a
+   CropPacket with class_id=FRAME_SNAP_CLASS (99) and the active truck_id.
+   The image is encoded on a cls4 (truck) object, which the crop path never
+   encodes, so there is no crop-meta collision. Scaled to 960x540. */
+static bool send_frame_snapshot(NvBufSurface* surf, NvDsFrameMeta* fm,
+                                int dev_id, int sid, guint64 truck_oid) {
+    NvDsObjectMeta* host_obj = NULL;
+    for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+        NvDsObjectMeta* o = (NvDsObjectMeta*)lo->data;
+        if (o && o->class_id == 4) { host_obj = o; break; }
+    }
+    if (!host_obj) return false;
+    if (!g_crop_sock.ok && !connect_crop_receiver()) return false;
+
+    float fw = (float)MUXER_OUTPUT_WIDTH, fh = (float)MUXER_OUTPUT_HEIGHT;
+    auto* db = &host_obj->detector_bbox_info.org_bbox_coords;
+    auto* rp = &host_obj->rect_params;
+    float sdl = db->left, sdt = db->top, sdw = db->width, sdh = db->height;
+    float srl = rp->left, srt = rp->top, srw = rp->width, srh = rp->height;
+
+    NvDsObjEncUsrArgs objData = {};
+    objData.saveImg = FALSE;
+    objData.attachUsrMeta = TRUE;
+    objData.quality = 70;
+    objData.objNum = (int)(++g_crop_obj_ctr);
+    objData.scaleImg = TRUE;
+    objData.scaledWidth = 960;
+    objData.scaledHeight = 540;
+
+    db->left = 0; db->top = 0; db->width = fw; db->height = fh;
+    rp->left = 0; rp->top = 0; rp->width = fw; rp->height = fh;
+
+    nvds_obj_enc_process(g_crop_enc_ctx, &objData, surf, host_obj, fm);
+    nvds_obj_enc_finish(g_crop_enc_ctx);
+
+    db->left = sdl; db->top = sdt; db->width = sdw; db->height = sdh;
+    rp->left = srl; rp->top = srt; rp->width = srw; rp->height = srh;
+
+    /* Our encode is the last (only) crop meta on a truck object */
+    NvDsObjEncOutParams* enc = NULL;
+    for (NvDsMetaList* lum = host_obj->obj_user_meta_list; lum; lum = lum->next) {
+        NvDsUserMeta* um = (NvDsUserMeta*)lum->data;
+        if (!um || um->base_meta.meta_type != NVDS_CROP_IMAGE_META) continue;
+        enc = (NvDsObjEncOutParams*)um->user_meta_data;
+    }
+    if (!enc || !enc->outBuffer || enc->outLen == 0) return false;
+
+    CropPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.device_id    = (uint32_t)dev_id;
+    pkt.source_id    = (uint32_t)sid;
+    pkt.class_id     = FRAME_SNAP_CLASS;
+    pkt.object_id    = host_obj->object_id;
+    pkt.confidence   = host_obj->confidence;
+    pkt.bbox_left    = 0; pkt.bbox_top = 0; pkt.bbox_width = 1; pkt.bbox_height = 1;
+    pkt.frame_num    = (uint32_t)fm->frame_num;
+    pkt.timestamp_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    pkt.jpeg_size    = (uint32_t)enc->outLen;
+    pkt.truck_id     = truck_oid;
+
+    auto safe_send = [&](const void* data, size_t len) -> bool {
+        ssize_t s = send(g_crop_sock.fd, data, len, MSG_NOSIGNAL);
+        if (s < 0) { close_crop_socket(); return false; }
+        return true;
+    };
+    if (!safe_send(enc->outBuffer, enc->outLen)) return false;
+    if (!safe_send(CROP_END_MARKER, strlen(CROP_END_MARKER))) return false;
+    if (!safe_send(&pkt, sizeof(pkt))) return false;
+    return true;
 }
 
 static void publish_detection_json(int dev_id, int source_id,
@@ -510,6 +585,31 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 om->detector_bbox_info.org_bbox_coords.height = orig_h;
 
                 last_crop_sent = now;
+            }
+        }
+
+        /* Full-frame reference snapshot per source while a truck is active.
+           Sent after the crop loop so the snapshot's encode meta (attached to
+           a truck object) can never be mistaken for a real crop. */
+        if (now - g_last_frame_snap[sid] >= FRAME_SNAP_INTERVAL_US) {
+            guint64 act_truck = 0;
+            for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
+                NvDsObjectMeta* tk = (NvDsObjectMeta*)lo->data;
+                if (tk->class_id == 4 && truck_is_active(sid, tk->object_id)) {
+                    act_truck = tk->object_id;
+                    break;
+                }
+            }
+            if (act_truck) {
+                GstMapInfo snapmap = GST_MAP_INFO_INIT;
+                if (gst_buffer_map(buf, &snapmap, GST_MAP_READ)) {
+                    NvBufSurface* surf = (NvBufSurface*)snapmap.data;
+                    if (surf && send_frame_snapshot(surf, fm, dev_id, sid, act_truck)) {
+                        g_last_frame_snap[sid] = now;
+                        g_print("[Frame] src=%d truck=%lu snapshot sent\n", sid, act_truck);
+                    }
+                    gst_buffer_unmap(buf, &snapmap);
+                }
             }
         }
     }
