@@ -49,6 +49,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
+      - ./django/config/settings.py:/app/config/settings.py:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
@@ -76,6 +77,7 @@ services:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
     volumes:
+      - ./django/config/settings.py:/app/config/settings.py:ro
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
     depends_on:
@@ -96,6 +98,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
     volumes:
+      - ./django/config/settings.py:/app/config/settings.py:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
@@ -119,6 +122,7 @@ services:
       - MEDIAMTX_URL=http://mediamtx:8889
       - MEDIAMTX_API_URL=http://mediamtx:9997
     volumes:
+      - ./django/config/settings.py:/app/config/settings.py:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ./computer_vision/config:/opt/computer_vision/config:rw
       - ./computer_vision/models:/opt/computer_vision/models
@@ -136,6 +140,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
     volumes:
+      - ./django/config/settings.py:/app/config/settings.py:ro
       - ./computer_vision/models:/opt/computer_vision/models
     depends_on:
       redis:
@@ -149,6 +154,7 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
+      - ./django/config/settings.py:/app/config/settings.py:ro
       - ./computer_vision/config:/opt/computer_vision/config:rw
     depends_on:
       redis:
@@ -164,6 +170,7 @@ services:
     ports:
       - "127.0.0.1:12347:12347"
     volumes:
+      - ./django/config/settings.py:/app/config/settings.py:ro
       - ./django/media:/app/media
       - ./computer_vision/models:/opt/computer_vision/models
       - ./django/aduana/models.py:/app/aduana/models.py:ro
