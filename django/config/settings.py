@@ -106,6 +106,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "monitoring.tasks.collect_deepstream",
         "schedule": 30.0,
     },
+    "aduana-watchdog-silence-every-15min": {
+        "task": "aduana.tasks.watchdog_detection_silence",
+        "schedule": 900.0,
+    },
+    "aduana-purge-old-detections-daily": {
+        "task": "aduana.tasks.purge_old_detections",
+        "schedule": 86400.0,
+    },
 }
 
 AUTH_PASSWORD_VALIDATORS = []

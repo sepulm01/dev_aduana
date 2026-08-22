@@ -21,6 +21,10 @@ MIN_CLUSTER_SIZE = 3
 GAP_CROSS_SOURCE = 5.0
 OCR_EVENT_MAX_CROPS = 12
 OCR_EVENT_MAX_PER_OBJ = 3
+# YOLO confidence below ~0.85 is essentially noise for OCR (measured on
+# production data: 0-5% checksum-valid reads vs 14% above 0.85). Events
+# without good crops stay codeless rather than getting a phantom code.
+OCR_MIN_CROP_CONF = 0.80
 
 
 def check_ocr_vl_health(ttl=30.0):
@@ -187,7 +191,8 @@ def ocr_event(event_id):
         return
 
     dets = list(
-        ContainerDetection.objects.filter(event=event, class_id=3)
+        ContainerDetection.objects.filter(
+            event=event, class_id=3, confidence__gte=OCR_MIN_CROP_CONF)
         .order_by("-confidence")
     )
     if not dets:
@@ -257,34 +262,48 @@ def aggregate_ocr_results(event_id):
         return
 
     detections = ContainerDetection.objects.filter(
-        event=event, class_id=3, ocr_processed=True
+        event=event, class_id=3, ocr_processed=True,
+        confidence__gte=OCR_MIN_CROP_CONF,
     )
 
     if not detections.exists():
         return
 
-    # Vote: one vote per detection per code (best tier wins inside a detection).
-    # code -> [points, distinct raw reads, strict reads, detection ids]
+    # Vote: one vote per tracked object per code (best tier wins inside a
+    # detection, then best tier per object). A tracked object repeats the
+    # same reading across frames; counting each frame as an independent vote
+    # amplifies repeated OCR errors (identical hallucinations).
+    # code -> [points, distinct raw reads, strict reads, object ids]
     TIER_PTS = {"strict": 2, "repaired": 1, "raw": 0}
     TIER_RANK = {"strict": 2, "repaired": 1, "raw": 0}
-    votes = {}
+    per_object = {}
     for d in detections:
-        per_code = {}
-        for code, tier, rawseg in _extract_codes(d):
-            if code not in per_code or TIER_RANK[tier] > TIER_RANK[per_code[code][0]]:
-                per_code[code] = (tier, rawseg)
-        for code, (tier, rawseg) in per_code.items():
+        per_object.setdefault(d.object_id, []).append(d)
+
+    votes = {}
+    for obj_id, obj_dets in per_object.items():
+        best_per_code = {}
+        for d in obj_dets:
+            per_code = {}
+            for code, tier, rawseg in _extract_codes(d):
+                if code not in per_code or TIER_RANK[tier] > TIER_RANK[per_code[code][0]]:
+                    per_code[code] = (tier, rawseg)
+            for code, (tier, rawseg) in per_code.items():
+                cur = best_per_code.get(code)
+                if cur is None or TIER_RANK[tier] > TIER_RANK[cur[0]]:
+                    best_per_code[code] = (tier, rawseg)
+        for code, (tier, rawseg) in best_per_code.items():
             ent = votes.setdefault(code, [0, set(), 0, set()])
             ent[0] += TIER_PTS[tier]
             ent[1].add(rawseg)
-            ent[3].add(d.id)
+            ent[3].add(obj_id)
             if tier == "strict":
                 ent[2] += 1
 
     if not votes:
         return
 
-    # Raw-only codes backed by >= 3 distinct detections get a bonus
+    # Raw-only codes backed by >= 3 distinct tracked objects get a bonus
     # (a physically painted label can have an invalid check digit).
     for code, ent in votes.items():
         if ent[2] == 0 and ent[0] == 0 and len(ent[3]) >= 3:
@@ -374,6 +393,19 @@ def _normalize_positions(seg):
     return "".join(out), changed
 
 
+def _raw_skeleton_ok(raw):
+    """A plausible ISO 6346 read: first 4 mostly letters, rest mostly digits.
+
+    Rejects VL hallucinations like "22G1 26 88 95..." that the repair logic
+    would otherwise manufacture into checksum-valid phantom codes.
+    """
+    if len(raw) not in (10, 11):
+        return False
+    letters = sum(1 for ch in raw[:4] if ch.isalpha())
+    digits = sum(1 for ch in raw[4:] if ch.isdigit())
+    return letters >= 3 and digits >= len(raw) - 4 - 1
+
+
 def _to_valid_code(seg):
     """Convert a raw alnum segment into an ISO 6346 code when possible.
 
@@ -383,10 +415,20 @@ def _to_valid_code(seg):
       - missing last digit (4 letters + 6 digits) -> compute check digit
       - wrong last digit -> recompute check digit (checksum fails but the
         first 10 chars are usually read correctly by the VL model)
+    Repairs are gated: the raw segment must have a plausible skeleton and
+    stay within edit distance 2 of the repaired code.
     """
+    raw = seg
+    if not _raw_skeleton_ok(raw):
+        return None, False
     seg, normalized = _normalize_positions(seg)
     if not re.match(r"^[A-Z]{4}\d{6,7}$", seg):
         return None, False
+
+    def accept(code, strict):
+        if not strict and _levenshtein(raw, code) > 2:
+            return None, False
+        return code, strict
     if seg[3] not in "UJZ":
         # Category letter (U/J/Z) is often misread (U<->L/I etc). Try U/J/Z,
         # checksum still gates the result (only applies to full 11-char reads).
@@ -394,17 +436,17 @@ def _to_valid_code(seg):
             for cat in "UJZ":
                 cand = seg[:3] + cat + seg[4:]
                 if es_contenedor_valido(cand):
-                    return cand, False
+                    return accept(cand, False)
         return None, False
 
     if len(seg) == 11:
         if not normalized and es_contenedor_valido(seg):
             return seg, True
         # Trust the first 10 chars, recompute the check digit
-        return seg[:10] + str(_compute_check_digit(seg[:10])), False
+        return accept(seg[:10] + str(_compute_check_digit(seg[:10])), False)
 
     # 4 letters + 6 digits: check digit missing -> compute it
-    return seg + str(_compute_check_digit(seg)), False
+    return accept(seg + str(_compute_check_digit(seg)), False)
 
 
 def _extract_codes(detection):
@@ -536,6 +578,120 @@ def close_stale_events():
 
         if should_close:
             _finalize_event(event)
+
+
+# ---------------------------------------------------------------------------
+# Operations: silence watchdog + data retention
+# ---------------------------------------------------------------------------
+
+WATCHDOG_SILENCE_HOURS = 2
+WATCHDOG_WORK_START_HOUR = 7
+WATCHDOG_WORK_END_HOUR = 20  # exclusive
+
+RETENTION_DAYS = 14
+
+
+@shared_task
+def watchdog_detection_silence():
+    """Raise an alarm when no detections arrive during working hours.
+
+    The costliest failure mode of this system is silent zero-reading hours
+    (dead pipeline, moved camera, dead LC/ROI geometry) with every container
+    green. Runs every 15 min via Celery Beat.
+    """
+    from aduana.models import ContainerDetection
+
+    now_local = timezone.localtime()
+    if now_local.weekday() == 6:  # Sunday: no traffic expected
+        return
+    if not (WATCHDOG_WORK_START_HOUR <= now_local.hour < WATCHDOG_WORK_END_HOUR):
+        return
+
+    cutoff = timezone.now() - timedelta(hours=WATCHDOG_SILENCE_HOURS)
+    last = (
+        ContainerDetection.objects.order_by("-timestamp")
+        .values_list("timestamp", flat=True)
+        .first()
+    )
+    if last is not None and last >= cutoff:
+        return
+
+    fps_info = ""
+    try:
+        import os
+        import redis as redis_lib
+        r = redis_lib.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+        fps = {
+            k.decode(): v.decode()
+            for k, v in r.hgetall("deepstream:sources:aduana:1").items()
+            if k.decode().endswith(":fps")
+        }
+        if fps:
+            fps_info = f" FPS del pipeline (frames fluyendo): {fps}."
+    except Exception:
+        pass
+
+    logger.error(
+        "ALARMA: sin detecciones en las últimas %d h en horario hábil. "
+        "Última detección: %s.%s Revisar pipeline/cámaras/geometría LC-ROI.",
+        WATCHDOG_SILENCE_HOURS,
+        last or "nunca",
+        fps_info,
+    )
+
+
+@shared_task
+def purge_old_detections():
+    """Delete detections (and their crop files) older than RETENTION_DAYS.
+
+    Events are kept (small rows: code/seal/grid history). Frame files
+    referenced by old events are deleted and the fields cleared.
+    """
+    from django.core.files.storage import default_storage
+
+    from aduana.models import ContainerDetection, ContainerEvent
+
+    cutoff = timezone.now() - timedelta(days=RETENTION_DAYS)
+
+    dets_deleted = 0
+    while True:
+        batch = list(
+            ContainerDetection.objects.filter(created_at__lt=cutoff)
+            .values_list("id", "crop")[:500]
+        )
+        if not batch:
+            break
+        for det_id, crop in batch:
+            if crop:
+                try:
+                    default_storage.delete(crop)
+                except Exception:
+                    pass
+        ContainerDetection.objects.filter(
+            id__in=[b[0] for b in batch]).delete()
+        dets_deleted += len(batch)
+
+    frames_cleared = 0
+    for ev in ContainerEvent.objects.filter(created_at__lt=cutoff):
+        changed = False
+        for field in ("frame_src0", "frame_src1"):
+            path = getattr(ev, field)
+            if path:
+                try:
+                    default_storage.delete(str(path))
+                except Exception:
+                    pass
+                setattr(ev, field, "")
+                changed = True
+        if changed:
+            ev.save(update_fields=["frame_src0", "frame_src1"])
+            frames_cleared += 1
+
+    if dets_deleted or frames_cleared:
+        logger.info(
+            "purge_old_detections: %d detecciones eliminadas, frames limpiados en %d eventos (> %d días)",
+            dets_deleted, frames_cleared, RETENTION_DAYS,
+        )
 
 
 def _finalize_event(event):

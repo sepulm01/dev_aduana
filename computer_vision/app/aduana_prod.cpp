@@ -550,11 +550,20 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                 float orig_h = om->detector_bbox_info.org_bbox_coords.height;
 
                 if (om->class_id == 3) {
-                    float pad = 0.05f;
-                    om->detector_bbox_info.org_bbox_coords.left   -= orig_w * pad;
-                    om->detector_bbox_info.org_bbox_coords.top    -= orig_h * pad;
-                    om->detector_bbox_info.org_bbox_coords.width  += orig_w * 2 * pad;
-                    om->detector_bbox_info.org_bbox_coords.height += orig_h * 2 * pad;
+                    /* Generous padding: horizontal container codes lose their
+                       leading characters when the bbox is tight (left edge cut
+                       observed in production, e.g. "MNB[U]"). Clamped to frame. */
+                    float pad_x = orig_w * 0.15f, pad_y = orig_h * 0.30f;
+                    float nl = orig_left - pad_x, nt = orig_top - pad_y;
+                    float nw = orig_w + 2 * pad_x, nh = orig_h + 2 * pad_y;
+                    if (nl < 0) nl = 0;
+                    if (nt < 0) nt = 0;
+                    if (nl + nw > (float)MUXER_OUTPUT_WIDTH)  nw = (float)MUXER_OUTPUT_WIDTH - nl;
+                    if (nt + nh > (float)MUXER_OUTPUT_HEIGHT) nh = (float)MUXER_OUTPUT_HEIGHT - nt;
+                    om->detector_bbox_info.org_bbox_coords.left   = nl;
+                    om->detector_bbox_info.org_bbox_coords.top    = nt;
+                    om->detector_bbox_info.org_bbox_coords.width  = nw;
+                    om->detector_bbox_info.org_bbox_coords.height = nh;
                 }
 
                 GstMapInfo inmap = GST_MAP_INFO_INIT;
