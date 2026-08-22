@@ -670,28 +670,44 @@ def _try_merge_event(event):
 
     # Candidates: events that overlap in time (or are still open) or closed
     # within MERGE_WINDOW before this event started. Both cameras watch the
-    # same single-lane zone, so events overlapping in time are necessarily
-    # the same physical truck passage — merge them unconditionally.
-    win_start = event.timestamp_start - timedelta(seconds=MERGE_WINDOW)
-    prev = (
+    # same single-lane zone, so events whose time ranges overlap are
+    # necessarily the same physical truck passage — merge unconditionally.
+    event_start = event.timestamp_start
+    event_end = event.timestamp_end or timezone.now()
+    win_start = event_start - timedelta(seconds=MERGE_WINDOW)
+
+    cands = (
         ContainerEvent.objects
-        .filter(seal_status__in=["processing", "con_sello", "sin_sello", "indeterminado"])
+        .filter(seal_status__in=["processing", "con_sello", "sin_sello", "indeterminado"],
+                timestamp_start__lte=event_end)  # never merge into future events
         .filter(Q(timestamp_end__isnull=True) | Q(timestamp_end__gte=win_start))
         .exclude(id=event.id)
         .order_by("-timestamp_start")
-        .first()
     )
 
-    if prev is None:
-        return False
+    prev = None
+    consecutive = None
+    for cand in cands[:10]:
+        cand_end = cand.timestamp_end
+        if cand_end is None:
+            overlaps = cand.timestamp_start <= event_end
+        else:
+            overlaps = (cand.timestamp_start <= event_end
+                        and cand_end >= event_start)
+        if overlaps:
+            prev = cand
+            break
+        if consecutive is None and cand_end is not None:
+            consecutive = cand  # latest non-overlapping closed event in window
 
-    overlaps = prev.timestamp_end is None or prev.timestamp_end >= event.timestamp_start
-    if not overlaps:
-        gap = (event.timestamp_start - prev.timestamp_end).total_seconds()
-        if gap > MERGE_WINDOW:
+    overlap_merge = prev is not None
+    if prev is None:
+        # No temporal overlap: consecutive events may still be the same truck,
+        # but could also be two different trucks — keep the color check as a
+        # safeguard for that ambiguous case.
+        prev = consecutive
+        if prev is None:
             return False
-        # Consecutive non-overlapping events may be two different trucks;
-        # keep the color check as a safeguard.
         evt_color = _get_event_avg_color(event)
         prev_color = _get_event_avg_color(prev)
         if evt_color is None or prev_color is None:
@@ -702,20 +718,28 @@ def _try_merge_event(event):
     was_open = prev.timestamp_end is None
     update_fields = ["timestamp_start"]
     ContainerDetection.objects.filter(event=event).update(event=prev)
-    prev.timestamp_start = min(prev.timestamp_start, event.timestamp_start)
+    prev.timestamp_start = min(prev.timestamp_start, event_start)
     if not was_open:
-        prev.timestamp_end = max(prev.timestamp_end, event.timestamp_end or timezone.now())
+        prev.timestamp_end = max(prev.timestamp_end, event_end)
         update_fields.append("timestamp_end")
     prev.save(update_fields=update_fields)
     event_id_old = event.id
     event.delete()
 
-    logger.info("Merge: event %s merged into event %s (overlap=%s)", event_id_old, prev.id, overlaps)
+    logger.info("Merge: event %s merged into event %s (overlap=%s)",
+                event_id_old, prev.id, overlap_merge)
 
     if was_open:
         # The surviving event is still accumulating detections; it will run
         # seal/OCR analysis when it closes.
         return True
+
+    if prev.container_code:
+        aggregate_ocr_results.delay(prev.id)
+    else:
+        ocr_event.delay(prev.id)
+
+    return True
 
     if prev.container_code:
         aggregate_ocr_results.delay(prev.id)
