@@ -74,3 +74,4 @@ computer_vision/app/aduana-prod
 # Runtime outputs
 computer_vision/record/trucks.csv
 ocr_vl/models/
+mediamtx/mediamtx.yml
