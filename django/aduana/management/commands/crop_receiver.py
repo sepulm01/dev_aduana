@@ -322,6 +322,7 @@ class CropReceiver:
             logger.error("_process_frame_snapshot error: %s", e)
 
     CROSS_CAM_WINDOW = 12.0  # seconds: same physical truck seen by the other camera
+    JOIN_GAP_SECONDS = 6.0   # seconds: join open event if its last detection is this recent
 
     def _find_or_create_event(self, detection):
         from aduana.models import ContainerEvent
@@ -346,23 +347,23 @@ class CropReceiver:
             if event:
                 return event
 
-            # New truck on this camera: reuse an open event from the OTHER
-            # camera that overlaps in time. The inspection zone is
-            # single-lane, so two different trucks cannot be passing at the
-            # same time — temporal overlap alone is sufficient evidence.
-            # (HSV color veto removed: the two cameras expose/WB the same
-            # container very differently, making cross-camera color
-            # comparison unreliable.)
-            cand = (
+            # New truck/track on this camera: join the most recent open event
+            # with RECENT ACTIVITY (last 6s), regardless of source. The zone
+            # holds one truck at a time, so activity adjacency is sufficient
+            # evidence. Handles tracker fragmentation and cross-camera strays.
+            # (No same-source exclusion: a merged event legitimately contains
+            # both cameras' detections — excluding them created 1-camera
+            # fragment events.)
+            cands = (
                 ContainerEvent.objects
-                .filter(seal_status="processing",
-                        timestamp_start__gte=ts - timedelta(seconds=self.CROSS_CAM_WINDOW))
-                .exclude(detections__source_id=detection.source_id)
-                .order_by("-timestamp_start")
-                .first()
+                .filter(seal_status="processing")
+                .order_by("-timestamp_start")[:5]
             )
-            if cand:
-                return cand
+            for cand in cands:
+                last = (cand.detections.order_by("-timestamp")
+                        .values_list("timestamp", flat=True).first())
+                if last and 0 <= (ts - last).total_seconds() <= self.JOIN_GAP_SECONDS:
+                    return cand
 
             return ContainerEvent.objects.create(seal_status="processing", timestamp_start=ts)
 

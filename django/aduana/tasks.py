@@ -543,8 +543,8 @@ def close_stale_events():
     from aduana.models import ContainerDetection, ContainerEvent
 
     threshold = timezone.now() - timedelta(seconds=15)
-    seal_threshold = timezone.now() - timedelta(seconds=3)
-    roi_exit_threshold = timezone.now() - timedelta(seconds=2)
+    seal_threshold = timezone.now() - timedelta(seconds=8)
+    roi_exit_threshold = timezone.now() - timedelta(seconds=6)
 
     open_events = ContainerEvent.objects.filter(
         seal_status="processing", timestamp_end__isnull=True
@@ -562,13 +562,17 @@ def close_stale_events():
         if last_detection.timestamp < threshold:
             should_close = True
 
+        # Seal-staleness closes the event only when the pass is really quiet
+        # (seals flicker in/out mid-pass while code crops keep flowing).
         if not should_close:
             seal_dets = detections.filter(class_id__in=[0, 1])
             if seal_dets.exists():
                 last_seal = seal_dets.order_by("-timestamp").first()
-                if last_seal.timestamp < seal_threshold:
+                if (last_seal.timestamp < seal_threshold
+                        and last_detection.timestamp < seal_threshold):
                     should_close = True
 
+        # Fast close when the door left the view (salida ROI) 6s ago
         if not should_close:
             exit_dets = detections.filter(roi_name="salida")
             if exit_dets.exists():
@@ -861,17 +865,22 @@ def _try_merge_event(event):
 
     overlap_merge = prev is not None
     if prev is None:
-        # Consecutive events (gap between activity windows): may be the same
-        # truck or two different ones — keep the color check as a safeguard.
+        # Consecutive events (gap between activity windows): a tiny gap (<=6s)
+        # means a tracker fragment or a straggler after an early close — same
+        # truck, merge time-only. Bigger gaps may be two different trucks:
+        # keep the color check as a safeguard.
         prev = consecutive
         if prev is None:
             return False
-        evt_color = _get_event_avg_color(event)
-        prev_color = _get_event_avg_color(prev)
-        if evt_color is None or prev_color is None:
-            return False
-        if _hsv_distance(evt_color, prev_color) > COLOR_MERGE_THRESHOLD:
-            return False
+        c_first, c_last = activity(consecutive)
+        gap_s = (ev_first - c_last).total_seconds()
+        if not (0 <= gap_s <= 6.0):
+            evt_color = _get_event_avg_color(event)
+            prev_color = _get_event_avg_color(prev)
+            if evt_color is None or prev_color is None:
+                return False
+            if _hsv_distance(evt_color, prev_color) > COLOR_MERGE_THRESHOLD:
+                return False
 
     was_open = prev.timestamp_end is None
     update_fields = ["timestamp_start"]
