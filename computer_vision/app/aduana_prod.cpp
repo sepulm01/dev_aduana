@@ -36,7 +36,6 @@
 #define CROP_MAX_FPS 15
 #define CROP_MIN_OCR_BYTES 3000
 #define FRAME_SNAP_CLASS 99             /* full-frame reference snapshot */
-#define FRAME_SNAP_INTERVAL_US 3000000  /* one per source every 3s while truck active */
 #define DEFAULT_MIN_CONFIDENCE 0.6f
 #define MAX_CLASSES 16
 #define CONFIDENCE_CONFIG "/opt/computer_vision/config/confidence_thresholds.txt"
@@ -47,7 +46,8 @@ static bool g_roi_configured = false;
 struct TruckKey { int sid; guint64 oid; };
 bool operator==(const TruckKey& a, const TruckKey& b) { return a.sid == b.sid && a.oid == b.oid; }
 struct TruckKeyHash { size_t operator()(const TruckKey& k) const { return (size_t)k.sid * 31 + (size_t)k.oid; } };
-struct TruckState { bool crossed = false; bool in_roi = false; };
+struct TruckState { bool crossed = false; bool in_roi = false;
+                    bool snapshot_sent = false; bool seal_seen = false; };
 static std::unordered_map<TruckKey, TruckState, TruckKeyHash> g_trucks;
 
 static bool truck_is_active(int sid, guint64 oid) {
@@ -167,7 +167,6 @@ static GMutex redis_mutex;
 static redisContext* pub_ctx = NULL;
 static int source_to_device[MAX_SOURCES];
 static guint64 frame_counts[MAX_SOURCES];
-static guint64 g_last_frame_snap[MAX_SOURCES] = {};
 static const char* g_sources_key = "deepstream:sources:main";
 
 static NvDsObjEncCtxHandle g_crop_enc_ctx = NULL;
@@ -529,6 +528,26 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
                     if (center_inside(tk, om)) { truck_oid = tk->object_id; break; }
                 }
                 if (!truck_oid) continue;
+
+                /* First-seal trigger: one full-frame snapshot per truck when the
+                   door seals become visible (the legally relevant image). */
+                if (om->class_id == 0 || om->class_id == 1) {
+                    auto& tstate = g_trucks[{sid, truck_oid}];
+                    tstate.seal_seen = true;
+                    if (!tstate.snapshot_sent) {
+                        GstMapInfo smap = GST_MAP_INFO_INIT;
+                        if (gst_buffer_map(buf, &smap, GST_MAP_READ)) {
+                            NvBufSurface* ssurf = (NvBufSurface*)smap.data;
+                            if (ssurf && send_frame_snapshot(ssurf, fm, dev_id, sid, truck_oid)) {
+                                tstate.snapshot_sent = true;
+                                g_print("[Frame] src=%d truck=%lu first-seal snapshot\n",
+                                        sid, truck_oid);
+                            }
+                            gst_buffer_unmap(buf, &smap);
+                        }
+                    }
+                }
+
                 if (now - last_crop_sent < crop_interval) continue;
 
                 CropPending cp;
@@ -597,29 +616,21 @@ static GstPadProbeReturn analytics_pad_probe(GstPad* pad, GstPadProbeInfo* info,
             }
         }
 
-        /* Full-frame reference snapshot per source while a truck is active.
-           Sent after the crop loop so the snapshot's encode meta (attached to
-           a truck object) can never be mistaken for a real crop. */
-        if (now - g_last_frame_snap[sid] >= FRAME_SNAP_INTERVAL_US) {
-            guint64 act_truck = 0;
-            for (NvDsMetaList* lo = fm->obj_meta_list; lo; lo = lo->next) {
-                NvDsObjectMeta* tk = (NvDsObjectMeta*)lo->data;
-                if (tk->class_id == 4 && truck_is_active(sid, tk->object_id)) {
-                    act_truck = tk->object_id;
-                    break;
-                }
-            }
-            if (act_truck) {
-                GstMapInfo snapmap = GST_MAP_INFO_INIT;
-                if (gst_buffer_map(buf, &snapmap, GST_MAP_READ)) {
-                    NvBufSurface* surf = (NvBufSurface*)snapmap.data;
-                    if (surf && send_frame_snapshot(surf, fm, dev_id, sid, act_truck)) {
-                        g_last_frame_snap[sid] = now;
-                        g_print("[Frame] src=%d truck=%lu snapshot sent\n", sid, act_truck);
-                    } else {
-                        g_print("[Frame] src=%d truck=%lu snapshot FAILED\n", sid, act_truck);
+        /* Fallback reference frame: truck leaving (salida ROI) without any
+           seal ever seen — the event still gets a frame. */
+        for (auto& kv : g_trucks) {
+            if (kv.first.sid != sid) continue;
+            auto& st = kv.second;
+            if (st.crossed && st.in_roi && !st.snapshot_sent) {
+                GstMapInfo smap = GST_MAP_INFO_INIT;
+                if (gst_buffer_map(buf, &smap, GST_MAP_READ)) {
+                    NvBufSurface* ssurf = (NvBufSurface*)smap.data;
+                    if (ssurf && send_frame_snapshot(ssurf, fm, dev_id, sid, kv.first.oid)) {
+                        st.snapshot_sent = true;
+                        g_print("[Frame] src=%d truck=%lu fallback snapshot (no seals)\n",
+                                sid, kv.first.oid);
                     }
-                    gst_buffer_unmap(buf, &snapmap);
+                    gst_buffer_unmap(buf, &smap);
                 }
             }
         }

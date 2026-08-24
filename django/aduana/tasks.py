@@ -13,12 +13,6 @@ OCR_VL_URL = "http://ocr-vl:5002"
 _ocr_vl_down_logged = False
 _ocr_vl_health = {"ok": None, "ts": 0.0}
 
-GAP_CLUSTER_THRESHOLD = 3.0
-COLOR_SPLIT_THRESHOLD = 0.25
-COLOR_MERGE_THRESHOLD = 0.20
-MERGE_WINDOW = 30
-MIN_CLUSTER_SIZE = 3
-GAP_CROSS_SOURCE = 5.0
 OCR_EVENT_MAX_CROPS = 12
 OCR_EVENT_MAX_PER_OBJ = 3
 # YOLO confidence below ~0.85 is essentially noise for OCR (measured on
@@ -53,13 +47,6 @@ def check_ocr_vl_health(ttl=30.0):
                         OCR_VL_URL)
         _ocr_vl_down_logged = True
     return ok
-
-
-def _hsv_distance(c1, c2):
-    dh = min(abs(c1[0] - c2[0]), 1.0 - abs(c1[0] - c2[0]))
-    ds = abs(c1[1] - c2[1])
-    dv = abs(c1[2] - c2[2])
-    return ((dh * 1.5) ** 2 + ds ** 2 + (dv * 0.5) ** 2) ** 0.5
 
 
 @shared_task
@@ -538,184 +525,163 @@ def _fuzzy_consensus(codes, min_votes=2, max_distance=2):
     return best
 
 
+# ---------------------------------------------------------------------------
+# Batch event construction (sweeper): raw ingest -> offline clustering
+#
+# The online event lifecycle (open/close/merge/split) is gone. Detections land
+# raw (event_id NULL) and this sweeper builds definitive events once the pass
+# is complete, with the full time window in view. Idempotent: only rows with
+# event_id NULL are considered; to reprocess an event, set its detections'
+# event_id back to NULL and delete the event.
+# ---------------------------------------------------------------------------
+
+SWEEP_MATURE_SECONDS = 45   # a pass is complete after this much silence
+SWEEP_PASS_GAP = 20.0       # gap without detections = pass boundary
+SWEEP_REWIND_JUMP = 0.15    # normalized backward jump implying a new truck
+
+
 @shared_task
-def close_stale_events():
-    from aduana.models import ContainerDetection, ContainerEvent
+def process_raw_detections():
+    """Cluster mature raw detections into definitive container events."""
+    from aduana.models import ContainerDetection
 
-    threshold = timezone.now() - timedelta(seconds=15)
-    seal_threshold = timezone.now() - timedelta(seconds=8)
-    roi_exit_threshold = timezone.now() - timedelta(seconds=6)
-
-    open_events = ContainerEvent.objects.filter(
-        seal_status="processing", timestamp_end__isnull=True
+    mature = timezone.now() - timedelta(seconds=SWEEP_MATURE_SECONDS)
+    dets = list(
+        ContainerDetection.objects.filter(event__isnull=True, timestamp__lt=mature)
+        .exclude(class_id=99)
+        .order_by("timestamp")
+        .values("id", "timestamp", "source_id", "truck_id", "class_id",
+                "bbox_left", "bbox_width")
     )
+    if not dets:
+        return
 
-    for event in open_events:
-        detections = ContainerDetection.objects.filter(event=event)
-        last_detection = detections.order_by("-timestamp").first()
+    # Coarse temporal clustering: a gap without any detection (either camera)
+    # separates two passes.
+    clusters = []
+    cur = [dets[0]]
+    for d in dets[1:]:
+        if (d["timestamp"] - cur[-1]["timestamp"]).total_seconds() > SWEEP_PASS_GAP:
+            clusters.append(cur)
+            cur = []
+        cur.append(d)
+    clusters.append(cur)
 
-        if last_detection is None:
+    created = 0
+    for cl in clusters:
+        for sub in _split_cluster_by_trajectory(cl):
+            _materialize_event(sub)
+            created += 1
+    if created:
+        logger.info("Sweeper: %d evento(s) creado(s) de %d detecciones crudas",
+                    created, len(dets))
+
+
+def _split_cluster_by_trajectory(dets):
+    """Split a temporal cluster into individual truck passes.
+
+    The DeepStream tracker is fallible (same truck, changing ids), so truck_id
+    is never trusted alone. A physical truck moves monotonically through the
+    zone per camera: a new truck is declared where the cargo position rewinds
+    against the direction of travel AND the tracker id changed (corroborated).
+    Input/output: detection dicts as produced by .values().
+    """
+    by_src = {}
+    for d in dets:
+        by_src.setdefault(d["source_id"], []).append(d)
+
+    boundaries = set()
+    for sid, sd in by_src.items():
+        if len(sd) < 4:
             continue
+        xs = [d["bbox_left"] + d["bbox_width"] / 2 for d in sd]
+        # Robust direction of travel: median per-detection displacement
+        # (majority moves with the truck(s); same lane = same direction).
+        dxs = sorted(v for v in (xs[i] - xs[i - 1] for i in range(1, len(xs)))
+                     if abs(v) > 1e-4)
+        if not dxs:
+            continue
+        med = dxs[len(dxs) // 2]
+        if abs(med) < 0.002:
+            continue  # stationary / no clear motion: never split
+        direction = 1 if med > 0 else -1
 
-        should_close = False
+        prev_tid, prev_x = sd[0]["truck_id"], xs[0]
+        for i in range(1, len(sd)):
+            x, tid = xs[i], sd[i]["truck_id"]
+            rewind = (x - prev_x) * direction < -SWEEP_REWIND_JUMP
+            if tid != prev_tid and rewind:
+                boundaries.add(sd[i]["timestamp"])
+            prev_tid, prev_x = tid, x
 
-        if last_detection.timestamp < threshold:
-            should_close = True
+    if not boundaries:
+        return [dets]
 
-        # Seal-staleness closes the event only when the pass is really quiet
-        # (seals flicker in/out mid-pass while code crops keep flowing).
-        if not should_close:
-            seal_dets = detections.filter(class_id__in=[0, 1])
-            if seal_dets.exists():
-                last_seal = seal_dets.order_by("-timestamp").first()
-                if (last_seal.timestamp < seal_threshold
-                        and last_detection.timestamp < seal_threshold):
-                    should_close = True
+    marks = sorted(boundaries)
+    parts, cur, bi = [], [], 0
+    for d in dets:
+        while bi < len(marks) and d["timestamp"] >= marks[bi]:
+            bi += 1
+            if cur:
+                parts.append(cur)
+                cur = []
+        cur.append(d)
+    if cur:
+        parts.append(cur)
 
-        # Fast close when the door left the view (salida ROI) 6s ago
-        if not should_close:
-            exit_dets = detections.filter(roi_name="salida")
-            if exit_dets.exists():
-                last_exit = exit_dets.order_by("-timestamp").first()
-                if last_exit.timestamp < roi_exit_threshold:
-                    should_close = True
-
-        if should_close:
-            _finalize_event(event)
-
-
-# ---------------------------------------------------------------------------
-# Operations: silence watchdog + data retention
-# ---------------------------------------------------------------------------
-
-WATCHDOG_SILENCE_HOURS = 2
-WATCHDOG_WORK_START_HOUR = 7
-WATCHDOG_WORK_END_HOUR = 20  # exclusive
-
-RETENTION_DAYS = 14
-
-
-@shared_task
-def watchdog_detection_silence():
-    """Raise an alarm when no detections arrive during working hours.
-
-    The costliest failure mode of this system is silent zero-reading hours
-    (dead pipeline, moved camera, dead LC/ROI geometry) with every container
-    green. Runs every 15 min via Celery Beat.
-    """
-    from aduana.models import ContainerDetection
-
-    now_local = timezone.localtime()
-    if now_local.weekday() == 6:  # Sunday: no traffic expected
-        return
-    if not (WATCHDOG_WORK_START_HOUR <= now_local.hour < WATCHDOG_WORK_END_HOUR):
-        return
-
-    cutoff = timezone.now() - timedelta(hours=WATCHDOG_SILENCE_HOURS)
-    last = (
-        ContainerDetection.objects.order_by("-timestamp")
-        .values_list("timestamp", flat=True)
-        .first()
-    )
-    if last is not None and last >= cutoff:
-        return
-
-    fps_info = ""
-    try:
-        import os
-        import redis as redis_lib
-        r = redis_lib.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-        fps = {
-            k.decode(): v.decode()
-            for k, v in r.hgetall("deepstream:sources:aduana:1").items()
-            if k.decode().endswith(":fps")
-        }
-        if fps:
-            fps_info = f" FPS del pipeline (frames fluyendo): {fps}."
-    except Exception:
-        pass
-
-    logger.error(
-        "ALARMA: sin detecciones en las últimas %d h en horario hábil. "
-        "Última detección: %s.%s Revisar pipeline/cámaras/geometría LC-ROI.",
-        WATCHDOG_SILENCE_HOURS,
-        last or "nunca",
-        fps_info,
-    )
+    # Stitch back consecutive parts that share a tracker id on the same
+    # source. A boundary from one camera can cut a single physical truck in
+    # two on the other camera; tracker ids are unique per pass, so a shared
+    # (source, truck_id) is conclusive proof of the same truck.
+    stitched = []
+    for part in parts:
+        if stitched:
+            keys_a = {(d["source_id"], d["truck_id"]) for d in stitched[-1]}
+            keys_b = {(d["source_id"], d["truck_id"]) for d in part}
+            if keys_a & keys_b:
+                stitched[-1].extend(part)
+                continue
+        stitched.append(part)
+    return stitched
 
 
-@shared_task
-def purge_old_detections():
-    """Delete detections (and their crop files) older than RETENTION_DAYS.
-
-    Events are kept (small rows: code/seal/grid history). Frame files
-    referenced by old events are deleted and the fields cleared.
-    """
-    from django.core.files.storage import default_storage
-
+def _materialize_event(dets):
+    """Create the definitive event for one pass and run downstream analysis."""
     from aduana.models import ContainerDetection, ContainerEvent
 
-    cutoff = timezone.now() - timedelta(days=RETENTION_DAYS)
+    first_ts = dets[0]["timestamp"]
+    last_ts = dets[-1]["timestamp"]
 
-    dets_deleted = 0
-    while True:
-        batch = list(
-            ContainerDetection.objects.filter(created_at__lt=cutoff)
-            .values_list("id", "crop")[:500]
-        )
-        if not batch:
-            break
-        for det_id, crop in batch:
-            if crop:
-                try:
-                    default_storage.delete(crop)
-                except Exception:
-                    pass
-        ContainerDetection.objects.filter(
-            id__in=[b[0] for b in batch]).delete()
-        dets_deleted += len(batch)
+    event = ContainerEvent.objects.create(
+        seal_status="processing",
+        timestamp_start=first_ts,
+        timestamp_end=last_ts,
+    )
+    det_ids = [d["id"] for d in dets]
+    ContainerDetection.objects.filter(id__in=det_ids).update(event=event)
 
-    frames_cleared = 0
-    for ev in ContainerEvent.objects.filter(created_at__lt=cutoff):
-        changed = False
-        for field in ("frame_src0", "frame_src1"):
-            path = getattr(ev, field)
-            if path:
-                try:
-                    default_storage.delete(str(path))
-                except Exception:
-                    pass
-                setattr(ev, field, "")
-                changed = True
-        if changed:
-            ev.save(update_fields=["frame_src0", "frame_src1"])
-            frames_cleared += 1
+    # Full-frame snapshots (cls 99) near this pass: earliest per camera wins
+    # (the first-seal trigger is the semantically right moment; the no-seal
+    # fallback arrives at deactivation). Snapshot rows join the event so the
+    # retention purge keeps files consistent.
+    for sid in {d["source_id"] for d in dets}:
+        snaps = ContainerDetection.objects.filter(
+            class_id=99, source_id=sid, event__isnull=True,
+            timestamp__gte=first_ts - timedelta(seconds=10),
+            timestamp__lte=last_ts + timedelta(seconds=10),
+        ).order_by("timestamp")
+        snap = snaps.first()
+        if snap:
+            setattr(event, f"frame_src{sid}", snap.crop.name)
+            snaps.update(event=event)
+    event.save(update_fields=["frame_src0", "frame_src1"])
 
-    if dets_deleted or frames_cleared:
-        logger.info(
-            "purge_old_detections: %d detecciones eliminadas, frames limpiados en %d eventos (> %d días)",
-            dets_deleted, frames_cleared, RETENTION_DAYS,
-        )
+    _finalize_event_simple(event)
 
 
-def _finalize_event(event):
-    from aduana.models import ContainerDetection
-
-    detections = ContainerDetection.objects.filter(event=event)
-    if detections.count() == 0:
-        return
-
-    clusters = _find_temporal_clusters(detections)
-    if len(clusters) >= 2:
-        _split_event(event, clusters)
-        detections = ContainerDetection.objects.filter(event=event)
-        if detections.count() == 0:
-            return
-
-    if _try_merge_event(event):
-        return
-
-    seal_detections = detections.filter(class_id__in=[0, 1])
+def _finalize_event_simple(event):
+    """Seal status + downstream analysis for a sweeper-created event."""
+    seal_detections = event.detections.filter(class_id__in=[0, 1])
 
     con_sello_count = seal_detections.filter(class_id=0).count()
     sin_sello_count = seal_detections.filter(class_id=1).count()
@@ -735,287 +701,20 @@ def _finalize_event(event):
         event.seal_status = "indeterminado"
         event.seal_confidence = 0.5
 
-    event.timestamp_end = timezone.now()
-    event.save(update_fields=["seal_status", "seal_confidence", "timestamp_end"])
+    event.save(update_fields=["seal_status", "seal_confidence"])
     logger.info(
-        "Event %s finalized: seal=%s (conf=%.2f) con=%d sin=%d",
-        event.id,
-        event.seal_status,
-        event.seal_confidence,
-        con_sello_count,
-        sin_sello_count,
+        "Event %s materialized: seal=%s (conf=%.2f) con=%d sin=%d dets=%d",
+        event.id, event.seal_status, event.seal_confidence,
+        con_sello_count, sin_sello_count, event.detections.count(),
     )
 
     ocr_event.delay(event.id)
     analyze_seals.delay(event.id)
-    capture_event_frames.delay(event.id)
-
-
-def _find_temporal_clusters(detections):
-    dets = list(detections.order_by("timestamp").values(
-        "id", "timestamp", "source_id",
-        "dominant_color_h", "dominant_color_s", "dominant_color_v",
-    ))
-    if len(dets) < 2:
-        return []
-
-    clusters = []
-    current_cluster = [dets[0]]
-    for i in range(1, len(dets)):
-        gap = (dets[i]["timestamp"] - dets[i - 1]["timestamp"]).total_seconds()
-        cross_source = dets[i]["source_id"] != dets[i - 1]["source_id"]
-        threshold = GAP_CROSS_SOURCE if cross_source else GAP_CLUSTER_THRESHOLD
-        if gap > threshold:
-            if len(current_cluster) >= MIN_CLUSTER_SIZE:
-                clusters.append([d["id"] for d in current_cluster])
-            current_cluster = [dets[i]]
-        else:
-            current_cluster.append(dets[i])
-
-    if len(current_cluster) >= MIN_CLUSTER_SIZE:
-        clusters.append([d["id"] for d in current_cluster])
-
-    if len(clusters) < 2:
-        return []
-
-    cluster_colors = []
-    for cl in clusters:
-        hs = [d["dominant_color_h"] for d in dets if d["id"] in cl and d["dominant_color_h"] is not None]
-        ss = [d["dominant_color_s"] for d in dets if d["id"] in cl and d["dominant_color_s"] is not None]
-        vs = [d["dominant_color_v"] for d in dets if d["id"] in cl and d["dominant_color_v"] is not None]
-        if len(hs) >= 2:
-            cluster_colors.append((sum(hs) / len(hs), sum(ss) / len(ss), sum(vs) / len(vs)))
-        else:
-            cluster_colors.append(None)
-
-    distinct = False
-    for i in range(len(clusters)):
-        for j in range(i + 1, len(clusters)):
-            if cluster_colors[i] and cluster_colors[j]:
-                if _hsv_distance(cluster_colors[i], cluster_colors[j]) > COLOR_SPLIT_THRESHOLD:
-                    distinct = True
-                    break
-        if distinct:
-            break
-
-    if not distinct:
-        return []
-
-    return clusters
-
-
-def _split_event(event, clusters):
-    from aduana.models import ContainerDetection, ContainerEvent
-
-    for i in range(1, len(clusters)):
-        cluster_ids = clusters[i]
-        if len(cluster_ids) < MIN_CLUSTER_SIZE:
-            continue
-        dets = ContainerDetection.objects.filter(id__in=cluster_ids).order_by("timestamp")
-        first_ts = dets.first().timestamp
-        new_event = ContainerEvent.objects.create(
-            seal_status="processing",
-            timestamp_start=first_ts,
-        )
-        dets.update(event=new_event)
-        logger.info(
-            "Split: created event %s from event %s (%d detections)",
-            new_event.id, event.id, len(cluster_ids),
-        )
-
-
-def _try_merge_event(event):
-    from django.db.models import Min, Max, Q
-    from aduana.models import ContainerEvent, ContainerDetection
-
-    # Merge by ACTIVITY overlap, not by the event's timestamp_start/end:
-    # timestamp_end includes the close-timeout tail (~15s of silence), which
-    # would chain consecutive trucks that pass in close succession. The
-    # activity window [first det, last det] reflects when the truck was
-    # actually visible. Both cameras watch the same single-lane zone, so
-    # overlapping activity means the same physical truck passage.
-    def activity(ev):
-        agg = ContainerDetection.objects.filter(event=ev).aggregate(
-            first=Min("timestamp"), last=Max("timestamp"))
-        if not agg["first"]:
-            return ev.timestamp_start, ev.timestamp_start
-        return agg["first"], agg["last"]
-
-    ev_first, ev_last = activity(event)
-    win_start = ev_first - timedelta(seconds=MERGE_WINDOW)
-
-    cands = (
-        ContainerEvent.objects
-        .filter(seal_status__in=["processing", "con_sello", "sin_sello", "indeterminado"],
-                timestamp_start__lte=ev_last)  # never merge into future events
-        .filter(Q(timestamp_end__isnull=True) | Q(timestamp_end__gte=win_start))
-        .exclude(id=event.id)
-        .order_by("-timestamp_start")
-    )
-
-    prev = None
-    consecutive = None
-    for cand in cands[:10]:
-        c_first, c_last = activity(cand)
-        if c_first <= ev_last and c_last >= ev_first:
-            prev = cand  # activity windows intersect → same physical truck
-            break
-        if consecutive is None and cand.timestamp_end is not None:
-            consecutive = cand  # latest closed non-overlapping event
-
-    overlap_merge = prev is not None
-    if prev is None:
-        # Consecutive events (gap between activity windows): a tiny gap (<=6s)
-        # means a tracker fragment or a straggler after an early close — same
-        # truck, merge time-only. Bigger gaps may be two different trucks:
-        # keep the color check as a safeguard.
-        prev = consecutive
-        if prev is None:
-            return False
-        c_first, c_last = activity(consecutive)
-        gap_s = (ev_first - c_last).total_seconds()
-        if not (0 <= gap_s <= 6.0):
-            evt_color = _get_event_avg_color(event)
-            prev_color = _get_event_avg_color(prev)
-            if evt_color is None or prev_color is None:
-                return False
-            if _hsv_distance(evt_color, prev_color) > COLOR_MERGE_THRESHOLD:
-                return False
-
-    was_open = prev.timestamp_end is None
-    update_fields = ["timestamp_start"]
-    ContainerDetection.objects.filter(event=event).update(event=prev)
-    prev.timestamp_start = min(prev.timestamp_start, event.timestamp_start)
-    if not was_open:
-        prev.timestamp_end = max(prev.timestamp_end,
-                                 event.timestamp_end or timezone.now())
-        update_fields.append("timestamp_end")
-    prev.save(update_fields=update_fields)
-    event_id_old = event.id
-    event.delete()
-
-    logger.info("Merge: event %s merged into event %s (overlap=%s)",
-                event_id_old, prev.id, overlap_merge)
-
-    if was_open:
-        # The surviving event is still accumulating detections; it will run
-        # seal/OCR analysis when it closes.
-        return True
-
-    if prev.container_code:
-        aggregate_ocr_results.delay(prev.id)
-    else:
-        ocr_event.delay(prev.id)
-
-    return True
-
-    if prev.container_code:
-        aggregate_ocr_results.delay(prev.id)
-    else:
-        ocr_event.delay(prev.id)
-
-    return True
-
-
-def _get_event_avg_color(event):
-    from aduana.models import ContainerDetection
-
-    dets = ContainerDetection.objects.filter(
-        event=event, dominant_color_h__isnull=False
-    ).values_list("dominant_color_h", "dominant_color_s", "dominant_color_v")
-
-    colors = list(dets)
-    if len(colors) < 2:
-        return None
-
-    avg_h = sum(c[0] for c in colors) / len(colors)
-    avg_s = sum(c[1] for c in colors) / len(colors)
-    avg_v = sum(c[2] for c in colors) / len(colors)
-    return avg_h, avg_s, avg_v
 
 
 # ---------------------------------------------------------------------------
 # Seal grid analysis (door positions 1-8)
 # ---------------------------------------------------------------------------
-
-EVENT_FRAME_FPS = 20.0        # test videos are 20 fps (production too)
-PIPELINE_CONFIG = "/opt/computer_vision/config/config_aduana_test.yml"
-
-
-def _source_video_paths():
-    """Map source index -> video file path from the pipeline config source-list."""
-    try:
-        with open(PIPELINE_CONFIG) as f:
-            text = f.read()
-        m = re.search(r'list:\s*"([^"]+)"', text)
-        if not m:
-            return {}
-        uris = m.group(1).split(";")
-        return {i: u.replace("file://", "") for i, u in enumerate(uris)}
-    except OSError:
-        return {}
-
-
-@shared_task
-def capture_event_frames(event_id):
-    """Extract the best full frame per camera for an event (test/MP4 flow).
-
-    Best frame per source = the frame with the most seal detections;
-    ties broken by most total detections, then max confidence sum.
-    Production (RTSP) uses pipeline-side capture instead (no file to seek).
-    """
-    import subprocess
-    from collections import defaultdict
-    from django.core.files.base import ContentFile
-    from aduana.models import ContainerEvent
-
-    try:
-        event = ContainerEvent.objects.get(id=event_id)
-    except ContainerEvent.DoesNotExist:
-        return
-
-    videos = _source_video_paths()
-    if not videos:
-        return
-
-    changed = False
-    for sid, vpath in videos.items():
-        dets = event.detections.filter(source_id=sid)
-        if not dets.exists():
-            continue
-
-        per_frame = defaultdict(lambda: [0, 0, 0.0])  # seals, total, conf sum
-        for d in dets.values("frame_num", "class_id", "confidence"):
-            fn = d["frame_num"]
-            per_frame[fn][1] += 1
-            per_frame[fn][2] += d["confidence"]
-            if d["class_id"] in (0, 1):
-                per_frame[fn][0] += 1
-        if not per_frame:
-            continue
-
-        best_fn = max(per_frame.items(), key=lambda kv: (kv[1][0], kv[1][1], kv[1][2]))[0]
-        seconds = best_fn / EVENT_FRAME_FPS
-        try:
-            out = subprocess.run(
-                ["ffmpeg", "-y", "-ss", f"{seconds:.3f}", "-i", vpath,
-                 "-vf", "scale=1280:-2", "-frames:v", "1", "-q:v", "2",
-                 "-f", "image2", "-"],
-                capture_output=True, timeout=120,
-            )
-            if out.returncode == 0 and out.stdout:
-                getattr(event, f"frame_src{sid}").save(
-                    f"event_{event_id}_src{sid}.jpg", ContentFile(out.stdout), save=False
-                )
-                changed = True
-                logger.info("Event %s src%d: frame %d (t=%.1fs) captured",
-                            event_id, sid, best_fn, seconds)
-        except Exception as e:
-            logger.warning("capture_event_frames %s src%d: %s", event_id, sid, e)
-
-    if changed:
-        event.save(update_fields=["frame_src0", "frame_src1"])
-
 
 SEAL_CLUSTER_DIST = 0.03      # max normalized distance to merge track fragments
 SEAL_ROW_GAP = 0.035          # min y gap between door rows
@@ -1215,3 +914,4 @@ def analyze_seals(event_id):
     event.save(update_fields=["seal_grid"])
     found = sum(1 for v in merged.values() if v["status"] != "sin detección")
     logger.info("Event %s seal grid: %d/8 positions detected", event_id, found)
+

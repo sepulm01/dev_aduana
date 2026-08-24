@@ -86,9 +86,9 @@ CELERY_BEAT_SCHEDULE = {
         "task": "devices.tasks.orchestrate_cameras",
         "schedule": 5.0,
     },
-    "close-stale-events-every-5s": {
-        "task": "aduana.tasks.close_stale_events",
-        "schedule": 5.0,
+    "process-raw-detections-every-60s": {
+        "task": "aduana.tasks.process_raw_detections",
+        "schedule": 60.0,
     },
     "monitoring-system-every-30s": {
         "task": "monitoring.tasks.collect_system",

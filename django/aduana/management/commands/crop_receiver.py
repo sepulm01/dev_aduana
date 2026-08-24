@@ -2,33 +2,18 @@ import logging
 import os
 import socket
 import struct
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import datetime, timezone as dt_timezone
 
 import numpy as np
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
-from django.utils import timezone as dj_timezone
 from PIL import Image
-from shapely.geometry import Point, Polygon
 
 logger = logging.getLogger("crop_receiver")
 
 END_MARKER = b"END!"
 HEADER_FMT = "<IIIQ5fIQIQ"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
-
-GAP_THRESHOLD = 3.0
-COLOR_THRESHOLD = 0.25
-BBOX_JUMP_THRESHOLD = 0.3
-GAP_CROSS_SOURCE = 5.0
-
-
-def _hsv_distance(c1, c2):
-    dh = min(abs(c1[0] - c2[0]), 1.0 - abs(c1[0] - c2[0]))
-    ds = abs(c1[1] - c2[1])
-    dv = abs(c1[2] - c2[2])
-    return ((dh * 1.5) ** 2 + ds ** 2 + (dv * 0.5) ** 2) ** 0.5
-
 
 def extract_avg_hsv(image_path):
     try:
@@ -61,44 +46,6 @@ def extract_avg_hsv(image_path):
         return None, None, None
 
 
-_roi_shapes_cache = {}
-_roi_shapes_updated = None
-
-
-def load_roi_shapes():
-    global _roi_shapes_cache, _roi_shapes_updated
-    from devices.models import AnalyticsPreset
-
-    _roi_shapes_cache.clear()
-    presets = AnalyticsPreset.objects.filter(shapes__isnull=False).exclude(shapes=[])
-    for ap in presets:
-        polygons = []
-        for shape in ap.shapes:
-            if shape.get("object") == "polygon" and shape.get("isClosed", True):
-                points = shape.get("points", [])
-                if len(points) >= 3:
-                    name = shape.get("name", "")
-                    poly = Polygon([(p["x"], p["y"]) for p in points])
-                    polygons.append((name, poly))
-        if polygons:
-            _roi_shapes_cache[ap.device_id] = polygons
-    _roi_shapes_updated = dj_timezone.now()
-
-
-def crop_roi_name(device_id, source_id, bbox_left, bbox_top, bbox_width, bbox_height):
-    global _roi_shapes_cache, _roi_shapes_updated
-    if _roi_shapes_updated is None or (dj_timezone.now() - _roi_shapes_updated).total_seconds() > 30:
-        load_roi_shapes()
-    polygons = _roi_shapes_cache.get(device_id, [])
-    if not polygons:
-        return ""
-    cx = bbox_left + bbox_width / 2
-    cy = bbox_top + bbox_height / 2
-    pt = Point(cx, cy)
-    for name, poly in polygons:
-        if poly.contains(pt):
-            return name
-    return ""
 
 
 class CropReceiver:
@@ -225,15 +172,12 @@ class CropReceiver:
     def _process_crop(self, device_id, source_id, class_id, object_id, truck_id,
                       confidence, bbox_left, bbox_top, bbox_width, bbox_height,
                       frame_num, timestamp_ms, jpeg_bytes):
+        """Raw ingest: store every crop/snapshot with event_id=NULL and take
+        NO online decision. Events are built offline by the sweeper task
+        (process_raw_detections), which sees the complete time window."""
         from django.utils import timezone as dj_timezone
 
         from aduana.models import ContainerDetection
-
-        # Full-frame reference snapshot (class_id 99): sent by the pipeline
-        # while a truck is active. Not a detection — attach to the open event.
-        if class_id == 99:
-            self._process_frame_snapshot(source_id, truck_id, timestamp_ms, jpeg_bytes)
-            return
 
         try:
             device = None
@@ -267,160 +211,20 @@ class CropReceiver:
             )
             detection.crop.save(filename, ContentFile(jpeg_bytes), save=False)
 
-            h, s, v = extract_avg_hsv(detection.crop.path)
-            if h is not None:
-                detection.dominant_color_h = h
-                detection.dominant_color_s = s
-                detection.dominant_color_v = v
-
-            roi = crop_roi_name(device_id, source_id, bbox_left, bbox_top, bbox_width, bbox_height)
-            if roi:
-                detection.roi_name = roi
-
-            event = self._find_or_create_event(detection)
-            if event:
-                detection.event = event
+            # Full-frame snapshots (cls 99) are stored as raw detections too;
+            # the sweeper assigns the best one to the event's frame_src{sid}.
+            if class_id != 99:
+                h, s, v = extract_avg_hsv(detection.crop.path)
+                if h is not None:
+                    detection.dominant_color_h = h
+                    detection.dominant_color_s = s
+                    detection.dominant_color_v = v
 
             detection.save()
-
-            # OCR runs once per event at close time (ocr_event task), not per crop.
 
         except Exception as e:
             logger.error("_process_crop error: %s", e)
 
-    def _process_frame_snapshot(self, source_id, truck_id, timestamp_ms, jpeg_bytes):
-        """Attach a full-frame snapshot (class_id 99) to the open event for
-        this source/truck. Overwrites the previous one (last frame of the
-        pass wins — the door is most visible at the end)."""
-        from django.core.files.base import ContentFile
-        from django.core.files.storage import default_storage
-
-        from aduana.models import ContainerEvent
-
-        field = f"frame_src{source_id}"
-        try:
-            qs = ContainerEvent.objects.filter(
-                seal_status="processing", detections__source_id=source_id)
-            ev = None
-            if truck_id:
-                ev = (qs.filter(detections__truck_id=truck_id)
-                        .order_by("-timestamp_start").first())
-            if ev is None:
-                ev = qs.order_by("-timestamp_start").first()
-            if ev is None:
-                return  # no open event: discard
-
-            old = getattr(ev, field)
-            if old:
-                default_storage.delete(str(old))
-            name = f"frames/src{source_id}_{int(timestamp_ms)}.jpg"
-            path = default_storage.save(name, ContentFile(jpeg_bytes))
-            setattr(ev, field, path)
-            ev.save(update_fields=[field])
-            logger.info("Frame snapshot: event %s %s <- %s", ev.id, field, path)
-        except Exception as e:
-            logger.error("_process_frame_snapshot error: %s", e)
-
-    CROSS_CAM_WINDOW = 12.0  # seconds: same physical truck seen by the other camera
-    JOIN_GAP_SECONDS = 6.0   # seconds: join open event if its last detection is this recent
-
-    def _find_or_create_event(self, detection):
-        from aduana.models import ContainerEvent
-
-        ts = detection.timestamp
-
-        # Truck-based grouping: one event per physical truck passage.
-        # The pipeline only sends crops for objects inside an active truck,
-        # so every detection carries truck_id (> 0) and source_id.
-        if detection.truck_id:
-            event = (
-                ContainerEvent.objects
-                .filter(
-                    seal_status="processing",
-                    detections__source_id=detection.source_id,
-                    detections__truck_id=detection.truck_id,
-                    detections__timestamp__gte=ts - timedelta(seconds=20),
-                )
-                .order_by("-timestamp_start")
-                .first()
-            )
-            if event:
-                return event
-
-            # New truck/track on this camera: join the most recent open event
-            # with RECENT ACTIVITY (last 6s), regardless of source. The zone
-            # holds one truck at a time, so activity adjacency is sufficient
-            # evidence. Handles tracker fragmentation and cross-camera strays.
-            # (No same-source exclusion: a merged event legitimately contains
-            # both cameras' detections — excluding them created 1-camera
-            # fragment events.)
-            cands = (
-                ContainerEvent.objects
-                .filter(seal_status="processing")
-                .order_by("-timestamp_start")[:5]
-            )
-            for cand in cands:
-                last = (cand.detections.order_by("-timestamp")
-                        .values_list("timestamp", flat=True).first())
-                if last and 0 <= (ts - last).total_seconds() <= self.JOIN_GAP_SECONDS:
-                    return cand
-
-            return ContainerEvent.objects.create(seal_status="processing", timestamp_start=ts)
-
-        window_start = ts - timedelta(seconds=15)
-
-        event = (
-            ContainerEvent.objects
-            .filter(seal_status="processing", timestamp_start__gte=window_start)
-            .order_by("-timestamp_start")
-            .first()
-        )
-
-        if not event:
-            return ContainerEvent.objects.create(seal_status="processing", timestamp_start=ts)
-
-        recent = list(event.detections.order_by("-timestamp")[:10])
-        if not recent:
-            return event
-
-        last_det = recent[0]
-        gap = (ts - last_det.timestamp).total_seconds()
-        cross_source = detection.source_id != last_det.source_id
-        threshold = GAP_CROSS_SOURCE if cross_source else GAP_THRESHOLD
-
-        new_color = (detection.dominant_color_h, detection.dominant_color_s, detection.dominant_color_v)
-
-        event_colors = []
-        for d in recent:
-            if d.dominant_color_h is not None:
-                event_colors.append((d.dominant_color_h, d.dominant_color_s, d.dominant_color_v))
-
-        color_diff = None
-        if new_color[0] is not None and len(event_colors) >= 2:
-            avg_h = sum(c[0] for c in event_colors) / len(event_colors)
-            avg_s = sum(c[1] for c in event_colors) / len(event_colors)
-            avg_v = sum(c[2] for c in event_colors) / len(event_colors)
-            color_diff = _hsv_distance(new_color, (avg_h, avg_s, avg_v))
-
-        new_cx = detection.bbox_left + detection.bbox_width / 2
-        new_cy = detection.bbox_top + detection.bbox_height / 2
-        last_cx = last_det.bbox_left + last_det.bbox_width / 2
-        last_cy = last_det.bbox_top + last_det.bbox_height / 2
-        bbox_jump = ((new_cx - last_cx) ** 2 + (new_cy - last_cy) ** 2) ** 0.5
-
-        new_container = False
-
-        if gap > threshold and color_diff is not None and color_diff > COLOR_THRESHOLD:
-            new_container = True
-        elif gap > threshold and bbox_jump > BBOX_JUMP_THRESHOLD:
-            new_container = True
-        elif color_diff is not None and color_diff > COLOR_THRESHOLD and gap > 1.0:
-            new_container = True
-
-        if new_container:
-            return ContainerEvent.objects.create(seal_status="processing", timestamp_start=ts)
-
-        return event
 
 
 class Command(BaseCommand):

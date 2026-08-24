@@ -45,14 +45,11 @@ paths:
       -c:v libx264 -preset ultrafast -tune zerolatency -c:a copy -f rtsp "rtsp://127.0.0.1:8554/cam_2_MediaProfile00000_hw"
     runOnDemandRestart: true
     source: publisher
-rtsp: true
-rtspAddress: :8554
-rtspAuthMethods:
-- basic
-webrtc: true
-webrtcAddress: :8889
-webrtcAllowOrigins:
-- '*'
-webrtcICEServers:
-- stun:stun.l.google.com:19302
-webrtcICEUDPMuxAddress: :8189
+  test_cam1:
+    runOnInit: ffmpeg -re -stream_loop -1 -i /opt/computer_vision/test/cam1_full.mp4 -c copy -an -f rtsp rtsp://localhost:8554/test_cam1
+    runOnInitRestart: true
+    source: publisher
+  test_cam2:
+    runOnInit: ffmpeg -re -stream_loop -1 -i /opt/computer_vision/test/cam2_full.mp4 -c copy -an -f rtsp rtsp://localhost:8554/test_cam2
+    runOnInitRestart: true
+    source: publisher

@@ -14,7 +14,7 @@ def dashboard(request):
 
 def event_detail(request, event_id):
     event = ContainerEvent.objects.prefetch_related("detections").get(id=event_id)
-    detections = event.detections.order_by("-timestamp")
+    detections = event.detections.exclude(class_id=99).order_by("-timestamp")
     return render(
         request,
         "aduana/event_detail.html",
