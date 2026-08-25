@@ -172,7 +172,7 @@ services:
   computer-vision-aduana:
     image: aduana-computer-vision-aduana:latest
     build: ./computer_vision
-    restart: unless-stopped
+    restart: always
     runtime: nvidia
     environment:
       - ENABLE_DISPLAY=${ENABLE_DISPLAY:-0}
