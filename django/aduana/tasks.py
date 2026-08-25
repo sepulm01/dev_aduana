@@ -713,6 +713,351 @@ def _finalize_event_simple(event):
 
 
 # ---------------------------------------------------------------------------
+# Operations: silence watchdog + data retention
+# ---------------------------------------------------------------------------
+
+WATCHDOG_SILENCE_HOURS = 2
+WATCHDOG_WORK_START_HOUR = 7
+WATCHDOG_WORK_END_HOUR = 20  # exclusive
+
+RETENTION_DAYS = 14
+
+
+@shared_task
+def watchdog_detection_silence():
+    """Raise an alarm when no detections arrive during working hours.
+
+    The costliest failure mode of this system is silent zero-reading hours
+    (dead pipeline, moved camera, dead LC/ROI geometry) with every container
+    green. Runs every 15 min via Celery Beat.
+    """
+    from aduana.models import ContainerDetection
+
+    now_local = timezone.localtime()
+    if now_local.weekday() == 6:  # Sunday: no traffic expected
+        return
+    if not (WATCHDOG_WORK_START_HOUR <= now_local.hour < WATCHDOG_WORK_END_HOUR):
+        return
+
+    cutoff = timezone.now() - timedelta(hours=WATCHDOG_SILENCE_HOURS)
+    last = (
+        ContainerDetection.objects.order_by("-timestamp")
+        .values_list("timestamp", flat=True)
+        .first()
+    )
+    if last is not None and last >= cutoff:
+        return
+
+    fps_info = ""
+    try:
+        import os
+        import redis as redis_lib
+        r = redis_lib.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+        fps = {
+            k.decode(): v.decode()
+            for k, v in r.hgetall("deepstream:sources:aduana:1").items()
+            if k.decode().endswith(":fps")
+        }
+        if fps:
+            fps_info = f" FPS del pipeline (frames fluyendo): {fps}."
+    except Exception:
+        pass
+
+    logger.error(
+        "ALARMA: sin detecciones en las últimas %d h en horario hábil. "
+        "Última detección: %s.%s Revisar pipeline/cámaras/geometría LC-ROI.",
+        WATCHDOG_SILENCE_HOURS,
+        last or "nunca",
+        fps_info,
+    )
+
+
+@shared_task
+def purge_old_detections():
+    """Delete detections (and their crop files) older than RETENTION_DAYS.
+
+    Events are kept (small rows: code/seal/grid history). Frame files
+    referenced by old events are deleted and the fields cleared.
+    """
+    from django.core.files.storage import default_storage
+
+    from aduana.models import ContainerDetection, ContainerEvent
+
+    cutoff = timezone.now() - timedelta(days=RETENTION_DAYS)
+
+    dets_deleted = 0
+    while True:
+        batch = list(
+            ContainerDetection.objects.filter(created_at__lt=cutoff)
+            .values_list("id", "crop")[:500]
+        )
+        if not batch:
+            break
+        for det_id, crop in batch:
+            if crop:
+                try:
+                    default_storage.delete(crop)
+                except Exception:
+                    pass
+        ContainerDetection.objects.filter(
+            id__in=[b[0] for b in batch]).delete()
+        dets_deleted += len(batch)
+
+    frames_cleared = 0
+    for ev in ContainerEvent.objects.filter(created_at__lt=cutoff):
+        changed = False
+        for field in ("frame_src0", "frame_src1"):
+            path = getattr(ev, field)
+            if path:
+                try:
+                    default_storage.delete(str(path))
+                except Exception:
+                    pass
+                setattr(ev, field, "")
+                changed = True
+        if changed:
+            ev.save(update_fields=["frame_src0", "frame_src1"])
+            frames_cleared += 1
+
+    if dets_deleted or frames_cleared:
+        logger.info(
+            "purge_old_detections: %d detecciones eliminadas, frames limpiados en %d eventos (> %d días)",
+            dets_deleted, frames_cleared, RETENTION_DAYS,
+        )
+
+
+def _finalize_event(event):
+    from aduana.models import ContainerDetection
+
+    detections = ContainerDetection.objects.filter(event=event)
+    if detections.count() == 0:
+        return
+
+    clusters = _find_temporal_clusters(detections)
+    if len(clusters) >= 2:
+        _split_event(event, clusters)
+        detections = ContainerDetection.objects.filter(event=event)
+        if detections.count() == 0:
+            return
+
+    if _try_merge_event(event):
+        return
+
+    seal_detections = detections.filter(class_id__in=[0, 1])
+
+    con_sello_count = seal_detections.filter(class_id=0).count()
+    sin_sello_count = seal_detections.filter(class_id=1).count()
+
+    if con_sello_count == 0 and sin_sello_count == 0:
+        event.seal_status = "indeterminado"
+        event.seal_confidence = 0.0
+    elif con_sello_count > sin_sello_count:
+        event.seal_status = "con_sello"
+        total = con_sello_count + sin_sello_count
+        event.seal_confidence = con_sello_count / total if total > 0 else 0.0
+    elif sin_sello_count > con_sello_count:
+        event.seal_status = "sin_sello"
+        total = con_sello_count + sin_sello_count
+        event.seal_confidence = sin_sello_count / total if total > 0 else 0.0
+    else:
+        event.seal_status = "indeterminado"
+        event.seal_confidence = 0.5
+
+    event.timestamp_end = timezone.now()
+    event.save(update_fields=["seal_status", "seal_confidence", "timestamp_end"])
+    logger.info(
+        "Event %s finalized: seal=%s (conf=%.2f) con=%d sin=%d",
+        event.id,
+        event.seal_status,
+        event.seal_confidence,
+        con_sello_count,
+        sin_sello_count,
+    )
+
+    ocr_event.delay(event.id)
+    analyze_seals.delay(event.id)
+    capture_event_frames.delay(event.id)
+
+
+def _find_temporal_clusters(detections):
+    dets = list(detections.order_by("timestamp").values(
+        "id", "timestamp", "source_id",
+        "dominant_color_h", "dominant_color_s", "dominant_color_v",
+    ))
+    if len(dets) < 2:
+        return []
+
+    clusters = []
+    current_cluster = [dets[0]]
+    for i in range(1, len(dets)):
+        gap = (dets[i]["timestamp"] - dets[i - 1]["timestamp"]).total_seconds()
+        cross_source = dets[i]["source_id"] != dets[i - 1]["source_id"]
+        threshold = GAP_CROSS_SOURCE if cross_source else GAP_CLUSTER_THRESHOLD
+        if gap > threshold:
+            if len(current_cluster) >= MIN_CLUSTER_SIZE:
+                clusters.append([d["id"] for d in current_cluster])
+            current_cluster = [dets[i]]
+        else:
+            current_cluster.append(dets[i])
+
+    if len(current_cluster) >= MIN_CLUSTER_SIZE:
+        clusters.append([d["id"] for d in current_cluster])
+
+    if len(clusters) < 2:
+        return []
+
+    cluster_colors = []
+    for cl in clusters:
+        hs = [d["dominant_color_h"] for d in dets if d["id"] in cl and d["dominant_color_h"] is not None]
+        ss = [d["dominant_color_s"] for d in dets if d["id"] in cl and d["dominant_color_s"] is not None]
+        vs = [d["dominant_color_v"] for d in dets if d["id"] in cl and d["dominant_color_v"] is not None]
+        if len(hs) >= 2:
+            cluster_colors.append((sum(hs) / len(hs), sum(ss) / len(ss), sum(vs) / len(vs)))
+        else:
+            cluster_colors.append(None)
+
+    distinct = False
+    for i in range(len(clusters)):
+        for j in range(i + 1, len(clusters)):
+            if cluster_colors[i] and cluster_colors[j]:
+                if _hsv_distance(cluster_colors[i], cluster_colors[j]) > COLOR_SPLIT_THRESHOLD:
+                    distinct = True
+                    break
+        if distinct:
+            break
+
+    if not distinct:
+        return []
+
+    return clusters
+
+
+def _split_event(event, clusters):
+    from aduana.models import ContainerDetection, ContainerEvent
+
+    for i in range(1, len(clusters)):
+        cluster_ids = clusters[i]
+        if len(cluster_ids) < MIN_CLUSTER_SIZE:
+            continue
+        dets = ContainerDetection.objects.filter(id__in=cluster_ids).order_by("timestamp")
+        first_ts = dets.first().timestamp
+        new_event = ContainerEvent.objects.create(
+            seal_status="processing",
+            timestamp_start=first_ts,
+        )
+        dets.update(event=new_event)
+        logger.info(
+            "Split: created event %s from event %s (%d detections)",
+            new_event.id, event.id, len(cluster_ids),
+        )
+
+
+def _try_merge_event(event):
+    from django.db.models import Min, Max, Q
+    from aduana.models import ContainerEvent, ContainerDetection
+
+    # Merge by ACTIVITY overlap, not by the event's timestamp_start/end:
+    # timestamp_end includes the close-timeout tail (~15s of silence), which
+    # would chain consecutive trucks that pass in close succession. The
+    # activity window [first det, last det] reflects when the truck was
+    # actually visible. Both cameras watch the same single-lane zone, so
+    # overlapping activity means the same physical truck passage.
+    def activity(ev):
+        agg = ContainerDetection.objects.filter(event=ev).aggregate(
+            first=Min("timestamp"), last=Max("timestamp"))
+        if not agg["first"]:
+            return ev.timestamp_start, ev.timestamp_start
+        return agg["first"], agg["last"]
+
+    ev_first, ev_last = activity(event)
+    win_start = ev_first - timedelta(seconds=MERGE_WINDOW)
+
+    cands = (
+        ContainerEvent.objects
+        .filter(seal_status__in=["processing", "con_sello", "sin_sello", "indeterminado"],
+                timestamp_start__lte=ev_last)  # never merge into future events
+        .filter(Q(timestamp_end__isnull=True) | Q(timestamp_end__gte=win_start))
+        .exclude(id=event.id)
+        .order_by("-timestamp_start")
+    )
+
+    prev = None
+    consecutive = None
+    for cand in cands[:10]:
+        c_first, c_last = activity(cand)
+        if c_first <= ev_last and c_last >= ev_first:
+            prev = cand  # activity windows intersect → same physical truck
+            break
+        if consecutive is None and cand.timestamp_end is not None:
+            consecutive = cand  # latest closed non-overlapping event
+
+    overlap_merge = prev is not None
+    if prev is None:
+        # Consecutive events (gap between activity windows): may be the same
+        # truck or two different ones — keep the color check as a safeguard.
+        prev = consecutive
+        if prev is None:
+            return False
+        evt_color = _get_event_avg_color(event)
+        prev_color = _get_event_avg_color(prev)
+        if evt_color is None or prev_color is None:
+            return False
+        if _hsv_distance(evt_color, prev_color) > COLOR_MERGE_THRESHOLD:
+            return False
+
+    was_open = prev.timestamp_end is None
+    update_fields = ["timestamp_start"]
+    ContainerDetection.objects.filter(event=event).update(event=prev)
+    prev.timestamp_start = min(prev.timestamp_start, event.timestamp_start)
+    if not was_open:
+        prev.timestamp_end = max(prev.timestamp_end,
+                                 event.timestamp_end or timezone.now())
+        update_fields.append("timestamp_end")
+    prev.save(update_fields=update_fields)
+    event_id_old = event.id
+    event.delete()
+
+    logger.info("Merge: event %s merged into event %s (overlap=%s)",
+                event_id_old, prev.id, overlap_merge)
+
+    if was_open:
+        # The surviving event is still accumulating detections; it will run
+        # seal/OCR analysis when it closes.
+        return True
+
+    if prev.container_code:
+        aggregate_ocr_results.delay(prev.id)
+    else:
+        ocr_event.delay(prev.id)
+
+    return True
+
+    if prev.container_code:
+        aggregate_ocr_results.delay(prev.id)
+    else:
+        ocr_event.delay(prev.id)
+
+    return True
+
+
+def _get_event_avg_color(event):
+    from aduana.models import ContainerDetection
+
+    dets = ContainerDetection.objects.filter(
+        event=event, dominant_color_h__isnull=False
+    ).values_list("dominant_color_h", "dominant_color_s", "dominant_color_v")
+
+    colors = list(dets)
+    if len(colors) < 2:
+        return None
+
+    avg_h = sum(c[0] for c in colors) / len(colors)
+    avg_s = sum(c[1] for c in colors) / len(colors)
+    avg_v = sum(c[2] for c in colors) / len(colors)
+    return avg_h, avg_s, avg_v
+
+
+# ---------------------------------------------------------------------------
 # Seal grid analysis (door positions 1-8)
 # ---------------------------------------------------------------------------
 
