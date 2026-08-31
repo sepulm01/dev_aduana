@@ -538,6 +538,14 @@ def _fuzzy_consensus(codes, min_votes=2, max_distance=2):
 SWEEP_MATURE_SECONDS = 45   # a pass is complete after this much silence
 SWEEP_PASS_GAP = 20.0       # gap without detections = pass boundary
 SWEEP_REWIND_JUMP = 0.15    # normalized backward jump implying a new truck
+SWEEP_COLOR_JUMP = 0.30     # abrupt crop-color change implying a different truck
+
+
+def _hsv_distance(c1, c2):
+    dh = min(abs(c1[0] - c2[0]), 1.0 - abs(c1[0] - c2[0]))
+    ds = abs(c1[1] - c2[1])
+    dv = abs(c1[2] - c2[2])
+    return ((dh * 1.5) ** 2 + ds ** 2 + (dv * 0.5) ** 2) ** 0.5
 
 
 @shared_task
@@ -551,7 +559,8 @@ def process_raw_detections():
         .exclude(class_id=99)
         .order_by("timestamp")
         .values("id", "timestamp", "source_id", "truck_id", "class_id",
-                "bbox_left", "bbox_width")
+                "bbox_left", "bbox_width",
+                "dominant_color_h", "dominant_color_s", "dominant_color_v")
     )
     if not dets:
         return
@@ -567,14 +576,20 @@ def process_raw_detections():
         cur.append(d)
     clusters.append(cur)
 
-    created = 0
+    created_events = []
     for cl in clusters:
         for sub in _split_cluster_by_trajectory(cl):
-            _materialize_event(sub)
-            created += 1
-    if created:
+            created_events.append(_materialize_event(sub))
+    _assign_snapshots(created_events)
+    if created_events:
         logger.info("Sweeper: %d evento(s) creado(s) de %d detecciones crudas",
-                    created, len(dets))
+                    len(created_events), len(dets))
+
+
+def _det_color(d):
+    if d.get("dominant_color_h") is None:
+        return None
+    return (d["dominant_color_h"], d["dominant_color_s"], d["dominant_color_v"])
 
 
 def _split_cluster_by_trajectory(dets):
@@ -591,6 +606,7 @@ def _split_cluster_by_trajectory(dets):
         by_src.setdefault(d["source_id"], []).append(d)
 
     boundaries = set()
+    hard = set()  # boundaries that must not be stitched back
     for sid, sd in by_src.items():
         if len(sd) < 4:
             continue
@@ -607,12 +623,22 @@ def _split_cluster_by_trajectory(dets):
         direction = 1 if med > 0 else -1
 
         prev_tid, prev_x = sd[0]["truck_id"], xs[0]
+        prev_color = _det_color(sd[0])
         for i in range(1, len(sd)):
             x, tid = xs[i], sd[i]["truck_id"]
+            color = _det_color(sd[i])
             rewind = (x - prev_x) * direction < -SWEEP_REWIND_JUMP
-            if tid != prev_tid and rewind:
+            # Abrupt color change between consecutive crops (same camera, same
+            # illumination): the tracked region slid onto a different physical
+            # truck/container even though the tracker kept the id.
+            color_jump = (prev_color and color
+                          and _hsv_distance(prev_color, color) > SWEEP_COLOR_JUMP)
+            if rewind and tid != prev_tid:
+                boundaries.add(sd[i]["timestamp"])  # soft: may be stitched back
+            elif rewind and color_jump:
                 boundaries.add(sd[i]["timestamp"])
-            prev_tid, prev_x = tid, x
+                hard.add(sd[i]["timestamp"])  # tracker slid without id change
+            prev_tid, prev_x, prev_color = tid, x, color
 
     if not boundaries:
         return [dets]
@@ -630,15 +656,17 @@ def _split_cluster_by_trajectory(dets):
         parts.append(cur)
 
     # Stitch back consecutive parts that share a tracker id on the same
-    # source. A boundary from one camera can cut a single physical truck in
-    # two on the other camera; tracker ids are unique per pass, so a shared
-    # (source, truck_id) is conclusive proof of the same truck.
+    # source — but only across SOFT boundaries (a boundary from one camera
+    # can cut a single physical truck in two on the other camera; tracker ids
+    # are unique per pass, so a shared (source, truck_id) is conclusive).
+    # Hard (color-jump) boundaries are never undone.
     stitched = []
     for part in parts:
         if stitched:
+            boundary_ts = part[0]["timestamp"]
             keys_a = {(d["source_id"], d["truck_id"]) for d in stitched[-1]}
             keys_b = {(d["source_id"], d["truck_id"]) for d in part}
-            if keys_a & keys_b:
+            if boundary_ts not in hard and keys_a & keys_b:
                 stitched[-1].extend(part)
                 continue
         stitched.append(part)
@@ -660,23 +688,46 @@ def _materialize_event(dets):
     det_ids = [d["id"] for d in dets]
     ContainerDetection.objects.filter(id__in=det_ids).update(event=event)
 
-    # Full-frame snapshots (cls 99) near this pass: earliest per camera wins
-    # (the first-seal trigger is the semantically right moment; the no-seal
-    # fallback arrives at deactivation). Snapshot rows join the event so the
-    # retention purge keeps files consistent.
-    for sid in {d["source_id"] for d in dets}:
-        snaps = ContainerDetection.objects.filter(
-            class_id=99, source_id=sid, event__isnull=True,
-            timestamp__gte=first_ts - timedelta(seconds=10),
-            timestamp__lte=last_ts + timedelta(seconds=10),
-        ).order_by("timestamp")
-        snap = snaps.first()
-        if snap:
-            setattr(event, f"frame_src{sid}", snap.crop.name)
-            snaps.update(event=event)
-    event.save(update_fields=["frame_src0", "frame_src1"])
-
     _finalize_event_simple(event)
+    return event
+
+
+def _assign_snapshots(events):
+    """Assign full-frame snapshot rows (cls 99) to events after ALL events of
+    the sweep run exist. Each snapshot goes to the temporally NEAREST event
+    (earliest per camera wins). Greedy first-come assignment used to steal a
+    sibling event's frames when two passes were materialized in one run."""
+    if not events:
+        return
+    from aduana.models import ContainerDetection
+
+    lo = min(e.timestamp_start for e in events) - timedelta(seconds=15)
+    hi = max(e.timestamp_end for e in events) + timedelta(seconds=15)
+    snaps = ContainerDetection.objects.filter(
+        class_id=99, event__isnull=True,
+        timestamp__gte=lo, timestamp__lte=hi,
+    ).order_by("timestamp")
+
+    for snap in snaps:
+        best, best_d = None, None
+        for e in events:
+            if e.timestamp_start <= snap.timestamp <= e.timestamp_end:
+                d = 0.0
+            else:
+                d = min(
+                    abs((snap.timestamp - e.timestamp_start).total_seconds()),
+                    abs((snap.timestamp - e.timestamp_end).total_seconds()),
+                )
+            if best_d is None or d < best_d:
+                best, best_d = e, d
+        if best is None:
+            continue
+        field = f"frame_src{snap.source_id}"
+        if not getattr(best, field):  # earliest snapshot per camera wins
+            setattr(best, field, snap.crop.name)
+            best.save(update_fields=[field])
+        snap.event = best
+        snap.save(update_fields=["event"])
 
 
 def _finalize_event_simple(event):
