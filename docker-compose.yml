@@ -62,6 +62,8 @@ services:
       - ./django/aduana/templates:/app/aduana/templates:ro
       - ./django/aduana/migrations:/app/aduana/migrations:rw
       - ./django/config/urls.py:/app/config/urls.py:ro
+      - ./django/devices/config_generator.py:/app/devices/config_generator.py:ro
+      - ./django/devices/utils.py:/app/devices/utils.py:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,6 +109,8 @@ services:
       - ./django/aduana/models.py:/app/aduana/models.py:ro
       - ./django/aduana/tasks.py:/app/aduana/tasks.py:ro
       - ./django/aduana/migrations:/app/aduana/migrations:rw
+      - ./django/devices/config_generator.py:/app/devices/config_generator.py:ro
+      - ./django/devices/utils.py:/app/devices/utils.py:ro
     depends_on:
       postgres:
         condition: service_healthy

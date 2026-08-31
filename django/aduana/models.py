@@ -51,7 +51,11 @@ class ContainerDetection(models.Model):
         related_name="detections",
     )
     device = models.ForeignKey(
-        "devices.Device", on_delete=models.CASCADE, related_name="container_detections"
+        "devices.Device",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="container_detections",
     )
     source_id = models.IntegerField(default=0)
     class_id = models.IntegerField(choices=CLASS_CHOICES)
