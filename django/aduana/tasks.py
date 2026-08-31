@@ -539,6 +539,7 @@ SWEEP_MATURE_SECONDS = 45   # a pass is complete after this much silence
 SWEEP_PASS_GAP = 20.0       # gap without detections = pass boundary
 SWEEP_REWIND_JUMP = 0.15    # normalized backward jump implying a new truck
 SWEEP_COLOR_JUMP = 0.30     # abrupt crop-color change implying a different truck
+SWEEP_COLOR_DRIFT = 0.28    # divergence from the pass anchor color (cls3)
 
 
 def _hsv_distance(c1, c2):
@@ -592,6 +593,19 @@ def _det_color(d):
     return (d["dominant_color_h"], d["dominant_color_s"], d["dominant_color_v"])
 
 
+def _mean_color(colors):
+    """Circular mean for hue (red wraps 0.99/0.01), arithmetic for S/V."""
+    import math
+    if not colors:
+        return None
+    sx = sum(math.cos(2 * math.pi * c[0]) for c in colors)
+    sy = sum(math.sin(2 * math.pi * c[0]) for c in colors)
+    h = (math.atan2(sy, sx) / (2 * math.pi)) % 1.0
+    s = sum(c[1] for c in colors) / len(colors)
+    v = sum(c[2] for c in colors) / len(colors)
+    return (h, s, v)
+
+
 def _split_cluster_by_trajectory(dets):
     """Split a temporal cluster into individual truck passes.
 
@@ -639,6 +653,33 @@ def _split_cluster_by_trajectory(dets):
                 boundaries.add(sd[i]["timestamp"])
                 hard.add(sd[i]["timestamp"])  # tracker slid without id change
             prev_tid, prev_x, prev_color = tid, x, color
+
+        # Anchor color drift over code crops (cls3 = container body color):
+        # catches a tracker sliding GRADUALLY onto another truck (each step
+        # small, but the content ends up a different color than at the start).
+        # Anchor = the pass start (first 2 reads). V-gate: a global brightness
+        # ramp (V change) means lighting, not new content — suppress then.
+        anchor_colors = []
+        anchor = None
+        for d in sd:
+            if d["class_id"] != 3:
+                continue
+            color = _det_color(d)
+            if color is None:
+                continue
+            if len(anchor_colors) < 2:
+                anchor_colors.append(color)
+                if len(anchor_colors) == 2:
+                    anchor = _mean_color(anchor_colors)
+                continue
+            if anchor is None:
+                continue
+            if (_hsv_distance(color, anchor) > SWEEP_COLOR_DRIFT
+                    and abs(color[2] - anchor[2]) < 0.15):
+                boundaries.add(d["timestamp"])
+                hard.add(d["timestamp"])
+                anchor_colors = [color]
+                anchor = color
 
     if not boundaries:
         return [dets]
@@ -753,10 +794,35 @@ def _finalize_event_simple(event):
         event.seal_confidence = 0.5
 
     event.save(update_fields=["seal_status", "seal_confidence"])
+
+    # Mark for human review when the cls3 crops diverge in color from the
+    # pass anchor under stable brightness (content changed mid-pass = likely
+    # a tracker slide onto another truck that no rule could split safely).
+    cls3_colors = [
+        _det_color(d)
+        for d in event.detections.filter(class_id=3)
+        .order_by("timestamp")
+        .values("dominant_color_h", "dominant_color_s", "dominant_color_v")
+    ]
+    cls3_colors = [c for c in cls3_colors if c]
+    if len(cls3_colors) >= 3:
+        anchor = _mean_color(cls3_colors[:2])
+        divergent = any(
+            _hsv_distance(c, anchor) > SWEEP_COLOR_DRIFT
+            and abs(c[2] - anchor[2]) < 0.15
+            for c in cls3_colors[2:]
+        )
+        if divergent:
+            event.needs_review = True
+            event.save(update_fields=["needs_review"])
+            logger.warning(
+                "Event %s marked needs_review (color diverges mid-pass)", event.id)
+
     logger.info(
-        "Event %s materialized: seal=%s (conf=%.2f) con=%d sin=%d dets=%d",
+        "Event %s materialized: seal=%s (conf=%.2f) con=%d sin=%d dets=%d%s",
         event.id, event.seal_status, event.seal_confidence,
         con_sello_count, sin_sello_count, event.detections.count(),
+        " [REVIEW]" if event.needs_review else "",
     )
 
     ocr_event.delay(event.id)

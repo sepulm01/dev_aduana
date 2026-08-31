@@ -22,7 +22,7 @@
             <tbody>
                 {% for event in page_obj %}
                 <tr>
-                    <td>{{ event.id }}</td>
+                    <td>{{ event.id }}{% if event.needs_review %} <span class="badge bg-orange" title="Revisar: posible mezcla de camiones">revisar</span>{% endif %}</td>
                     <td><strong>{{ event.container_code|default:"---" }}</strong></td>
                     <td>
                         {% if event.seal_status == "con_sello" %}

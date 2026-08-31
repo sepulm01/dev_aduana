@@ -17,6 +17,10 @@ class ContainerEvent(models.Model):
     seal_grid = models.JSONField(default=dict, blank=True)
     frame_src0 = models.ImageField(upload_to="frames/", blank=True, null=True)
     frame_src1 = models.ImageField(upload_to="frames/", blank=True, null=True)
+    needs_review = models.BooleanField(
+        default=False,
+        help_text="Marcada para revision humana (mezcla de colores sospechosa en los crops)",
+    )
     timestamp_start = models.DateTimeField(db_index=True)
     timestamp_end = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
