@@ -207,10 +207,9 @@ def generate_nvdsanalytics_config(config_dir):
             source_type="file",
         ).exclude(stream_uris={})
     )
-    # Order MUST match the source-list order in generate_config (default
-    # model order = id). Sorting by host misaligned polygons to cameras
-    # when the source order differs.
-    devices.sort(key=lambda d: d.id)
+    # Do NOT re-sort: the order must match the source-list order from
+    # generate_config (default model ordering = Meta = -discovered_at).
+    # Sorting by host or id misaligned polygons to cameras.
 
     sections = {}
     has_any = False
