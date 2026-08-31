@@ -47,7 +47,8 @@ struct TruckKey { int sid; guint64 oid; };
 bool operator==(const TruckKey& a, const TruckKey& b) { return a.sid == b.sid && a.oid == b.oid; }
 struct TruckKeyHash { size_t operator()(const TruckKey& k) const { return (size_t)k.sid * 31 + (size_t)k.oid; } };
 struct TruckState { bool crossed = false; bool in_roi = false;
-                    bool snapshot_sent = false; bool seal_seen = false; };
+                    bool snapshot_sent = false; bool seal_seen = false;
+                    guint64 last_roi_us = 0; };
 static std::unordered_map<TruckKey, TruckState, TruckKeyHash> g_trucks;
 
 static bool truck_is_active(int sid, guint64 oid) {
@@ -681,6 +682,7 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
             if (!om || om->class_id != 4) continue;
 
             bool has_ai = false;
+            bool in_any_roi = false;
             for (NvDsMetaList* l_um = om->obj_user_meta_list; l_um; l_um = l_um->next) {
                 NvDsUserMeta* um = (NvDsUserMeta*)l_um->data;
                 if (!um) continue;
@@ -688,6 +690,7 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
                 NvDsAnalyticsObjInfo* ai = (NvDsAnalyticsObjInfo*)um->user_meta_data;
                 if (!ai) continue;
                 has_ai = true;
+                in_any_roi = !ai->roiStatus.empty();
 
                 if (dbg) {
                     auto& rc = om->rect_params;
@@ -703,24 +706,24 @@ static GstPadProbeReturn analytics_lc_probe(GstPad* pad, GstPadProbeInfo* info,
                     g_trucks[{sid, om->object_id}].crossed = true;
                     g_print("[STATE] truck=%lu src=%d CROSS\n", om->object_id, sid);
                 }
-                /* Production cameras have no LC lines: use ROI names instead.
-                   "entrada" = truck entered the inspection zone (cross trigger),
-                   "salida"  = truck leaving (deactivates). LC lines still work
-                   when configured (test setup). */
-                for (const auto& rn : ai->roiStatus) {
-                    if (rn.find("entrada") != std::string::npos &&
-                        !g_trucks[{sid, om->object_id}].crossed) {
-                        g_trucks[{sid, om->object_id}].crossed = true;
-                        g_print("[STATE] truck=%lu src=%d CROSS (roi=%s)\n",
-                                om->object_id, sid, rn.c_str());
-                    }
-                    if (rn.find("salida") != std::string::npos &&
-                        !g_trucks[{sid, om->object_id}].in_roi) {
-                        g_trucks[{sid, om->object_id}].in_roi = true;
-                        g_print("[STATE] truck=%lu src=%d ROI_IN  roi=%s\n",
-                                om->object_id, sid, rn.c_str());
-                    }
+            }
+
+            /* Zone membership = any ROI polygon touched (polygon NAMES don't
+               matter: stale/mislabeled presets must not break activation).
+               Bracket: reading starts on zone entry, ends 5s after the truck
+               left every zone polygon (or the track dies). LC lines still
+               latch crossed when configured. */
+            auto& st = g_trucks[{sid, om->object_id}];
+            if (in_any_roi) {
+                if (!st.crossed) {
+                    st.crossed = true;
+                    g_print("[STATE] truck=%lu src=%d ZONE_IN\n", om->object_id, sid);
                 }
+                st.last_roi_us = now_dbg;
+            } else if (st.crossed && !st.in_roi && st.last_roi_us
+                       && now_dbg - st.last_roi_us > 5000000) {
+                st.in_roi = true;
+                g_print("[STATE] truck=%lu src=%d ZONE_OUT\n", om->object_id, sid);
             }
             if (dbg && !has_ai) {
                 auto& rc = om->rect_params;

@@ -10,6 +10,7 @@
         <table class="table table-striped">
             <thead>
                 <tr>
+                    <th>Imagen</th>
                     <th>ID</th>
                     <th>Código</th>
                     <th>Sellos</th>
@@ -22,6 +23,17 @@
             <tbody>
                 {% for event in page_obj %}
                 <tr>
+                    <td>
+                        {% if event.frame_src0 or event.frame_src1 %}
+                        <a href="{% url 'aduana_event_detail' event.id %}">
+                            <img src="{% if event.frame_src0 %}{{ event.frame_src0.url }}{% else %}{{ event.frame_src1.url }}{% endif %}"
+                                 alt="frame {{ event.id }}"
+                                 style="width:120px;max-height:68px;object-fit:cover;border:1px solid #ccc;border-radius:4px;">
+                        </a>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
                     <td>{{ event.id }}{% if event.needs_review %} <span class="badge bg-orange" title="Revisar: posible mezcla de camiones">revisar</span>{% endif %}</td>
                     <td><strong>{{ event.container_code|default:"---" }}</strong></td>
                     <td>
