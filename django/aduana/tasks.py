@@ -452,6 +452,11 @@ def _extract_codes(detection):
             texts.append(r[0])
     texts = list(dict.fromkeys(texts))  # dedupe identical lines
 
+    # The VL often returns the code split across lines ("MNBU" / "448 365 7").
+    # The joined text lets the regexes see the full code in one string.
+    if len(texts) > 1:
+        texts.append(" ".join(texts))
+
     for t in texts:
         clean = re.sub(r"\s+", "", t.upper())
         for m in re.finditer(r"[A-Z0-9]{4}[0-9A-Z]{6,7}", clean):
@@ -761,7 +766,10 @@ def _assign_snapshots(events):
                 )
             if best_d is None or d < best_d:
                 best, best_d = e, d
-        if best is None:
+        # A snapshot belongs to a nearby pass only; never to a distant one.
+        # (Without the cap, a sweep mixing reprocessed old events with new
+        # ones floods them with a week's worth of orphaned snapshots.)
+        if best is None or best_d > 20:
             continue
         field = f"frame_src{snap.source_id}"
         if not getattr(best, field):  # earliest snapshot per camera wins
