@@ -99,6 +99,11 @@ docker compose logs -f django-http
 - **OCR multi-línea**: `_extract_codes` concatena las líneas de `ocr_texts` antes de buscar patrones — el VL devuelve códigos horizontales partidos ("MNBU" / "448 365 7") y ninguna string sola calzaba el patrón ISO.
 - **needs_review** (migración 0010): flag en `ContainerEvent` + badge "revisar" en UI cuando los crops cls3 divergen del color ancla con V estable (mezcla sospechosa no separable con seguridad).
 
+- **Orden de fuentes vs polígonos** (31 Ago): el source-list se genera en el orden por defecto del queryset de Device (Meta: `-discovered_at` — .50 primero), y `generate_nvdsanalytics_config` DEBE usar el mismo orden (sin re-sort; host-sort e id-sort cruzaron los polígonos entre cámaras). El mapeo Redis `deepstream:sources:aduana:N` (`sid -> device_id`) lo escribe `regenerate_config_and_restart()` en ese mismo orden.
+- **device_id nullable** (migración 0011): el mapeo Redis viejo daba `device_id=-1` para src1 → el receiver no encontraba el Device → la FK NOT NULL hacía fallar el INSERT → **se perdieron los crops de src1 por horas sin error visible** (solo "null value in column device_id" en el log del crop-receiver). Ahora la FK es nullable y los crops se guardan igual.
+- **File bind-mounts y git**: los mounts de ARCHIVO se atan al inode — cuando `git pull` reemplaza el archivo (inode nuevo), el contenedor sigue viendo el viejo hasta recrearse. Tras pulls que tocan archivos montados: `docker compose up -d --force-recreate` (o restart del servicio).
+- **Dashboard con miniatura**: cada fila de /aduana/ muestra el frame completo (cam1, fallback cam2) en miniatura.
+
 ## Recent changes (Jul 2026)
 
 - **Project renamed** from `mediamtx-manager` to `aduana`. External volume names parameterized via `POSTGRES_VOLUME_NAME`/`REDIS_VOLUME_NAME` in `.env` (dev machine: `mediamtx-manager_*`; production 172.16.150.50: `aduana_*`).
