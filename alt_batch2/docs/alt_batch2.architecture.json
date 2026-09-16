@@ -1,0 +1,362 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "alt_batch2 \u2014 pipeline continuo de contenedores",
+    "output": "alt_batch2.architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1210,
+      680
+    ]
+  },
+  "components": [
+    {
+      "id": "simulador",
+      "type": "backend",
+      "label": "Simulador",
+      "sublabel": "par cada 300 s",
+      "pos": [
+        40,
+        180
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "tag": "solo prueba"
+    },
+    {
+      "id": "llegada",
+      "type": "external",
+      "label": "llegada/",
+      "sublabel": "FTP \u00b7 rsync",
+      "pos": [
+        270,
+        180
+      ],
+      "size": [
+        130,
+        64
+      ]
+    },
+    {
+      "id": "vigilante",
+      "type": "backend",
+      "label": "Vigilante",
+      "sublabel": "archivos completos",
+      "pos": [
+        500,
+        180
+      ],
+      "size": [
+        130,
+        64
+      ]
+    },
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "Scheduler",
+      "sublabel": "3 trabajadores",
+      "pos": [
+        730,
+        180
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "tag": "reintentos"
+    },
+    {
+      "id": "etapas",
+      "type": "backend",
+      "label": "Etapas por video",
+      "sublabel": "proxy \u00b7 detecci\u00f3n \u00b7 OCR",
+      "pos": [
+        950,
+        180
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "ocr-vl",
+      "type": "external",
+      "label": "OCR-VL",
+      "sublabel": "PaddleOCR-VL :5003",
+      "pos": [
+        880,
+        40
+      ],
+      "size": [
+        140,
+        56
+      ]
+    },
+    {
+      "id": "cierre",
+      "type": "backend",
+      "label": "Cierre de cami\u00f3n",
+      "sublabel": "matching cam1+cam2",
+      "pos": [
+        950,
+        380
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "salidas",
+      "type": "database",
+      "label": "fotos/ + registros/",
+      "sublabel": "fotos HQ \u00b7 <id>.json",
+      "pos": [
+        730,
+        380
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "consumidor",
+      "type": "external",
+      "label": "Consumidor",
+      "sublabel": "mail \u00b7 web",
+      "pos": [
+        500,
+        380
+      ],
+      "size": [
+        120,
+        64
+      ],
+      "tag": "futuro"
+    },
+    {
+      "id": "estado-db",
+      "type": "database",
+      "label": "estado.db",
+      "sublabel": "SQLite \u00b7 WAL",
+      "pos": [
+        730,
+        560
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "tag": "cola + pasadas + camiones"
+    },
+    {
+      "id": "per-video",
+      "type": "database",
+      "label": "BD por video",
+      "sublabel": "dets \u00b7 rangos \u00b7 c\u00f3digos",
+      "pos": [
+        950,
+        560
+      ],
+      "size": [
+        160,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "alt_batch2 \u00b7 host",
+      "wraps": [
+        "simulador",
+        "llegada",
+        "vigilante",
+        "scheduler",
+        "etapas",
+        "cierre",
+        "estado-db",
+        "per-video",
+        "salidas"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Candado GPU (exclusivo)",
+      "wraps": [
+        "etapas",
+        "cierre"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "sim-a-llegada",
+      "from": "simulador",
+      "to": "llegada",
+      "label": "par cada 300 s",
+      "labelDy": -26
+    },
+    {
+      "id": "llegada-a-vigilante",
+      "from": "llegada",
+      "to": "vigilante",
+      "label": "archivo completo",
+      "variant": "emphasis",
+      "labelDy": -26
+    },
+    {
+      "id": "vigilante-a-scheduler",
+      "from": "vigilante",
+      "to": "scheduler",
+      "label": "encola",
+      "variant": "emphasis",
+      "labelDy": -26
+    },
+    {
+      "id": "scheduler-a-etapas",
+      "from": "scheduler",
+      "to": "etapas",
+      "label": "despacha etapas",
+      "variant": "emphasis",
+      "labelAt": [
+        865,
+        258
+      ]
+    },
+    {
+      "id": "etapas-a-cierre",
+      "from": "etapas",
+      "to": "cierre",
+      "label": "pasadas cerradas",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1055,
+        350
+      ]
+    },
+    {
+      "id": "cierre-a-salidas",
+      "from": "cierre",
+      "to": "salidas",
+      "label": "fotos + JSON",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelDy": -26
+    },
+    {
+      "id": "salidas-a-consumidor",
+      "from": "salidas",
+      "to": "consumidor",
+      "label": "mail / web",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelDy": -26
+    },
+    {
+      "id": "etapas-ocr",
+      "from": "etapas",
+      "to": "ocr-vl",
+      "label": "HTTP /ocr",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "etapas-pervideo",
+      "from": "etapas",
+      "to": "per-video",
+      "label": "dets \u00b7 rangos \u00b7 c\u00f3digos",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [
+        [
+          1160,
+          212
+        ],
+        [
+          1160,
+          592
+        ],
+        [
+          1110,
+          592
+        ]
+      ],
+      "labelAt": [
+        1160,
+        470
+      ]
+    },
+    {
+      "id": "cierre-pervideo",
+      "from": "cierre",
+      "to": "per-video",
+      "label": "lee dets/c\u00f3digos",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1065,
+        490
+      ]
+    },
+    {
+      "id": "cierre-estado",
+      "from": "cierre",
+      "to": "estado-db",
+      "label": "camiones",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right",
+      "via": [
+        [
+          885,
+          412
+        ],
+        [
+          885,
+          592
+        ],
+        [
+          920,
+          592
+        ]
+      ],
+      "labelAt": [
+        913,
+        460
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ingesta y cola",
+      "items": [
+        "El simulador replica el generador real: un par cam1+cam2 cada 300 s",
+        "El vigilante solo acepta archivos completos; el scheduler reintenta etapas"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Fusi\u00f3n por cami\u00f3n",
+      "items": [
+        "La pasada abierta en el borde espera el video siguiente (tiempo global)",
+        "C\u00f3digo por tier; sello kpt3 con DUDA ante discrepancia o confianza < 0.6",
+        "Estacionados excluidos; pasantes rescatados por c\u00f3digo"
+      ]
+    }
+  ]
+}
