@@ -23,10 +23,20 @@ model = AutoModelForImageTextToText.from_pretrained(
 
 processor = AutoProcessor.from_pretrained(MODEL_PATH)
 
-SHORTEST_EDGE = processor.image_processor.size["shortest_edge"]
-LONGEST_EDGE = processor.image_processor.size["longest_edge"]
+# Official recipe (HF model card): spotting needs upscale x2 (LANCZOS) for
+# images smaller than 1500px on both sides and a larger pixel budget, or the
+# thin vertical text becomes unreadable.
+SPOTTING_UPSCALE_THRESHOLD = 1500
+SPOTTING_MAX_PIXELS = 2048 * 28 * 28
+OCR_MAX_PIXELS = 1280 * 28 * 28
 
-logger.info(f"Model loaded (shortest_edge={SHORTEST_EDGE}, longest_edge={LONGEST_EDGE})")
+try:
+    MIN_PIXELS = processor.image_processor.min_pixels
+except AttributeError:
+    MIN_PIXELS = processor.image_processor.size["shortest_edge"]
+
+logger.info(f"Model loaded (min_pixels={MIN_PIXELS}, "
+            f"ocr_max_pixels={OCR_MAX_PIXELS}, spotting_max_pixels={SPOTTING_MAX_PIXELS})")
 
 app = FastAPI()
 
@@ -43,8 +53,21 @@ async def spotting_image(file: UploadFile = File(...)):
     return await run_in_threadpool(_process_image_sync, contents, "Spotting:")
 
 
+@app.post("/describe")
+async def describe_image(file: UploadFile = File(...), prompt: str = "Describe esta escena en detalle."):
+    contents = await file.read()
+    return await run_in_threadpool(_process_image_sync, contents, prompt)
+
+
 def _process_image_sync(contents: bytes, task: str):
     image = Image.open(io.BytesIO(contents)).convert("RGB")
+
+    is_spotting = task.startswith("Spotting")
+    if is_spotting and image.size[0] < SPOTTING_UPSCALE_THRESHOLD \
+            and image.size[1] < SPOTTING_UPSCALE_THRESHOLD:
+        image = image.resize(
+            (image.size[0] * 2, image.size[1] * 2), Image.LANCZOS)
+    max_pixels = SPOTTING_MAX_PIXELS if is_spotting else OCR_MAX_PIXELS
 
     messages = [
         {
@@ -63,8 +86,8 @@ def _process_image_sync(contents: bytes, task: str):
         return_tensors="pt",
         images_kwargs={
             "size": {
-                "shortest_edge": SHORTEST_EDGE,
-                "longest_edge": LONGEST_EDGE,
+                "shortest_edge": MIN_PIXELS,
+                "longest_edge": max_pixels,
             }
         },
     ).to(DEVICE)

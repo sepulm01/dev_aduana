@@ -26,7 +26,7 @@ Thumbs.db
 
 # Secrets
 .env
-
+alt_batch/.venv/
 # Docker
 *.log
 
@@ -75,3 +75,25 @@ computer_vision/app/aduana-prod
 computer_vision/record/trucks.csv
 ocr_vl/models/
 mediamtx/mediamtx.yml
+procesados/
+videos/
+# alt_batch / alt_batch2: datos derivados (los videos y modelos no van al repo)
+alt_batch/minados/
+alt_batch/frames_fast/
+alt_batch/__pycache__/
+alt_batch/*.log
+alt_batch2/crops_area/
+alt_batch2/informes/
+alt_batch2/fotos/
+alt_batch2/registros/
+alt_batch2/llegada/
+alt_batch2/__pycache__/
+alt_batch2/.venv/
+alt_batch2/detecciones*.json
+alt_batch2/areas.csv
+alt_batch2/*.log
+alt_batch2/*.db
+alt_batch2/*.lock
+alt_batch2/*_estado.json
+alt_batch2/video_cpp
+alt_batch2/video_cpp_gpu
