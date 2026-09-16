@@ -140,8 +140,16 @@ def construir(evs1, evs2, camara, salida):
     evs2 = sorted(evs2, key=lambda e: e["ts_inicio"])
     m1 = pasadas_camara(evs1, 1, Wv)
     m2 = pasadas_camara(evs2, 2, Wv)
+    os.makedirs(salida, exist_ok=True)
+    for nombre in ("fotos_rtsp", "crops_rtsp"):
+        enlace = os.path.join(salida, nombre)
+        if not os.path.islink(enlace) and not os.path.exists(enlace):
+            try:
+                os.symlink(os.path.join("..", "..", nombre), enlace)
+            except OSError:
+                pass
     pares = sorted(emparejar(m1, m2),
-                   key=lambda x: (x[0] or x[1])["ini"])
+                   key=lambda x: (x[0] or x[1])["ini"], reverse=True)
     secciones = []
     registro = []
     for i, (a, b) in enumerate(pares, 1):
@@ -174,22 +182,29 @@ def construir(evs1, evs2, camara, salida):
             html_p = []
             fotos = []
             for p in m["pasadas"]:
-                for f in p["_evento"]["fotos"]:
+                ev = p["_evento"]
+                for i, f in enumerate(ev["fotos"]):
                     if f not in fotos:
-                        fotos.append(f)
-            for f in fotos[:4]:
-                html_p.append(
-                    f"<figure><a href='../../{f}' target='_blank'>"
-                    f"<img src='../../{f}'></a>"
-                    f"<figcaption>{lado} {os.path.basename(f)}</figcaption>"
-                    f"</figure>")
+                        fotos.append((f, ev.get("foto_crops", [None] * len(
+                            ev["fotos"]))[i] if i < len(ev["fotos"]) else None))
+            for f, fc in fotos[:4]:
+                fig = (f"<figure><a href='{f}' target='_blank'>"
+                       f"<img src='{f}'></a>"
+                       f"<figcaption>{lado} {os.path.basename(f)}</figcaption>"
+                       f"</figure>")
+                if fc:
+                    fig += (f"<figure><a href='{fc}' target='_blank'>"
+                            f"<img class='crop' src='{fc}'></a>"
+                            f"<figcaption>recorte sello (click = real)"
+                            f"</figcaption></figure>")
+                html_p.append(fig)
             crops = [c for p in m["pasadas"] for c in p["_evento"]["crops"]]
             if crops:
                 best_crop = max(crops, key=lambda c: int(
                     c.rsplit("_a", 1)[1].split(".")[0]))
                 html_p.append(
-                    f"<figure><a href='../../{best_crop}' target='_blank'>"
-                    f"<img class='crop' src='../../{best_crop}'></a>"
+                    f"<figure><a href='{best_crop}' target='_blank'>"
+                    f"<img class='crop' src='{best_crop}'></a>"
                     f"<figcaption>{lado} mejor crop código "
                     f"(click = real)</figcaption></figure>")
             partes.append(f"<div><b>{lado}</b> {''.join(html_p)}</div>")

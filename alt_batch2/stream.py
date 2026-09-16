@@ -141,6 +141,7 @@ def emitir_evento(lote, ctx, args):
                 lecturas.append([det["frame"], c])
 
     fotos = []
+    foto_crops = []
     if lote["tops"]:
         os.makedirs("fotos_rtsp", exist_ok=True)
         for i, (n, idx, fcopy, dets_s) in enumerate(lote["tops"]):
@@ -166,6 +167,28 @@ def emitir_evento(lote, ctx, args):
                 with open(path, "wb") as fh:
                     fh.write(buf.tobytes())
                 fotos.append(path)
+            cpath = None
+            if kpt:
+                cx, cy = kpt["x"] * W, kpt["y"] * H
+                half = 0.07 * W
+                for d in dets_s:
+                    x1, y1, x2, y2 = d["bbox"]
+                    bw, bh = x2 - x1, y2 - y1
+                    bx, by = (x1 + x2) / 2, (y1 + y2) / 2
+                    if abs(bx - cx) <= 2.5 * bw and abs(by - cy) <= 2.5 * bh:
+                        half = max(half, 2.2 * bw, 2.2 * bh)
+                x1, y1 = max(0, int(cx - half)), max(0, int(cy - half))
+                x2, y2 = min(W, int(cx + half)), min(H, int(cy + half))
+                crop = fcopy[y1:y2, x1:x2]
+                ok, buf = cv2.imencode(".jpg", crop,
+                                       [cv2.IMWRITE_JPEG_QUALITY, 90])
+                if ok:
+                    cpath = os.path.join(
+                        "fotos_rtsp",
+                        f"cam{args.camara}_b{bid}_{i}_sello.jpg")
+                    with open(cpath, "wb") as fh:
+                        fh.write(buf.tobytes())
+            foto_crops.append(cpath)
 
     evento = {
         "tipo": "pasada", "camara": args.camara, "bid": bid,
@@ -183,6 +206,7 @@ def emitir_evento(lote, ctx, args):
                         for mf in
                         lote["sellos_analysis"].get("mejores_frames", [])],
         "fotos": fotos,
+        "foto_crops": foto_crops,
         "crops": lote["crops"],
         "codigos_votos": {c: votos.count(c) for c in set(votos)},
     }
@@ -245,6 +269,7 @@ def procesar_camara(args, gate, gate_pose, ctx):
                 r = _sello_en_kpt3(fcopy, dets_s, gate_pose, W, H)
                 frames_res.append({"frame": idx, "n_sellos": n, **r})
             sellos_res = _veredicto_frames(frames_res)
+            sellos_res = dict(sellos_res, mejores_frames=frames_res)
         lote = {"bid": bid, "cls3": list(dets_burst),
                 "tops": list(tops_burst),
                 "sellos_analysis": sellos_res,
