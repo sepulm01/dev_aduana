@@ -385,9 +385,12 @@ def procesar_camara(args, gate, gate_pose, ctx):
                                 cv2.imwrite(cp, crop)
                                 crops_burst.append(cp)
                                 if valida is True:
-                                    ctx["q"].put((bid, pos, area,
-                                                  buf.tobytes()))
-                                    ctx["hechos"][bid][1] += 1
+                                    try:
+                                        ctx["q"].put_nowait(
+                                            (bid, pos, area, buf.tobytes()))
+                                        ctx["hechos"][bid][1] += 1
+                                    except queue.Full:
+                                        pass
                                 elif valida is None:
                                     pendientes_ocr.append(
                                         (bid, pos, area, buf.tobytes()))
@@ -412,8 +415,11 @@ def procesar_camara(args, gate, gate_pose, ctx):
                                     print(f"[dir] f{pos} izq->der VALIDA",
                                           flush=True)
                                     for pn in pendientes_ocr:
-                                        ctx["q"].put(pn)
-                                        ctx["hechos"][bid][1] += 1
+                                        try:
+                                            ctx["q"].put_nowait(pn)
+                                            ctx["hechos"][bid][1] += 1
+                                        except queue.Full:
+                                            pass
                                     pendientes_ocr = []
                                 else:
                                     print(f"[dir] f{pos} der->izq "
@@ -462,6 +468,8 @@ def main():
     args = p.parse_args()
     if not args.eventos:
         args.eventos = os.path.join("eventos", f"cam{args.camara}.jsonl")
+    os.makedirs(os.path.dirname(args.eventos) or ".", exist_ok=True)
+    open(args.eventos, "w").close()
 
     gate = YoloGate(model_path=None, conf_thres=args.conf, imgsz=640)
     gate.warmup()
