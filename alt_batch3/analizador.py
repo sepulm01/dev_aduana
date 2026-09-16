@@ -335,9 +335,14 @@ def emparejar(t1, t2):
 def sello_de(truck):
     if not truck["picos"]:
         return {"veredicto": "sin datos", "cls": None, "conf": None}
+    por_run = {}
+    for p in truck["picos"]:
+        por_run.setdefault(p.get("run"), []).append(p)
+    mejor = max(por_run.values(),
+                key=lambda ps: sum(x["n_sellos"] for x in ps))
     frames_res = [{"frame": p["f"], "n_sellos": p["n_sellos"],
                    "cls": p.get("cls"), "conf": p.get("conf")}
-                  for p in truck["picos"]]
+                  for p in mejor]
     v = _veredicto_frames(frames_res)
     return {"veredicto": v["veredicto"], "cls": v["cls"],
             "conf": v["conf"]}
