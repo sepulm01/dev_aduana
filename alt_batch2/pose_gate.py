@@ -6,14 +6,17 @@ Carga best_pose_cierre_v2.pt usando las clases del repo parcheado
 checkpoint: IKeypoint con nkpt=4). letterbox / NMS / scale_coords se
 reutilizan del repo, igual que hace yolo_gate con el repo de yolov9.
 """
+import os
 import sys
 
 import cv2
 import numpy as np
 import torch
 
-YOLOV7_POSE_DIR = "/var/www/dev_base_img/yolov7_pose"
-MODEL_PATH = "/var/www/dev_base_img/yolov7_pose/best_pose_cierre_v3.pt"
+YOLOV7_POSE_DIR = os.environ.get(
+    "YOLOV7_POSE_DIR", "/var/www/dev_base_img/yolov7_pose")
+MODEL_PATH = os.environ.get(
+    "POSE_MODEL", "/var/www/dev_base_img/yolov7_pose/best_pose_cierre_v3.pt")
 IMGSZ = 640
 CONF_THRES = 0.25
 IOU_THRES = 0.45

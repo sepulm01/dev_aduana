@@ -182,6 +182,8 @@ def pasadas_camara(d):
 
 
 def tiene_puertas(p):
+    if "_n_sellos" in p:
+        return p["_n_sellos"] >= 10
     return sum(1 for x in p["detecciones"] if x["cls"] in (0, 1)) >= 10
 
 
@@ -289,7 +291,8 @@ def dividir_por_trayectoria(p, camara, Wv):
 
 
 def es_ruido(m):
-    n = sum(len(p["detecciones"]) for p in m["pasadas"])
+    n = sum(p.get("_n_dets", len(p["detecciones"]))
+            for p in m["pasadas"])
     return n < 8 and not votos_pass(m["pasadas"])
 
 

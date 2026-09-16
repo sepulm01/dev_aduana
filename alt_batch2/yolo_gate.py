@@ -6,6 +6,7 @@ clases de arquitectura del repo /var/www/yolov9 (necesarias para el
 pickle del checkpoint). letterbox / NMS / scale_boxes adaptados inline
 de ese repo para no depender de sus imports pesados.
 """
+import os
 import sys
 
 import cv2
@@ -13,8 +14,10 @@ import numpy as np
 import torch
 import torchvision
 
-YOLOV9_DIR = "/var/www/yolov9"
-MODEL_PATH = "/var/www/dev_aduana/computer_vision/models/yolov9_aduana/best.pt"
+YOLOV9_DIR = os.environ.get("YOLOV9_DIR", "/var/www/yolov9")
+MODEL_PATH = os.environ.get(
+    "YOLO_MODEL",
+    "/var/www/dev_aduana/computer_vision/models/yolov9_aduana/best.pt")
 IMGSZ = 1280
 CONF_THRES = 0.20
 IOU_THRES = 0.45

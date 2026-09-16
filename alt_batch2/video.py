@@ -104,11 +104,11 @@ class Ventana:
         self.cond = threading.Condition()
         self.eof = False
 
-    def poner(self, idx, frame):
+    def poner(self, idx, frame, ts=None):
         with self.cond:
             while len(self.dq) >= self.maxlen and not self.eof:
                 self.cond.wait()
-            self.dq.append((idx, frame))
+            self.dq.append((idx, ts, frame))
             self.cond.notify_all()
 
     def terminar(self):
@@ -132,9 +132,9 @@ class Ventana:
                         return None
                     break
                 self.cond.wait()
-            for n, fr in self.dq:
+            for n, ts, fr in self.dq:
                 if n == idx:
-                    return fr
+                    return fr, ts
             return None
 
 
@@ -337,7 +337,7 @@ def procesar_video(args, gate, gate_pose, ctx):
     interrumpido = False
     try:
         while True:
-            frame = ventana.obtener(pos)
+            frame, _ = ventana.obtener(pos)
             if frame is None:
                 if modo == "denso":
                     cerrar_burst()
@@ -484,7 +484,9 @@ def procesar_video(args, gate, gate_pose, ctx):
                 pos += paso_espaciado * 2 if descartada_ahora else 1
 
             ventana.liberar_hasta(max(0, pos - retro))
-            cv2.imshow("Camera", frame)
+            cv2.imshow(f"cam{camara} {base}", frame)
+            cv2.moveWindow(f"cam{camara} {base}",
+                           0 if camara == 1 else 1000, 0)
             if cv2.waitKey(1) == ord("q"):
                 break
     except KeyboardInterrupt:
