@@ -201,8 +201,11 @@ def procesar_camara(args, gate, gate_pose, ctx):
                 path = os.path.join(
                     "crops_b3", f"cam{camara}",
                     f"s{seq:08d}_f{rec['f']:06d}_a{int(rec['area']):06d}.jpg")
-                cv2.imwrite(path, crop,
-                            [cv2.IMWRITE_JPEG_QUALITY, 90])
+                ok_, buf = cv2.imencode(".jpg", crop,
+                                        [cv2.IMWRITE_JPEG_QUALITY, 90])
+                if ok_:
+                    with open(path, "wb") as fh:
+                        fh.write(buf.tobytes())
                 rec["crop"] = path
                 n_ocr_run += 1
                 if not args.sin_ocr:
