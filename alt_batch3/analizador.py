@@ -231,6 +231,13 @@ def truck_de(dets):
             "picos": []}
 
 
+def es_ruido(truck):
+    """Cluster sin codigo, sin puertas y con pocas detecciones: parpadeo
+    de camiones estacionados, no un camion pasando."""
+    return (not truck["votes"] and not truck["picos"]
+            and len(truck["dets"]) < 8)
+
+
 def asignar_picos(trucks, recs_cam):
     picos = [r for r in recs_cam if r["tipo"] == "pico"]
     sobra = []
@@ -441,8 +448,8 @@ def construir(recs1, recs2, args):
     for t in t1 + t2:
         t["ts_fin"] = max(t["ts_fin"], *(p["ts"] for p in t["picos"])) \
             if t["picos"] else t["ts_fin"]
-    t1 = [t for t in t1 if t["dets"] or t["picos"]]
-    t2 = [t for t in t2 if t["dets"] or t["picos"]]
+    t1 = [t for t in t1 if not es_ruido(t)]
+    t2 = [t for t in t2 if not es_ruido(t)]
     aplicar_reocr(t1 + t2, os.path.join(args.salida, "reocr.json"),
                   args.server)
     for t in t1 + t2:
