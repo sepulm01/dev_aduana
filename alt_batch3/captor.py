@@ -178,6 +178,9 @@ def procesar_camara(args, gate, gate_pose, ctx):
     best_code = []
     tops_sellos = []
     ts_frame = {}
+    n_dets_run = 0
+    n_sellos_run = 0
+    n_ocr_run = 0
 
     def append_rec(rec):
         with ctx["lock"]:
@@ -190,16 +193,18 @@ def procesar_camara(args, gate, gate_pose, ctx):
             return ctx["seq"]
 
     def flush_pendientes():
-        nonlocal pendientes
+        nonlocal pendientes, n_ocr_run
         for rec, png, crop in pendientes:
             seq = next_seq()
             rec["seq"] = seq
             if png is not None:
                 path = os.path.join(
                     "crops_b3", f"cam{camara}",
-                    f"s{seq:08d}_f{rec['f']:06d}_a{int(rec['area']):06d}.png")
-                cv2.imwrite(path, crop)
+                    f"s{seq:08d}_f{rec['f']:06d}_a{int(rec['area']):06d}.jpg")
+                cv2.imwrite(path, crop,
+                            [cv2.IMWRITE_JPEG_QUALITY, 90])
                 rec["crop"] = path
+                n_ocr_run += 1
                 if not args.sin_ocr:
                     try:
                         ctx["q"].put_nowait(
@@ -210,63 +215,77 @@ def procesar_camara(args, gate, gate_pose, ctx):
         pendientes = []
 
     def cerrar_run():
-        nonlocal best_code, tops_sellos
+        nonlocal best_code, tops_sellos, n_dets_run, n_sellos_run, n_ocr_run
         tops_fs = {p[1] for p in tops_sellos}
-        for area, fpos, img in best_code:
-            if fpos in tops_fs:
-                continue
-            seq = next_seq()
-            path = os.path.join("fotos_b3",
-                                f"cam{camara}_f4k_{seq:08d}_f{fpos:06d}.jpg")
-            if _guardar_jpg(img, path, 80):
-                append_rec({"tipo": "frame4k", "cam": camara, "seq": seq,
+        if n_dets_run >= 5 or n_ocr_run >= 1:
+            for area, fpos, img in best_code:
+                if fpos in tops_fs:
+                    continue
+                seq = next_seq()
+                path = os.path.join(
+                    "fotos_b3",
+                    f"cam{camara}_f4k_{seq:08d}_f{fpos:06d}.jpg")
+                if _guardar_jpg(img, path, 72):
+                    append_rec({"tipo": "frame4k", "cam": camara, "seq": seq,
+                                "f": fpos,
+                                "ts": round(ts_frame.get(fpos, 0.0), 2),
+                                "area": round(area), "path": path,
+                                "run": run_id})
+        if n_sellos_run >= 6:
+            for n, fpos, img, dets_s in tops_sellos:
+                r = _sello_en_kpt3(img, dets_s, gate_pose, W, H)
+                anot = img.copy()
+                for d in dets_s:
+                    x1, y1, x2, y2 = [int(v) for v in d["bbox"]]
+                    color = (0, 255, 255) if d["cls"] == 0 else (255, 0, 255)
+                    cv2.rectangle(anot, (x1, y1), (x2, y2), color, 3)
+                kpt = r.get("kpt3")
+                if kpt:
+                    kx, ky = int(kpt["x"] * W), int(kpt["y"] * H)
+                    cv2.circle(anot, (kx, ky), 40, (0, 255, 0), 6)
+                seq = next_seq()
+                foto = os.path.join(
+                    "fotos_b3",
+                    f"cam{camara}_p{seq:08d}_f{fpos:06d}.jpg")
+                guardada = _guardar_jpg(anot, foto, 72)
+                sc = None
+                if kpt:
+                    cx, cy = kpt["x"] * W, kpt["y"] * H
+                    half = 0.07 * W
+                    for d in dets_s:
+                        x1, y1, x2, y2 = d["bbox"]
+                        bw, bh = x2 - x1, y2 - y1
+                        bx, by = (x1 + x2) / 2, (y1 + y2) / 2
+                        if abs(bx - cx) <= 2.5 * bw and \
+                                abs(by - cy) <= 2.5 * bh:
+                            half = max(half, 2.2 * bw, 2.2 * bh)
+                    x1, y1 = max(0, int(cx - half)), max(0, int(cy - half))
+                    x2, y2 = min(W, int(cx + half)), min(H, int(cy + half))
+                    crop = img[y1:y2, x1:x2]
+                    if crop.shape[0] >= 60 and crop.shape[1] >= 60:
+                        sc = f"{foto[:-4]}_sello.jpg"
+                        _guardar_jpg(crop, sc, 90)
+                append_rec({"tipo": "pico", "cam": camara, "seq": seq,
                             "f": fpos,
                             "ts": round(ts_frame.get(fpos, 0.0), 2),
-                            "area": round(area), "path": path,
-                            "run": run_id})
-        for n, fpos, img, dets_s in tops_sellos:
-            r = _sello_en_kpt3(img, dets_s, gate_pose, W, H)
-            anot = img.copy()
-            for d in dets_s:
-                x1, y1, x2, y2 = [int(v) for v in d["bbox"]]
-                color = (0, 255, 255) if d["cls"] == 0 else (255, 0, 255)
-                cv2.rectangle(anot, (x1, y1), (x2, y2), color, 3)
-            kpt = r.get("kpt3")
-            if kpt:
-                kx, ky = int(kpt["x"] * W), int(kpt["y"] * H)
-                cv2.circle(anot, (kx, ky), 40, (0, 255, 0), 6)
-            seq = next_seq()
-            foto = os.path.join("fotos_b3",
-                                f"cam{camara}_p{seq:08d}_f{fpos:06d}.jpg")
-            guardada = _guardar_jpg(anot, foto, 85)
-            sc = None
-            if kpt:
-                cx, cy = kpt["x"] * W, kpt["y"] * H
-                half = 0.07 * W
-                for d in dets_s:
-                    x1, y1, x2, y2 = d["bbox"]
-                    bw, bh = x2 - x1, y2 - y1
-                    bx, by = (x1 + x2) / 2, (y1 + y2) / 2
-                    if abs(bx - cx) <= 2.5 * bw and abs(by - cy) <= 2.5 * bh:
-                        half = max(half, 2.2 * bw, 2.2 * bh)
-                x1, y1 = max(0, int(cx - half)), max(0, int(cy - half))
-                x2, y2 = min(W, int(cx + half)), min(H, int(cy + half))
-                crop = img[y1:y2, x1:x2]
-                if crop.shape[0] >= 60 and crop.shape[1] >= 60:
-                    sc = f"{foto[:-4]}_sello.jpg"
-                    _guardar_jpg(crop, sc, 90)
-            append_rec({"tipo": "pico", "cam": camara, "seq": seq,
-                        "f": fpos, "ts": round(ts_frame.get(fpos, 0.0), 2),
-                        "run": run_id, "n_sellos": n,
-                        "dets": [{"cls": d["cls"], "conf": round(d["conf"], 3),
-                                  "bbox": [round(v, 1) for v in d["bbox"]]}
-                                 for d in dets_s],
-                        "kpt3": kpt, "cls": r.get("cls"),
-                        "conf": r.get("conf"),
-                        "foto": foto if guardada else None,
-                        "sello_crop": sc})
+                            "run": run_id, "n_sellos": n,
+                            "dets": [{"cls": d["cls"],
+                                      "conf": round(d["conf"], 3),
+                                      "bbox": [round(v, 1)
+                                               for v in d["bbox"]]}
+                                     for d in dets_s],
+                            "kpt3": kpt, "cls": r.get("cls"),
+                            "conf": r.get("conf"),
+                            "foto": foto if guardada else None,
+                            "sello_crop": sc})
+        if n_dets_run < 5 and n_ocr_run < 1 and n_sellos_run < 6:
+            print(f"[run r{run_id}] sin emision (dets={n_dets_run} "
+                  f"sellos={n_sellos_run} ocr={n_ocr_run})", flush=True)
         best_code = []
         tops_sellos = []
+        n_dets_run = 0
+        n_sellos_run = 0
+        n_ocr_run = 0
 
     try:
         while True:
@@ -302,6 +321,9 @@ def procesar_camara(args, gate, gate_pose, ctx):
                     best_code = []
                     tops_sellos = []
                     run_id += 1
+                    n_dets_run = 0
+                    n_sellos_run = 0
+                    n_ocr_run = 0
                     ventana.liberar_hasta(max(0, pos - retro))
                     continue
                 pos += 1
@@ -311,6 +333,8 @@ def procesar_camara(args, gate, gate_pose, ctx):
                     if interes:
                         sin_interes = 0
                         mejor = max(interes, key=lambda d: d[4])
+                        n_dets_run += len(cls3)
+                        n_sellos_run += len(sellos)
                         for d in cls3:
                             x1, y1, x2, y2 = map(float, d[:4])
                             conf = float(d[4])
@@ -373,6 +397,9 @@ def procesar_camara(args, gate, gate_pose, ctx):
                                     pendientes = []
                                     best_code = []
                                     tops_sellos = []
+                                    n_dets_run = 0
+                                    n_sellos_run = 0
+                                    n_ocr_run = 0
                                     modo = "espaciado"
                                     descartada_ahora = True
                         elif valida is True:

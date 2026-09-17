@@ -44,6 +44,8 @@ CERCANIA = 15.0
 TOL_FRONTERA = 10.0
 MARGEN_AMBIGUO = 3
 RETENCION_DIAS = 7
+UMBRAL_MOV = 5.0
+MIN_MUESTRAS_MOV = 3
 
 
 def leer(path, offs):
@@ -84,8 +86,30 @@ def clusters_de(recs_cam):
             clusters.append([d])
     out = []
     for c in clusters:
-        out.extend(_split_trayectoria(c))
+        for sub in _split_trayectoria(c):
+            sub = _recortar_estacionado(sub)
+            if sub:
+                out.append(sub)
     return out
+
+
+def _recortar_estacionado(dets):
+    """Elimina el prefijo/sufijo inmóvil de un cluster (camiones
+    estacionados al margen de la vía que contaminan el inicio/fin). Un
+    cluster sin movimiento sostenido (>=3 saltos > UMBRAL_MOV) es
+    basura de estacionado y se descarta completo."""
+    if len(dets) < 2:
+        return []
+    cxs = [d["cx"] for d in dets]
+    dxs = [abs(cxs[i + 1] - cxs[i]) for i in range(len(dets) - 1)]
+    mov = [i for i, dx in enumerate(dxs) if dx > UMBRAL_MOV]
+    if not mov:
+        return []
+    if len(dxs) >= 6 and len(mov) < MIN_MUESTRAS_MOV:
+        return []
+    ini = max(0, mov[0] - 2)
+    fin = min(len(dets) - 1, mov[-1] + 2)
+    return dets[ini:fin + 1]
 
 
 def _split_trayectoria(dets):
@@ -546,12 +570,56 @@ def construir(recs1, recs2, args):
 
     with open(os.path.join(args.salida, "containers.json"), "w") as fh:
         json.dump(registro, fh, indent=1, ensure_ascii=False)
+    POR_PAGINA = 5
+    paginas = [secciones[i:i + POR_PAGINA]
+               for i in range(0, len(secciones), POR_PAGINA)] or [[]]
+    paginas_html = "".join(
+        f"<article class='pagina'>{''.join(p)}</article>" for p in paginas)
     index = f"""<!DOCTYPE html><html lang='es'><head><meta charset='utf-8'>
-<title>Contenedores EN VIVO b3</title><style>{CSS}</style>
-<meta http-equiv='refresh' content='10'></head><body>
+<title>Contenedores EN VIVO b3</title><style>{CSS}
+.pagina{{display:none}}
+.pagina.activa{{display:block}}
+.pager{{display:flex;gap:10px;align-items:center;margin:14px 0 22px}}
+.pager button{{background:#2e3340;color:#dfe3e8;border:1px solid #3c4352;
+ padding:6px 16px;border-radius:6px;cursor:pointer;font-size:14px}}
+.pager button:disabled{{opacity:.4;cursor:default}}
+.pager .info{{color:#9aa4b2;font-size:14px}}
+</style></head><body>
 <h1>Contenedores — EN VIVO (alt_batch3)</h1>
 <p>{len(registro)} contenedores cerrados · actualizado
-{time.strftime('%H:%M:%S')}</p>{''.join(secciones)}</body></html>"""
+{time.strftime('%H:%M:%S')}</p>
+<div class='pager'><button id='p-ant'>‹ Anterior</button>
+<span class='info' id='p-info'></span>
+<button id='p-sig'>Siguiente ›</button></div>
+{paginas_html}
+<div class='pager'><button id='p-ant2'>‹ Anterior</button>
+<span class='info' id='p-info2'></span>
+<button id='p-sig2'>Siguiente ›</button></div>
+<script>
+var paginas = document.querySelectorAll('.pagina');
+var total = paginas.length;
+var actual = 1;
+function mostrar(p) {{
+  p = Math.min(Math.max(1, p), total);
+  paginas.forEach(function(el, i) {{ el.classList.toggle('activa', i + 1 === p); }});
+  actual = p;
+  var info = 'Página ' + p + ' de ' + total;
+  document.getElementById('p-info').textContent = info;
+  document.getElementById('p-info2').textContent = info;
+  document.getElementById('p-ant').disabled = p <= 1;
+  document.getElementById('p-ant2').disabled = p <= 1;
+  document.getElementById('p-sig').disabled = p >= total;
+  document.getElementById('p-sig2').disabled = p >= total;
+  history.replaceState(null, '', '#p=' + p);
+}}
+document.getElementById('p-ant').addEventListener('click', function() {{ mostrar(actual - 1); }});
+document.getElementById('p-ant2').addEventListener('click', function() {{ mostrar(actual - 1); }});
+document.getElementById('p-sig').addEventListener('click', function() {{ mostrar(actual + 1); }});
+document.getElementById('p-sig2').addEventListener('click', function() {{ mostrar(actual + 1); }});
+var m = location.hash.match(/p=(\\d+)/);
+mostrar(m ? parseInt(m[1], 10) : 1);
+setTimeout(function() {{ location.reload(); }}, 10000);
+</script></body></html>"""
     with open(os.path.join(args.salida, "index.html"), "w") as fh:
         fh.write(index)
     print(f"[informe] {len(registro)} contenedores "
