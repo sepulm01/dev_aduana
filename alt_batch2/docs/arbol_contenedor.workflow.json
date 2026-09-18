@@ -1,0 +1,262 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Árbol de decisiones por contenedor — alt_batch3",
+    "output": "docs/arbol_contenedor.html",
+    "quality_profile": "showcase",
+    "visual_preset": "signal-flow",
+    "animation": "trace"
+  },
+  "lanes": [
+    {
+      "id": "captor",
+      "label": "Captor (1 por cámara)"
+    },
+    {
+      "id": "camara",
+      "label": "Analizador · por cámara"
+    },
+    {
+      "id": "cruzada",
+      "label": "Analizador · cam1↔cam2"
+    }
+  ],
+  "phases": [
+    {
+      "id": "capturar",
+      "label": "Capturar y filtrar",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "agrupar",
+      "label": "Agrupar y decidir",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "publicar",
+      "label": "Armar y publicar",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "groups": [
+    {
+      "id": "grupo_camara",
+      "label": "Un camión por pasada física",
+      "lane": "camara",
+      "fromCol": 2,
+      "toCol": 5,
+      "variant": "emphasis"
+    },
+    {
+      "id": "grupo_cruzada",
+      "label": "Primero código, luego secuencia",
+      "lane": "cruzada",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "deteccion",
+    "direccion",
+    "cluster",
+    "cortar",
+    "camion",
+    "emparejar",
+    "informe"
+  ],
+  "nodes": [
+    {
+      "id": "deteccion",
+      "lane": "captor",
+      "col": 0,
+      "type": "messagebus",
+      "label": "Detección cls3",
+      "sublabel": "bbox · conf · HSV",
+      "tag": "sin ráfagas"
+    },
+    {
+      "id": "direccion",
+      "lane": "captor",
+      "col": 1,
+      "type": "security",
+      "label": "¿Dirección?",
+      "sublabel": "cam1: izq→der",
+      "width": 84
+    },
+    {
+      "id": "descartar",
+      "lane": "captor",
+      "col": 2,
+      "type": "security",
+      "label": "DESCARTADA",
+      "sublabel": "calle contraria",
+      "width": 84
+    },
+    {
+      "id": "cluster",
+      "lane": "camara",
+      "col": 2,
+      "type": "backend",
+      "label": "Cluster",
+      "sublabel": "silencio · trim inmóvil",
+      "width": 96
+    },
+    {
+      "id": "cortar",
+      "lane": "camara",
+      "col": 3,
+      "type": "security",
+      "label": "¿2 códigos?",
+      "sublabel": "frontera ≥8 frames"
+    },
+    {
+      "id": "corroborar",
+      "lane": "camara",
+      "col": 5,
+      "type": "security",
+      "label": "¿Confirma?",
+      "sublabel": "2 camiones · ±10s",
+      "width": 104
+    },
+    {
+      "id": "camion",
+      "lane": "camara",
+      "col": 4,
+      "type": "database",
+      "label": "Camión",
+      "sublabel": "votos · picos",
+      "width": 96,
+      "tag": "ruido <8 fuera"
+    },
+    {
+      "id": "emparejar",
+      "lane": "cruzada",
+      "col": 4,
+      "type": "frontend",
+      "label": "Emparejar",
+      "sublabel": "código ≤2 · secuencia",
+      "width": 100
+    },
+    {
+      "id": "informe",
+      "lane": "cruzada",
+      "col": 5,
+      "type": "backend",
+      "label": "Informe",
+      "sublabel": "5/página · rsync 60s",
+      "width": 104,
+      "tag": "aduana.streetflow.cl"
+    }
+  ],
+  "edges": [
+    {
+      "from": "deteccion",
+      "to": "direccion",
+      "label": "interés",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "direccion",
+      "to": "cluster",
+      "label": "izq→der",
+      "variant": "emphasis"
+    },
+    {
+      "from": "direccion",
+      "to": "descartar",
+      "label": "der→izq",
+      "variant": "dashed",
+      "role": "error"
+    },
+    {
+      "from": "descartar",
+      "to": "direccion",
+      "label": "sigue el flujo",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "cluster",
+      "to": "cortar",
+      "label": "se mueve",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "cortar",
+      "to": "corroborar",
+      "label": "2 códigos",
+      "variant": "dashed"
+    },
+    {
+      "from": "cortar",
+      "to": "camion",
+      "label": "1 código",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "corroborar",
+      "to": "camion",
+      "label": "no confirma"
+    },
+    {
+      "from": "corroborar",
+      "to": "cluster",
+      "label": "sí → partir en 2",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "camion",
+      "to": "emparejar",
+      "label": "ambas cámaras",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "from": "emparejar",
+      "to": "informe",
+      "label": "parejas",
+      "variant": "emphasis",
+      "role": "main"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Evidencia, no ráfagas",
+      "items": [
+        "El captor nunca empaqueta: un registro por detección",
+        "Puertas solo si el run sumó ≥6 sellos, frame 4K con ≥5 dets",
+        "Estacionados y sentido contrario quedan fuera del cluster"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Cortar solo con prueba",
+      "items": [
+        "Dos códigos no bastan: la otra cámara debe confirmar",
+        "Sin prueba, las lecturas ruidosas son un mismo camión",
+        "Re-OCR dirigido solo en ambigüedad (2 familias a <3 votos)"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Publicar solo lo cerrado",
+      "items": [
+        "Silencio >15s cierra el camión; ID fijo",
+        "Sello por el run con más sellos, kpt3 con unanimidad",
+        "Informe paginado (5) y espejo web cada 60s"
+      ]
+    }
+  ]
+}
