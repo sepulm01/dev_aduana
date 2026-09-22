@@ -6,7 +6,8 @@
 <div class="grid">
   {% for c in pagina %}
   <div class="card">
-    <img src="/media/{{ c.archivo }}" alt="{{ c.path }}" loading="lazy">
+    <img class="zoom" src="/media/{{ c.archivo }}" alt="{{ c.path }}"
+         loading="lazy" onclick="abrirLupa(this.src)">
     <div class="meta">cam{{ c.cam }} · {{ c.path }}</div>
     <form method="post" action="{% url 'clasificar' c.pk %}" class="botones">
       {% csrf_token %}
