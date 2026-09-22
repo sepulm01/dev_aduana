@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clasificador de sellos</title>
+<style>
+body{background:#14161a;color:#dfe3e8;font-family:system-ui,sans-serif;
+ margin:0 auto;max-width:1400px;padding:0 16px 40px}
+nav{display:flex;gap:14px;align-items:center;padding:14px 0;
+ border-bottom:1px solid #2e3340;margin-bottom:16px;flex-wrap:wrap}
+nav a{color:#7cb3ff;text-decoration:none;font-size:15px}
+nav .titulo{font-weight:700;color:#fff;margin-right:auto;font-size:17px}
+nav .user{color:#9aa4b2;font-size:14px}
+h1{font-size:22px}
+.badge{display:inline-block;padding:2px 10px;border-radius:4px;font-size:13px}
+.con{background:#1f5130;color:#7ee2a0}
+.sin{background:#4d1f1f;color:#ff9c9c}
+.duda{background:#4d421f;color:#ffd27d}
+.pend{background:#2e3340;color:#9aa4b2}
+.mensajes{margin:10px 0}
+.mensajes div{padding:8px 12px;border-radius:6px;margin:4px 0;font-size:14px}
+.ok{background:#1f5130;color:#7ee2a0}
+.error{background:#4d1f1f;color:#ff9c9c}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));
+ gap:14px}
+.card{background:#1c1f26;border:1px solid #2e3340;border-radius:8px;
+ padding:10px;display:flex;flex-direction:column;gap:8px}
+.card img{width:100%;height:230px;object-fit:contain;background:#0d1117;
+ border-radius:4px}
+.card .meta{color:#9aa4b2;font-size:12px}
+.botones{display:flex;gap:6px}
+.botones button{flex:1;border:0;border-radius:6px;padding:8px 4px;
+ cursor:pointer;font-size:13px;color:#fff}
+.b-con{background:#1f5130}
+.b-sin{background:#4d1f1f}
+.b-duda{background:#4d421f}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px 10px;border-bottom:1px solid #2e3340;text-align:left}
+th{color:#9aa4b2;font-weight:600}
+td img{width:120px;height:80px;object-fit:contain;background:#0d1117;
+ border-radius:4px}
+.pager{display:flex;gap:8px;margin:14px 0}
+.pager a{color:#7cb3ff;text-decoration:none;border:1px solid #2e3340;
+ padding:4px 12px;border-radius:6px;font-size:14px}
+.pager span{color:#9aa4b2;font-size:14px;padding:4px 0}
+.resumen{color:#9aa4b2;font-size:14px;margin-bottom:10px}
+a.exportar{background:#1f5130;color:#7ee2a0;padding:4px 14px;
+ border-radius:6px;font-size:14px}
+</style>
+</head>
+<body>
+<nav>
+  <span class="titulo">Clasificador de sellos</span>
+  <a href="{% url 'pendientes' %}">Pendientes</a>
+  <a href="{% url 'procesados' %}">Procesados</a>
+  {% if user.is_staff %}<a class="exportar" href="{% url 'exportar' %}">Exportar ZIP</a>{% endif %}
+  <span class="user">{{ user.get_username }}</span>
+  <form method="post" action="{% url 'logout' %}" style="display:inline">
+    {% csrf_token %}
+    <button style="background:none;border:none;color:#7cb3ff;cursor:pointer;font-size:14px">salir</button>
+  </form>
+</nav>
+{% if messages %}
+<div class="mensajes">
+  {% for m in messages %}
+  <div class="{% if m.tags == 'error' %}error{% else %}ok{% endif %}">{{ m }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+{% block contenido %}{% endblock %}
+</body>
+</html>

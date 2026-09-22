@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h1>Procesados</h1>
+<p class="resumen">{{ pagina.paginator.count }} clasificados</p>
+<table>
+  <tr><th>Imagen</th><th>Archivo</th><th>Etiqueta</th>
+      <th>Procesó</th><th>Fecha</th></tr>
+  {% for c in pagina %}
+  <tr>
+    <td><img src="/media/{{ c.archivo }}" loading="lazy"></td>
+    <td>{{ c.path }}</td>
+    <td><span class="badge {{ c.etiqueta }}">{{ c.get_etiqueta_display }}</span></td>
+    <td>{{ c.usuario.get_username }}</td>
+    <td>{{ c.guardado_at|date:"d/m/Y H:i" }}</td>
+  </tr>
+  {% empty %}
+  <tr><td colspan="5">Nada procesado aún.</td></tr>
+  {% endfor %}
+</table>
+<div class="pager">
+  {% if pagina.has_previous %}<a href="?p={{ pagina.previous_page_number }}">‹ anterior</a>{% endif %}
+  <span>página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+  {% if pagina.has_next %}<a href="?p={{ pagina.next_page_number }}">siguiente ›</a>{% endif %}
+</div>
+{% endblock %}

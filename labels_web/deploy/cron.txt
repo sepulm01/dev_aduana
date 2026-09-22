@@ -1,0 +1,1 @@
+* * * * * /var/www/aduana_labels/env/bin/python /var/www/aduana_labels/manage.py sync_sellos >> /var/www/aduana_labels/sync.log 2>&1

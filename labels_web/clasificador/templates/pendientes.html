@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block contenido %}
+<meta http-equiv="refresh" content="10">
+<h1>Pendientes</h1>
+<p class="resumen">{{ total_pend }} pendientes · {{ total_hechas }} procesados</p>
+<div class="grid">
+  {% for c in pagina %}
+  <div class="card">
+    <img src="/media/{{ c.archivo }}" alt="{{ c.path }}" loading="lazy">
+    <div class="meta">cam{{ c.cam }} · {{ c.path }}</div>
+    <form method="post" action="{% url 'clasificar' c.pk %}" class="botones">
+      {% csrf_token %}
+      <button class="b-con" name="etiqueta" value="con">CON SELLO</button>
+      <button class="b-sin" name="etiqueta" value="sin">SIN SELLO</button>
+      <button class="b-duda" name="etiqueta" value="duda">DUDA</button>
+    </form>
+  </div>
+  {% empty %}
+  <p>No hay crops pendientes.</p>
+  {% endfor %}
+</div>
+<div class="pager">
+  {% if pagina.has_previous %}<a href="?p={{ pagina.previous_page_number }}">‹ anterior</a>{% endif %}
+  <span>página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+  {% if pagina.has_next %}<a href="?p={{ pagina.next_page_number }}">siguiente ›</a>{% endif %}
+</div>
+{% endblock %}

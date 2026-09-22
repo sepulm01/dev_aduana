@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingreso — Clasificador de sellos</title>
+<style>
+body{background:#14161a;color:#dfe3e8;font-family:system-ui,sans-serif;
+ display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.caja{background:#1c1f26;border:1px solid #2e3340;border-radius:10px;
+ padding:28px;width:320px}
+h1{font-size:20px;margin:0 0 16px;color:#fff}
+form p{margin:10px 0}
+input{width:100%;box-sizing:border-box;background:#0d1117;border:1px solid
+ #2e3340;color:#dfe3e8;border-radius:6px;padding:9px 10px}
+button{width:100%;background:#1f5130;color:#7ee2a0;border:0;border-radius:6px;
+ padding:10px;cursor:pointer;font-size:15px;margin-top:8px}
+.errores{color:#ff9c9c;font-size:13px;margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="caja">
+  <h1>Clasificador de sellos</h1>
+  {% if form.errors %}
+  <div class="errores">Usuario o contraseña incorrectos.</div>
+  {% endif %}
+  <form method="post">
+    {% csrf_token %}
+    <p><input type="text" name="username" placeholder="usuario" autofocus required></p>
+    <p><input type="password" name="password" placeholder="contraseña" required></p>
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit">Ingresar</button>
+  </form>
+</div>
+</body>
+</html>
