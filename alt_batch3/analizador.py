@@ -30,7 +30,7 @@ import cv2
 import requests
 
 import ocr_codes
-from conciliar import CSS, esc, mejor_codigo, sello_fusion
+from conciliar import CSS, esc, sello_fusion
 from video import PAD_X, PAD_Y, SERVER, _veredicto_frames
 
 W, H = 3840, 2160
@@ -208,27 +208,169 @@ def aplicar_cortes(clusters, corroborar):
     return out
 
 
+def _filtrar_direccion_cam2(clusters):
+    """cam2 valida = der->izq (cx decreciente). Clusters moviendose
+    izq->der son trafico de la calle contraria y se descartan."""
+    out = []
+    for c in clusters:
+        cxs = [d["cx"] for d in sorted(c, key=lambda d: d["f"])]
+        if len(cxs) >= 4:
+            dxs = sorted(cxs[i + 1] - cxs[i] for i in range(len(cxs) - 1))
+            med = dxs[len(dxs) // 2]
+            if med > 1.5:
+                continue
+        out.append(c)
+    return out
+
+
+def _pesos_de(cluster):
+    tiers = {}
+    for d in cluster:
+        for c, t in (d.get("_ocr") or {}).get("codigos", []):
+            tiers.setdefault(c, Counter())[t] += 1
+    pesos = {}
+    for c, ct in tiers.items():
+        p = 2.0 * ct.get("strict", 0) + 1.0 * ct.get("repaired", 0)
+        if ct.get("raw", 0) >= 3:
+            p += 0.5 * ct.get("raw", 0)
+        if p > 0:
+            pesos[c] = p
+    return pesos
+
+
+def _split_familia_cruzada(clusters, clusters_otra):
+    """Un cluster con dos familias fuertes y sin frontera temporal (dos
+    camiones pegados con lecturas intercaladas) se parte si la OTRA
+    camara tiene un cluster propio con esa familia en la misma ventana."""
+    fams_otra = []
+    for c in clusters_otra:
+        p = _pesos_de(c)
+        if p:
+            fam, peso = mejor_codigo_peso(p)
+            if fam and peso >= 4:
+                fams_otra.append((min(d["ts"] for d in c),
+                                  max(d["ts"] for d in c), fam))
+    out = []
+    for c in clusters:
+        p = _pesos_de(c)
+        if not p:
+            out.append(c)
+            continue
+        fam, pesof = mejor_codigo_peso(p)
+        t0, t1 = min(d["ts"] for d in c), max(d["ts"] for d in c)
+        cortes = []
+        for f, peso_f in sorted(p.items(), key=lambda x: -x[1]):
+            if f == fam or ocr_codes._levenshtein(f, fam) <= 2:
+                continue
+            if peso_f < max(2.5, 0.25 * pesof):
+                continue
+            if any(t0 - 30 <= t0x and t1x <= t1 + 30 and
+                   ocr_codes._levenshtein(f, fam2) <= 2
+                   for t0x, t1x, fam2 in fams_otra):
+                cortes.append(f)
+        if not cortes:
+            out.append(c)
+            continue
+        sub = []
+        resto = []
+        for d in c:
+            cods = [cod for cod, _ in
+                    (d.get("_ocr") or {}).get("codigos", [])]
+            if cods and any(ocr_codes._levenshtein(cod, f) <= 2
+                            for f in cortes for cod in cods):
+                sub.append(d)
+            else:
+                resto.append(d)
+        if len(sub) >= 3 and len(resto) >= 3:
+            out.append(sub)
+            out.append(resto)
+        else:
+            out.append(c)
+    return out
+
+
 def camiones(recs1, recs2):
     c1 = clusters_de(recs1)
-    c2 = clusters_de(recs2)
+    c2 = _filtrar_direccion_cam2(clusters_de(recs2))
     for _ in range(2):
         fr1 = [t for c in c1 for t in fronteras_de(c)]
         fr2 = [t for c in c2 for t in fronteras_de(c)]
         c1 = aplicar_cortes(c1, lambda t: corroborado(t, c2, fr2))
         c2 = aplicar_cortes(c2, lambda t: corroborado(t, c1, fr1))
+    c1 = _split_familia_cruzada(c1, c2)
+    c2 = _split_familia_cruzada(c2, c1)
     return c1, c2
+
+
+def _recalcular_pesos(truck):
+    pesos = {}
+    for c, ct in truck["tiers"].items():
+        peso = 2.0 * ct.get("strict", 0) + 1.0 * ct.get("repaired", 0)
+        if ct.get("raw", 0) >= 3:
+            peso += 0.5 * ct.get("raw", 0)
+        if peso > 0:
+            pesos[c] = peso
+    truck["pesos"] = pesos
+
+
+def _mezclar_reocr(truck):
+    for c, ct in truck.get("reocr", {}).items():
+        truck["tiers"].setdefault(c, Counter()).update(ct)
+    _recalcular_pesos(truck)
 
 
 def truck_de(dets):
     cam = dets[0]["cam"]
     votes = Counter()
+    tiers = {}
     for d in dets:
         if d.get("_ocr"):
-            for c, _ in d["_ocr"].get("codigos", []):
+            for c, tier in d["_ocr"].get("codigos", []):
                 votes[c] += 1
-    return {"cam": cam, "dets": dets, "votes": votes,
-            "ts_inicio": dets[0]["ts"], "ts_fin": dets[-1]["ts"],
-            "picos": []}
+                tiers.setdefault(c, Counter())[tier] += 1
+    truck = {"cam": cam, "dets": dets, "votes": votes,
+             "tiers": tiers,
+             "ts_inicio": dets[0]["ts"], "ts_fin": dets[-1]["ts"],
+             "picos": []}
+    _recalcular_pesos(truck)
+    return truck
+
+
+def mejor_codigo_peso(pesos, tiers=None):
+    """Codigo por votacion ponderada (strict 2 / repaired 1 / raw 0.5,
+    raw solo si >=3 lecturas). Desempate dentro del vecindario fuzzy
+    por cantidad de lecturas strict."""
+    if not pesos:
+        return None, 0
+    unicos = list(pesos)
+    vecinos = {c: pesos[c] for c in unicos}
+    for i in range(len(unicos)):
+        for j in range(i + 1, len(unicos)):
+            if ocr_codes._levenshtein(unicos[i], unicos[j]) <= 2:
+                vecinos[unicos[i]] += pesos[unicos[j]]
+                vecinos[unicos[j]] += pesos[unicos[i]]
+    tiers = tiers or {}
+    best = max(unicos, key=lambda c: (
+        vecinos[c],
+        tiers.get(c, Counter()).get("strict", 0),
+        pesos[c]))
+    return best, vecinos[best]
+
+
+def pesos_combinados(a, b):
+    """Pesos de ambas camaras; +2 de bonus a codigos leidos por las dos."""
+    out = {}
+    tiers = {}
+    for t in (a, b):
+        if not t:
+            continue
+        for c, p in t.get("pesos", {}).items():
+            out[c] = out.get(c, 0) + p
+            tiers.setdefault(c, Counter()).update(t["tiers"].get(c, {}))
+    if a and b:
+        for c in set(a.get("pesos", {})) & set(b.get("pesos", {})):
+            out[c] = out.get(c, 0) + 2.0
+    return out, tiers
 
 
 def es_ruido(truck):
@@ -260,6 +402,7 @@ def asignar_picos(trucks, recs_cam):
             grupos.append([p])
     for g in grupos:
         trucks.append({"cam": g[0]["cam"], "dets": [], "votes": Counter(),
+                       "tiers": {}, "pesos": {},
                        "ts_inicio": g[0]["ts"], "ts_fin": g[-1]["ts"],
                        "picos": g})
     for t in trucks:
@@ -316,8 +459,10 @@ def aplicar_reocr(trucks, cache_path, server):
         for d in t["dets"]:
             e = cache.get(d.get("crop"))
             if e:
-                for c, _ in e["codigos"]:
+                for c, tier in e["codigos"]:
                     t["votes"][c] += 1
+                    t.setdefault("reocr", {}).setdefault(
+                        c, Counter())[tier] += 1
 
 
 def emparejar(t1, t2):
@@ -453,7 +598,8 @@ def construir(recs1, recs2, args):
     aplicar_reocr(t1 + t2, os.path.join(args.salida, "reocr.json"),
                   args.server)
     for t in t1 + t2:
-        t["familia"], _ = mejor_codigo(t["votes"])
+        _mezclar_reocr(t)
+        t["familia"], _ = mejor_codigo_peso(t["pesos"], t["tiers"])
     cerradas1 = [t for t in t1 if ahora - t["ts_fin"] >= CIERRE]
     cerradas2 = [t for t in t2 if ahora - t["ts_fin"] >= CIERRE]
 
@@ -501,9 +647,12 @@ def construir(recs1, recs2, args):
         cid = ids_new[f"cam{cam}_{ini:.2f}"]
         v1 = a["votes"] if a else Counter()
         v2 = b["votes"] if b else Counter()
-        cod1, n1 = mejor_codigo(v1)
-        cod2, n2 = mejor_codigo(v2)
-        codf, nf = mejor_codigo(v1 + v2)
+        cod1, n1 = mejor_codigo_peso(a["pesos"], a["tiers"]) if a \
+            else (None, 0)
+        cod2, n2 = mejor_codigo_peso(b["pesos"], b["tiers"]) if b \
+            else (None, 0)
+        pf, tiers_f = pesos_combinados(a, b)
+        codf, nf = mejor_codigo_peso(pf, tiers_f)
         disc = []
         if cod1 and cod2 and ocr_codes._levenshtein(cod1, cod2) > 2:
             disc.append("DISCREPANCIA")

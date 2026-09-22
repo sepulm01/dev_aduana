@@ -143,8 +143,10 @@ def worker_ocr(ctx, args):
 
 def procesar_camara(args, gate, gate_pose, ctx):
     camara = args.camara
-    filtrar_dir = camara == 1
-    umbral_eq = args.umbral_area or (3000 if camara == 1 else 2000)
+    filtrar_dir = True
+    # cam1 valida: izq->der (+); cam2 valida: der->izq (-)
+    signo_dir = 1 if camara == 1 else -1
+    umbral_eq = args.umbral_area or 2000
     umbral_ef = umbral_eq * (W * H) / (960 * 540)
     paso_espaciado = max(1, int(round(args.fps)))
     retro = paso_espaciado // 2
@@ -389,14 +391,17 @@ def procesar_camara(args, gate, gate_pose, ctx):
                                 [dir_dx[i + 1] - dir_dx[i]
                                  for i in range(len(dir_dx) - 1)])
                             if abs(med) > 0.5 or len(dir_dx) >= 6:
-                                valida = med > 0.5
+                                valida = med * signo_dir > 0.5
                                 if valida:
-                                    print(f"[dir] f{pos} izq->der VALIDA",
+                                    print(f"[dir] f{pos} "
+                                          f"{'izq->der' if camara == 1 else 'der->izq'}"
+                                          " VALIDA",
                                           flush=True)
                                     flush_pendientes()
                                 else:
-                                    print(f"[dir] f{pos} der->izq "
-                                          "DESCARTADA", flush=True)
+                                    print(f"[dir] f{pos} "
+                                          f"{'der->izq' if camara == 1 else 'izq->der'}"
+                                          " DESCARTADA", flush=True)
                                     pendientes = []
                                     best_code = []
                                     tops_sellos = []
@@ -465,7 +470,7 @@ def main():
     gate.warmup()
     gate_pose = PoseGate()
     gate_pose.warmup()
-    ctx = {"q": queue.Queue(maxsize=64), "cerrar": False, "seq": 0,
+    ctx = {"q": queue.Queue(maxsize=128), "cerrar": False, "seq": 0,
            "lock": threading.Lock()}
     ocr_t = threading.Thread(target=worker_ocr, args=(ctx, args), daemon=True)
     ocr_t.start()
