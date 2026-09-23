@@ -173,6 +173,7 @@ def procesar_camara(args, gate, gate_pose, ctx):
     n_dets_run = 0
     n_sellos_run = 0
     n_ocr_run = 0
+    muestras_run = []   # (ts, cx, lap_var, area) por cls3 del run
     runs = ctx["runs"]
 
     def append_rec(rec):
@@ -393,6 +394,37 @@ def procesar_camara(args, gate, gate_pose, ctx):
 
     def cerrar_run():
         nonlocal best_code, tops_sellos, n_dets_run, n_sellos_run, n_ocr_run
+        nonlocal muestras_run
+        if muestras_run:
+            vels = []
+            for i in range(1, len(muestras_run)):
+                dt_ = muestras_run[i][0] - muestras_run[i - 1][0]
+                if dt_ > 0.01:
+                    vels.append((muestras_run[i][1] -
+                                 muestras_run[i - 1][1]) / dt_)
+            laps = [m[2] for m in muestras_run if m[2] is not None]
+            areas = [m[3] for m in muestras_run]
+            if vels:
+                vels.sort()
+                vel = vels[len(vels) // 2]
+            else:
+                vel = 0.0
+            if laps:
+                laps.sort()
+                lap_med = laps[len(laps) // 2]
+            else:
+                lap_med = 0.0
+            areas.sort()
+            area_med = areas[len(areas) // 2]
+            append_rec({"tipo": "run_info", "cam": camara, "run": run_id,
+                        "ts": round(ts_frame.get(
+                            muestras_run[-1][0], time.time()), 2),
+                        "vel_px_s": round(float(vel), 1),
+                        "n_muestras": len(muestras_run),
+                        "n_cls3": len(areas),
+                        "lap_med": lap_med,
+                        "area_med": round(float(area_med))})
+        muestras_run = []
         tops_fs = {p[1] for p in tops_sellos}
         if n_dets_run >= 5 or n_ocr_run >= 1:
             for area, fpos, img in best_code:
@@ -506,6 +538,7 @@ def procesar_camara(args, gate, gate_pose, ctx):
                     n_dets_run = 0
                     n_sellos_run = 0
                     n_ocr_run = 0
+                    muestras_run = []
                     ventana.liberar_hasta(max(0, pos - retro))
                     continue
                 pos += 1
@@ -530,6 +563,17 @@ def procesar_camara(args, gate, gate_pose, ctx):
                             crop = frame[cy1:cy2, cx1:cx2]
                             vertical = (y2 - y1) > args.ratio_alto * \
                                 (x2 - x1)
+                            lap_var = None
+                            if crop.size and crop.shape[0] > 2 and \
+                                    crop.shape[1] > 2:
+                                try:
+                                    lap_var = round(float(
+                                        cv2.Laplacian(crop, cv2.CV_64F)
+                                        .var()), 1)
+                                except cv2.error:
+                                    lap_var = None
+                            muestras_run.append(
+                                (ts, (x1 + x2) / 2, lap_var, area))
                             rec = {"tipo": "det", "cam": camara,
                                    "f": pos, "ts": round(ts, 2),
                                    "run": run_id,
@@ -541,6 +585,7 @@ def procesar_camara(args, gate, gate_pose, ctx):
                                    "cy": round((y1 + y2) / 2, 1),
                                    "hsv": _hsv_promedio(crop),
                                    "vertical": vertical,
+                                   "lap_var": lap_var,
                                    "crop": None}
                             if area >= min_crop:
                                 pendientes.append((rec, crop))
@@ -580,6 +625,7 @@ def procesar_camara(args, gate, gate_pose, ctx):
                                     pendientes = []
                                     best_code = []
                                     tops_sellos = []
+                                    muestras_run = []
                                     n_dets_run = 0
                                     n_sellos_run = 0
                                     n_ocr_run = 0

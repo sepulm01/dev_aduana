@@ -593,6 +593,41 @@ def _guardar_ids(salida, ids):
         json.dump({k: ids[k] for k in claves}, fh)
 
 
+def _mediana_ponderada(pares):
+    orden = sorted(pares, key=lambda x: x[0])
+    total = sum(w for _, w in orden)
+    if not total:
+        return 0.0
+    acum = 0.0
+    for v, w in orden:
+        acum += w
+        if acum >= total / 2:
+            return v
+    return orden[-1][0]
+
+
+def _metrica_truck(t, runinfo):
+    if not t or not t["dets"]:
+        return None
+    infos = {}
+    for d in t["dets"]:
+        k = (t["cam"], d.get("run"))
+        if k in runinfo and k not in infos:
+            infos[k] = runinfo[k]
+    pares = [(i["vel_px_s"], i["n_muestras"]) for i in infos.values()]
+    vel = round(_mediana_ponderada(pares), 1) if pares else None
+    laps = [i["lap_med"] for i in infos.values() if i.get("lap_med")]
+    nit = round(sorted(laps)[len(laps) // 2], 1) if laps else None
+    total = sum(1 for d in t["dets"] if d.get("_ocr"))
+    val = sum(1 for d in t["dets"]
+              if d.get("_ocr") and d["_ocr"].get("codigos"))
+    lect = f"{val}/{total}" if total else None
+    confs = [d["conf"] for d in t["dets"]]
+    conf = round(sum(confs) / len(confs), 2) if confs else None
+    return {"vel_px_s": vel, "nitidez": nit, "lecturas": lect,
+            "conf": conf}
+
+
 def construir(recs1, recs2, args):
     ahora = time.time()
     c1, c2 = camiones(recs1, recs2)
@@ -624,6 +659,10 @@ def construir(recs1, recs2, args):
 
     f4k_by_f = {r["f"]: r["path"] for r in recs1 + recs2
                 if r["tipo"] == "frame4k"}
+    runinfo = {}
+    for r in recs1 + recs2:
+        if r["tipo"] == "run_info":
+            runinfo[(r["cam"], r["run"])] = r
 
     pares = emparejar(cerradas1, cerradas2)
     usados1 = {i for i, _ in pares}
@@ -679,7 +718,10 @@ def construir(recs1, recs2, args):
         clase = {"CON SELLO": "con", "SIN SELLO": "sin",
                  "DUDA": "duda"}[sf["veredicto"]]
         partes = []
-        for lado, t, codc in (("cam1", a, cod1), ("cam2", b, cod2)):
+        met1 = _metrica_truck(a, runinfo)
+        met2 = _metrica_truck(b, runinfo)
+        for lado, t, codc, met in (("cam1", a, cod1, met1),
+                                   ("cam2", b, cod2, met2)):
             if not t:
                 partes.append(f"<div><b>{lado}</b>: sin datos</div>")
                 continue
@@ -713,6 +755,13 @@ def construir(recs1, recs2, args):
                     f"<img class='crop' src='{crop_cod}'></a>"
                     f"<figcaption>{lado} mejor crop código "
                     f"(click = real)</figcaption></figure>")
+            if met:
+                html_p.append(
+                    f"<div style='color:#9aa4b2;font-size:12px;"
+                    f"margin-top:4px'>vel {met['vel_px_s']} px/s · "
+                    f"nitidez {met['nitidez']} · "
+                    f"lecturas {met['lecturas']} · conf {met['conf']}"
+                    f"</div>")
             partes.append(f"<div><b>{lado}</b> {''.join(html_p) or '—'}"
                           f"</div>")
         disc_html = "".join(f"<span class='badge warn'>{esc(x)}</span> "
@@ -732,7 +781,15 @@ def construir(recs1, recs2, args):
                          "sello": sf["veredicto"],
                          "cam1_codigo": cod1, "cam2_codigo": cod2,
                          "cam1_sello": s1["veredicto"] if s1 else None,
-                         "cam2_sello": s2["veredicto"] if s2 else None})
+                         "cam2_sello": s2["veredicto"] if s2 else None,
+                         "cam1_vel_px_s": met1["vel_px_s"] if met1 else None,
+                         "cam2_vel_px_s": met2["vel_px_s"] if met2 else None,
+                         "cam1_nitidez": met1["nitidez"] if met1 else None,
+                         "cam2_nitidez": met2["nitidez"] if met2 else None,
+                         "cam1_lecturas": met1["lecturas"] if met1 else None,
+                         "cam2_lecturas": met2["lecturas"] if met2 else None,
+                         "cam1_conf": met1["conf"] if met1 else None,
+                         "cam2_conf": met2["conf"] if met2 else None})
 
     with open(os.path.join(args.salida, "containers.json"), "w") as fh:
         json.dump(registro, fh, indent=1, ensure_ascii=False)
