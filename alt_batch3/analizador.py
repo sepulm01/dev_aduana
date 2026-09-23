@@ -641,6 +641,10 @@ def _fusionar_fragmentos(trucks):
                        if d.get("_ocr") and d["_ocr"].get("codigos"))
             if lect >= 3 or not t["dets"]:
                 continue
+            # con evidencia fisica sustancial (>=10 dets Y puertas) no es
+            # fragmento aunque el OCR haya fallado
+            if len(t["dets"]) >= 10 and t["picos"]:
+                continue
             fam, _ = mejor_codigo_peso(t["pesos"], t["tiers"])
             cands = [o for o in out
                      if o is not t and o["cam"] == t["cam"] and o["dets"]]
