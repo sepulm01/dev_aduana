@@ -499,14 +499,11 @@ def emparejar(t1, t2):
     while i < len(libres1) and j < len(libres2):
         a, b = t1[libres1[i]], t2[libres2[j]]
         dt = abs(a["ts_inicio"] - b["ts_inicio"])
-        # no emparejar por secuencia cuando ambas camaras tienen
-        # familias solidas y distintas: son camiones diferentes
+        # no emparejar por secuencia cuando ambas camaras leyeron
+        # familias distintas: son camiones diferentes (o lecturas tan
+        # dispares que es mejor mostrarlas por separado que cruzadas)
         fa, fb = a.get("familia"), b.get("familia")
-        pa = a.get("pesos", {}).get(fa, 0) if fa else 0
-        pb = b.get("pesos", {}).get(fb, 0) if fb else 0
-        conflicto = (fa and fb and
-                     ocr_codes._levenshtein(fa, fb) > 2 and
-                     pa >= 4 and pb >= 4)
+        conflicto = (fa and fb and ocr_codes._levenshtein(fa, fb) > 2)
         if conflicto:
             if a["ts_inicio"] < b["ts_inicio"]:
                 i += 1
