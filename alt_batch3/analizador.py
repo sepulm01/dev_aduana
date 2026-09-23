@@ -389,14 +389,14 @@ def asignar_picos(trucks, recs_cam):
         if not candidatos:
             sobra.append(p)
             continue
-        # un pico pertenece al camion que contiene dets de SU run
+        # un pico pertenece al camion con mas dets de SU run
         mismo_run = [t for t in candidatos
                      if any(d.get("run") == p.get("run")
                             for d in t["dets"])]
         if mismo_run:
-            t = min(mismo_run,
-                    key=lambda t: abs(p["ts"] -
-                                      (t["ts_inicio"] + t["ts_fin"]) / 2))
+            t = max(mismo_run,
+                    key=lambda t: sum(1 for d in t["dets"]
+                                      if d.get("run") == p.get("run")))
         else:
             t = min(candidatos,
                     key=lambda t: abs(p["ts"] -
@@ -534,12 +534,14 @@ def sello_de(truck):
 
 
 def mejor_foto(truck):
-    best = None
-    for p in truck["picos"]:
-        if p.get("foto") and os.path.exists(p["foto"]) and \
-                (best is None or p["n_sellos"] > best[0]):
-            best = (p["n_sellos"], p["foto"], p.get("sello_crop"))
-    return best
+    """Foto del pico del run mas tardio del camion (las puertas vienen al
+    final de la pasada), con mayor n_sellos dentro de ese run."""
+    if not truck["picos"]:
+        return None
+    run_max = max(p.get("run", 0) for p in truck["picos"])
+    del_run = [p for p in truck["picos"] if p.get("run", 0) == run_max]
+    best = max(del_run, key=lambda p: p["n_sellos"])
+    return (best["n_sellos"], best.get("foto"), best.get("sello_crop"))
 
 
 def mejor_crop_codigo(truck, f4k_by_f, salida):
