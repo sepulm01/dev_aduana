@@ -533,13 +533,21 @@ def sello_de(truck):
 
 
 def mejor_foto(truck):
-    """Foto del pico del run mas tardio del camion (las puertas vienen al
-    final de la pasada), con mayor n_sellos dentro de ese run."""
+    """Foto del pico del run con mas lecturas de la familia del camion
+    (desempate por ts: la pasada mas reciente)."""
     if not truck["picos"]:
         return None
-    run_max = max(p.get("run", 0) for p in truck["picos"])
-    del_run = [p for p in truck["picos"] if p.get("run", 0) == run_max]
-    best = max(del_run, key=lambda p: p["n_sellos"])
+    fam = truck.get("familia")
+
+    def score(p):
+        run = p.get("run")
+        if not fam:
+            return 0
+        return sum(1 for d in truck["dets"]
+                   if d.get("run") == run and d.get("_ocr") and
+                   any(ocr_codes._levenshtein(c, fam) <= 2
+                       for c, _ in d["_ocr"].get("codigos", [])))
+    best = max(truck["picos"], key=lambda p: (score(p), p["ts"]))
     return (best["n_sellos"], best.get("foto"), best.get("sello_crop"))
 
 
