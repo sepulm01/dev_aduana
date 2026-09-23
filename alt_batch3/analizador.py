@@ -706,7 +706,7 @@ def _fusionar_fragmentos(trucks):
                 if not fam2:
                     continue
                 if ocr_codes._levenshtein(fam, fam2) <= 2 and \
-                        abs(o["ts_inicio"] - t["ts_inicio"]) <= 15:
+                        abs(o["ts_inicio"] - t["ts_inicio"]) <= 90:
                     t["dets"].extend(o["dets"])
                     t["picos"].extend(o["picos"])
                     for c, ct in o["tiers"].items():
