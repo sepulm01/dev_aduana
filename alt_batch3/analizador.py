@@ -389,9 +389,18 @@ def asignar_picos(trucks, recs_cam):
         if not candidatos:
             sobra.append(p)
             continue
-        t = min(candidatos,
-                key=lambda t: abs(p["ts"] -
-                                  (t["ts_inicio"] + t["ts_fin"]) / 2))
+        # un pico pertenece al camion que contiene dets de SU run
+        mismo_run = [t for t in candidatos
+                     if any(d.get("run") == p.get("run")
+                            for d in t["dets"])]
+        if mismo_run:
+            t = min(mismo_run,
+                    key=lambda t: abs(p["ts"] -
+                                      (t["ts_inicio"] + t["ts_fin"]) / 2))
+        else:
+            t = min(candidatos,
+                    key=lambda t: abs(p["ts"] -
+                                      (t["ts_inicio"] + t["ts_fin"]) / 2))
         t["picos"].append(p)
     sobra.sort(key=lambda p: p["ts"])
     grupos = []
