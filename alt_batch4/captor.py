@@ -440,7 +440,12 @@ def procesar_camara(args, gate, gate_pose, ctx):
                     x2, y2 = min(W, int(cx + half)), min(H, int(cy + half))
                     crop = img[y1:y2, x1:x2]
                     if crop.shape[0] >= 60 and crop.shape[1] >= 60:
-                        sc = f"{foto[:-4]}_sello.jpg"
+                        # los recortes de sello van a fotos_b3 para que el
+                        # clasificador (labels_web) los siga consumiendo
+                        sc = os.path.join(
+                            "fotos_b3",
+                            f"cam{camara}_b4_{seq:08d}_f{fpos:06d}_sello.jpg")
+                        os.makedirs("fotos_b3", exist_ok=True)
                         _guardar_jpg(crop, sc, 90)
                 append_rec({"tipo": "pico", "cam": camara, "seq": seq,
                             "f": fpos,
