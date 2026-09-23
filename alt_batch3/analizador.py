@@ -499,6 +499,20 @@ def emparejar(t1, t2):
     while i < len(libres1) and j < len(libres2):
         a, b = t1[libres1[i]], t2[libres2[j]]
         dt = abs(a["ts_inicio"] - b["ts_inicio"])
+        # no emparejar por secuencia cuando ambas camaras tienen
+        # familias solidas y distintas: son camiones diferentes
+        fa, fb = a.get("familia"), b.get("familia")
+        pa = a.get("pesos", {}).get(fa, 0) if fa else 0
+        pb = b.get("pesos", {}).get(fb, 0) if fb else 0
+        conflicto = (fa and fb and
+                     ocr_codes._levenshtein(fa, fb) > 2 and
+                     pa >= 4 and pb >= 4)
+        if conflicto:
+            if a["ts_inicio"] < b["ts_inicio"]:
+                i += 1
+            else:
+                j += 1
+            continue
 
         def cerca(truck, lista, k):
             return any(abs(truck["ts_inicio"] - o["ts_inicio"]) <= CERCANIA
@@ -677,6 +691,37 @@ def _fusionar_fragmentos(trucks):
             out.remove(t)
             cambiado = True
             break
+    # pasada 2: mismo codigo (lev<=2) y <15s en la misma camara =
+    # el mismo camion partido por un split
+    cambiado = True
+    while cambiado:
+        cambiado = False
+        for t in list(out):
+            if t not in out:
+                continue
+            fam = t.get("familia")
+            if not fam:
+                continue
+            for o in out:
+                if o is t or o["cam"] != t["cam"]:
+                    continue
+                fam2 = o.get("familia")
+                if not fam2:
+                    continue
+                if ocr_codes._levenshtein(fam, fam2) <= 2 and \
+                        abs(o["ts_inicio"] - t["ts_inicio"]) <= 15:
+                    t["dets"].extend(o["dets"])
+                    t["picos"].extend(o["picos"])
+                    for c, ct in o["tiers"].items():
+                        t["tiers"].setdefault(c, Counter()).update(ct)
+                    _recalcular_pesos(t)
+                    t["ts_inicio"] = min(t["ts_inicio"], o["ts_inicio"])
+                    t["ts_fin"] = max(t["ts_fin"], o["ts_fin"])
+                    out.remove(o)
+                    cambiado = True
+                    break
+            if cambiado:
+                break
     return out
 
 
