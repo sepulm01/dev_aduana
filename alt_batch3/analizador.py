@@ -389,18 +389,17 @@ def asignar_picos(trucks, recs_cam):
         if not candidatos:
             sobra.append(p)
             continue
-        # un pico pertenece al camion con mas dets de SU run
+        # un pico pertenece al camion del MISMO run cuyo span lo contiene;
+        # desempate por centro mas cercano (las puertas vienen al final)
         mismo_run = [t for t in candidatos
                      if any(d.get("run") == p.get("run")
                             for d in t["dets"])]
-        if mismo_run:
-            t = max(mismo_run,
-                    key=lambda t: sum(1 for d in t["dets"]
-                                      if d.get("run") == p.get("run")))
-        else:
-            t = min(candidatos,
-                    key=lambda t: abs(p["ts"] -
-                                      (t["ts_inicio"] + t["ts_fin"]) / 2))
+        en_span = [t for t in mismo_run
+                   if t["ts_inicio"] - 3 <= p["ts"] <= t["ts_fin"] + 5]
+        pool = en_span or mismo_run or candidatos
+        t = min(pool,
+                key=lambda t: abs(p["ts"] -
+                                  (t["ts_inicio"] + t["ts_fin"]) / 2))
         t["picos"].append(p)
     sobra.sort(key=lambda p: p["ts"])
     grupos = []
