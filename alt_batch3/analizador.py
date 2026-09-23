@@ -628,6 +628,46 @@ def _metrica_truck(t, runinfo):
             "conf": conf}
 
 
+def _fusionar_fragmentos(trucks):
+    """Camiones con <3 lecturas validas son fragmentos de un split:
+    se fusionan al camion vecino de la misma familia (o el mas cercano
+    en el tiempo), transfiriendo dets, picos y votos."""
+    out = list(trucks)
+    cambiado = True
+    while cambiado:
+        cambiado = False
+        for t in list(out):
+            lect = sum(1 for d in t["dets"]
+                       if d.get("_ocr") and d["_ocr"].get("codigos"))
+            if lect >= 3 or not t["dets"]:
+                continue
+            fam, _ = mejor_codigo_peso(t["pesos"], t["tiers"])
+            cands = [o for o in out
+                     if o is not t and o["cam"] == t["cam"] and o["dets"]]
+            if not cands:
+                continue
+            pool = cands
+            if fam:
+                misma = [o for o in cands
+                         if o.get("familia") and
+                         ocr_codes._levenshtein(fam, o["familia"]) <= 2]
+                if misma:
+                    pool = misma
+            o = min(pool, key=lambda o: abs(o["ts_inicio"] -
+                                            t["ts_inicio"]))
+            o["dets"].extend(t["dets"])
+            o["picos"].extend(t["picos"])
+            for c, ct in t["tiers"].items():
+                o["tiers"].setdefault(c, Counter()).update(ct)
+            _recalcular_pesos(o)
+            o["ts_inicio"] = min(o["ts_inicio"], t["ts_inicio"])
+            o["ts_fin"] = max(o["ts_fin"], t["ts_fin"])
+            out.remove(t)
+            cambiado = True
+            break
+    return out
+
+
 def construir(recs1, recs2, args):
     ahora = time.time()
     c1, c2 = camiones(recs1, recs2)
@@ -645,6 +685,8 @@ def construir(recs1, recs2, args):
     for t in t1 + t2:
         _mezclar_reocr(t)
         t["familia"], _ = mejor_codigo_peso(t["pesos"], t["tiers"])
+    t1 = _fusionar_fragmentos(t1)
+    t2 = _fusionar_fragmentos(t2)
     cerradas1 = [t for t in t1 if ahora - t["ts_fin"] >= CIERRE]
     cerradas2 = [t for t in t2 if ahora - t["ts_fin"] >= CIERRE]
 
