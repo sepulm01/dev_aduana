@@ -221,10 +221,15 @@ def _split_trayectoria(dets):
     for i in range(len(ds) - 1):
         a, b = ds[i], ds[i + 1]
         dx = b["cx"] - a["cx"]
-        entrada = ((cam == 1 and b["cx"] < 0.2 * W and a["cx"] > 0.8 * W) or
-                   (cam == 2 and b["cx"] > 0.8 * W and a["cx"] < 0.2 * W))
-        if not (entrada and abs(dx) >= 0.25 * W
-                and b["area"] >= 5 * a["area"] and a["area"] < umbral_chico):
+        # re-entrada: el run anterior salio por un borde y el siguiente
+        # aparece RETROCEDIDO mas de 0.3W (el probe puede activar el run
+        # nuevo a mitad de cuadro; no exigimos entrada por el borde)
+        entrada = ((cam == 1 and b["cx"] < a["cx"] - 0.3 * W
+                    and a["cx"] > 0.7 * W) or
+                   (cam == 2 and b["cx"] > a["cx"] + 0.3 * W
+                    and a["cx"] < 0.3 * W))
+        if not (entrada and b["area"] >= 5 * a["area"]
+                and a["area"] < umbral_chico):
             continue
         if i + 1 < len(ds) and abs(ds[i + 1]["cx"] - b["cx"]) < 0.35 * W:
             cortes.append((a["f"] + b["f"]) // 2)
