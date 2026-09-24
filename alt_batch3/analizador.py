@@ -47,6 +47,101 @@ RETENCION_DIAS = 7
 UMBRAL_MOV = 5.0
 MIN_MUESTRAS_MOV = 3
 
+COLOR_HUE_TOL = 0.08
+COLOR_V_ESTABLE = 0.35
+COLOR_V_MIN = 0.12
+COLOR_S_GRIS = 0.10
+COLOR_DV_GRIS = 0.20
+COLOR_MIN_MUESTRAS = 2
+COLOR_MIN_DIVERGE = 3
+
+
+def _hue_dist(h1, h2):
+    d = abs(h1 - h2) % 1.0
+    return min(d, 1.0 - d)
+
+
+def _color_de(d):
+    hsv = d.get("hsv")
+    if not hsv or len(hsv) < 3 or hsv[0] is None:
+        return None
+    return hsv
+
+
+def _color_ancla(truck):
+    """Ancla de color del camion: hue mediana circular + s/v medianos.
+    Devuelve (h, s, v, n) o None si hay pocas muestras."""
+    cols = [c for c in (_color_de(d) for d in truck["dets"])
+            if c is not None]
+    if len(cols) < COLOR_MIN_MUESTRAS:
+        return None
+    hues = sorted(c[0] for c in cols)
+    h = min(hues, key=lambda ref: sum(_hue_dist(ref, x) for x in hues))
+    s = sorted(c[1] for c in cols)[len(cols) // 2]
+    v = sorted(c[2] for c in cols)[len(cols) // 2]
+    return (h, s, v, len(cols))
+
+
+def colores_distintos(a, b):
+    """True si dos camiones son de distinto color. La divergencia de hue
+    solo cuenta con V estable (los cambios de iluminacion no son cambio
+    de color). Pares grises (S bajo) se comparan por valor V."""
+    ca, cb = _color_ancla(a), _color_ancla(b)
+    if not ca or not cb:
+        return False
+    dv = abs(ca[2] - cb[2])
+    if ca[1] < COLOR_S_GRIS and cb[1] < COLOR_S_GRIS:
+        return dv > COLOR_DV_GRIS
+    if ca[1] < COLOR_S_GRIS or cb[1] < COLOR_S_GRIS:
+        return dv > COLOR_DV_GRIS
+    if dv > COLOR_V_ESTABLE:
+        return False
+    return _hue_dist(ca[0], cb[0]) > COLOR_HUE_TOL
+
+
+def _split_color_anclado(dets):
+    """Un cluster con deriva de color anclada (hue de las 2 primeras
+    lecturas validas): si >=3 dets seguidos divergen con V estable, el
+    cluster se parte ahi (frontera dura, como el sweeper)."""
+    cols = [_color_de(d) for d in dets]
+    validos = [i for i, c in enumerate(cols) if c is not None]
+    if len(validos) < COLOR_MIN_MUESTRAS + 3:
+        return [dets]
+    h0 = cols[validos[0]][0]
+    h1 = cols[validos[1]][0]
+    v_ancla = (cols[validos[0]][2] + cols[validos[1]][2]) / 2
+
+    def diverge(i):
+        c = cols[i]
+        if c is None or c[2] < COLOR_V_MIN:
+            return False
+        if abs(c[2] - v_ancla) > COLOR_V_ESTABLE:
+            return False
+        return (_hue_dist(c[0], h0) > COLOR_HUE_TOL and
+                _hue_dist(c[0], h1) > COLOR_HUE_TOL)
+
+    cortes = []
+    i = 0
+    while i < len(dets):
+        if not diverge(i):
+            i += 1
+            continue
+        j = i
+        while j < len(dets) and diverge(j):
+            j += 1
+        if j - i >= COLOR_MIN_DIVERGE and i > 0:
+            cortes.append(dets[i]["ts"])
+        i = max(j, i + 1)
+    if not cortes:
+        return [dets]
+    out = []
+    for d in dets:
+        k = sum(1 for t in cortes if d["ts"] >= t)
+        if k >= len(out):
+            out.append([])
+        out[k].append(d)
+    return [o for o in out if o]
+
 
 def leer(path, offs):
     out = []
@@ -299,6 +394,8 @@ def camiones(recs1, recs2):
         c2 = aplicar_cortes(c2, lambda t: corroborado(t, c1, fr1))
     c1 = _split_familia_cruzada(c1, c2)
     c2 = _split_familia_cruzada(c2, c1)
+    c1 = [s for c in c1 for s in _split_color_anclado(c)]
+    c2 = [s for c in c2 for s in _split_color_anclado(c)]
     return c1, c2
 
 
@@ -488,6 +585,8 @@ def emparejar(t1, t2):
                 continue
             if ocr_codes._levenshtein(fam, fam2) > 2:
                 continue
+            if colores_distintos(t1[i], t2[j]):
+                continue
             dt = abs(t1[i]["ts_inicio"] - t2[j]["ts_inicio"])
             if dt <= TOL_CODIGO and (mejor is None or dt < mejor[0]):
                 mejor = (dt, j)
@@ -503,7 +602,8 @@ def emparejar(t1, t2):
         # familias distintas: son camiones diferentes (o lecturas tan
         # dispares que es mejor mostrarlas por separado que cruzadas)
         fa, fb = a.get("familia"), b.get("familia")
-        conflicto = (fa and fb and ocr_codes._levenshtein(fa, fb) > 2)
+        conflicto = (fa and fb and ocr_codes._levenshtein(fa, fb) > 2) \
+            or colores_distintos(a, b)
         if conflicto:
             if a["ts_inicio"] < b["ts_inicio"]:
                 i += 1
@@ -676,6 +776,10 @@ def _fusionar_fragmentos(trucks):
                          ocr_codes._levenshtein(fam, o["familia"]) <= 2]
                 if misma:
                     pool = misma
+            mismo_color = [o for o in pool
+                           if not colores_distintos(t, o)]
+            if mismo_color:
+                pool = mismo_color
             o = min(pool, key=lambda o: abs(o["ts_inicio"] -
                                             t["ts_inicio"]))
             o["dets"].extend(t["dets"])
@@ -706,7 +810,8 @@ def _fusionar_fragmentos(trucks):
                 if not fam2:
                     continue
                 if ocr_codes._levenshtein(fam, fam2) <= 2 and \
-                        abs(o["ts_inicio"] - t["ts_inicio"]) <= 90:
+                        abs(o["ts_inicio"] - t["ts_inicio"]) <= 90 and \
+                        not colores_distintos(t, o):
                     t["dets"].extend(o["dets"])
                     t["picos"].extend(o["picos"])
                     for c, ct in o["tiers"].items():
@@ -741,6 +846,8 @@ def construir(recs1, recs2, args):
         t["familia"], _ = mejor_codigo_peso(t["pesos"], t["tiers"])
     t1 = _fusionar_fragmentos(t1)
     t2 = _fusionar_fragmentos(t2)
+    for t in t1 + t2:
+        t["color"] = _color_ancla(t)
     cerradas1 = [t for t in t1 if ahora - t["ts_fin"] >= CIERRE]
     cerradas2 = [t for t in t2 if ahora - t["ts_fin"] >= CIERRE]
 
@@ -763,17 +870,26 @@ def construir(recs1, recs2, args):
     pares = emparejar(cerradas1, cerradas2)
     usados1 = {i for i, _ in pares}
     usados2 = {j for _, j in pares}
-    filas = [(cerradas1[i], cerradas2[j]) for i, j in pares]
-    filas += [(cerradas1[i], None) for i in range(len(cerradas1))
+    filas = [(cerradas1[i], cerradas2[j], None) for i, j in pares]
+    filas += [(cerradas1[i], None, None) for i in range(len(cerradas1))
               if i not in usados1]
-    filas += [(None, cerradas2[j]) for j in range(len(cerradas2))
+    filas += [(None, cerradas2[j], None) for j in range(len(cerradas2))
               if j not in usados2]
+    # red final: nunca dos colores distintos en la misma lectura
+    expandidas = []
+    for a, b, motivo in filas:
+        if a and b and colores_distintos(a, b):
+            expandidas.append((a, None, "color"))
+            expandidas.append((None, b, "color"))
+        else:
+            expandidas.append((a, b, motivo))
+    filas = expandidas
     filas.sort(key=lambda x: (x[0] or x[1])["ts_inicio"])
 
     ids = _cargar_ids(args.salida)
     prox = max(ids.values(), default=0) + 1
     ids_new = {}
-    for a, b in filas:
+    for a, b, motivo in filas:
         ini = (a or b)["ts_inicio"]
         cam = (a or b)["cam"]
         clave = f"cam{cam}_{ini:.2f}"
@@ -786,7 +902,7 @@ def construir(recs1, recs2, args):
 
     secciones = []
     registro = []
-    for a, b in reversed(filas):
+    for a, b, motivo in reversed(filas):
         ini = (a or b)["ts_inicio"]
         cam = (a or b)["cam"]
         cid = ids_new[f"cam{cam}_{ini:.2f}"]
@@ -801,12 +917,14 @@ def construir(recs1, recs2, args):
         disc = []
         if cod1 and cod2 and ocr_codes._levenshtein(cod1, cod2) > 2:
             disc.append("DISCREPANCIA")
-        if cod1 and not cod2:
+        if cod1 and not cod2 and motivo != "color":
             disc.append("cam2 no leyó código")
-        if cod2 and not cod1:
+        if cod2 and not cod1 and motivo != "color":
             disc.append("cam1 no leyó código")
         if not cod1 and not cod2:
             disc.append("CÓDIGO NO LEGIBLE")
+        if motivo == "color":
+            disc.append("COLOR DISTINTO")
         s1 = sello_de(a) if a else None
         s2 = sello_de(b) if b else None
         sf = sello_fusion(s1 or {"cls": None, "conf": None},
@@ -816,12 +934,26 @@ def construir(recs1, recs2, args):
         partes = []
         met1 = _metrica_truck(a, runinfo)
         met2 = _metrica_truck(b, runinfo)
+
+        def swatch(t):
+            c = t.get("color") if t else None
+            if not c:
+                return ""
+            h, s, v, n = c
+            bg = f"hsl({h * 360:.0f},{min(s * 100, 100):.0f}%," \
+                 f"{min(v * 100, 85):.0f}%)"
+            return (f"<span class='swatch' style='background:{bg}' "
+                    f"title='hsv {h:.2f}/{s:.2f}/{v:.2f} (n={n})'></span>")
+
         for lado, t, codc, met in (("cam1", a, cod1, met1),
                                    ("cam2", b, cod2, met2)):
             if not t:
                 partes.append(f"<div><b>{lado}</b>: sin datos</div>")
                 continue
             html_p = []
+            sw = swatch(t)
+            if sw:
+                html_p.append(sw)
             mejor = mejor_foto(t)
             if mejor:
                 _, f, fc = mejor
@@ -884,8 +1016,10 @@ def construir(recs1, recs2, args):
                          "cam2_nitidez": met2["nitidez"] if met2 else None,
                          "cam1_lecturas": met1["lecturas"] if met1 else None,
                          "cam2_lecturas": met2["lecturas"] if met2 else None,
-                         "cam1_conf": met1["conf"] if met1 else None,
-                         "cam2_conf": met2["conf"] if met2 else None})
+                          "cam1_conf": met1["conf"] if met1 else None,
+                          "cam2_conf": met2["conf"] if met2 else None,
+                          "cam1_color": a["color"] if a else None,
+                          "cam2_color": b["color"] if b else None})
 
     with open(os.path.join(args.salida, "containers.json"), "w") as fh:
         json.dump(registro, fh, indent=1, ensure_ascii=False)
@@ -903,6 +1037,8 @@ def construir(recs1, recs2, args):
  padding:6px 16px;border-radius:6px;cursor:pointer;font-size:14px}}
 .pager button:disabled{{opacity:.4;cursor:default}}
 .pager .info{{color:#9aa4b2;font-size:14px}}
+.swatch{{display:inline-block;width:14px;height:14px;border-radius:50%;
+ border:1px solid #3c4352;margin-right:8px;vertical-align:middle}}
 </style></head><body>
 <h1>Contenedores — EN VIVO (alt_batch3)</h1>
 <p>{len(registro)} contenedores cerrados · actualizado
