@@ -518,6 +518,10 @@ def asignar_picos(trucks, recs_cam):
 
 def reocr_necesario(truck):
     grupos = _grupos_codigo(list(truck["votes"].elements()))
+    if not grupos:
+        # sin ninguna lectura: intentar re-OCR de los crops guardados
+        return any(d.get("crop") and os.path.exists(d["crop"])
+                   for d in truck["dets"])
     if len(grupos) < 2:
         return False
     scores = sorted((sum(truck["votes"][c] for c in g) for g in grupos),
