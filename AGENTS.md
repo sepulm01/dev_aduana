@@ -104,6 +104,10 @@ docker compose logs -f django-http
 - **File bind-mounts y git**: los mounts de ARCHIVO se atan al inode — cuando `git pull` reemplaza el archivo (inode nuevo), el contenedor sigue viendo el viejo hasta recrearse. Tras pulls que tocan archivos montados: `docker compose up -d --force-recreate` (o restart del servicio).
 - **Dashboard con miniatura**: cada fila de /aduana/ muestra el frame completo (cam1, fallback cam2) en miniatura.
 
+## Recent changes (Sep 2026)
+
+- **Filtro de color en alt_batch4** (23 Sep, commits `acd35e6`→`14e4717`): el analizador ahora usa el `hsv` que el captor b4 ya emite por det. Cuatro capas: (1) `_split_color_anclado` parte clusters por deriva de hue anclada (2 primeras lecturas, V estable, ≥3 dets divergentes, frontera dura); (2) gates de color en `_fusionar_fragmentos` (ambas pasadas); (3) gate en `emparejar` (pasada código y pasada secuencia); (4) red final en `construir` que separa filas con colores o familias distintas (badges `COLOR DISTINTO`/`FAMILIAS DISTINTAS`). Reglas: hue circular tol 0.08, divergencia solo con V estable (|ΔV|≤0.35, V≥0.12 — las sombras no cuentan), grises (S<0.10) se comparan por V (ΔV>0.20). Swatch de color por cámara en el informe (`cam{1,2}_color` en containers.json). Bugs arreglados en el camino: `t["familia"]` quedaba obsoleto tras `_fusionar_fragmentos` (empareje usaba familias viejas → DISCREPANCIAS escapaban del guard) — ahora se recalcula tras cada fusión; `reocr_necesario` ahora también corre para camiones SIN ninguna lectura (los pedazos sin código que deja el split de color recuperan vía VL). Limitaciones conocidas: pedazos con bbox bajo `min_crop` del captor no tienen crops guardados → sin vía de OCR; pares blanco-gris vs color claro con V similar no se distinguen.
+
 ## Recent changes (Jul 2026)
 
 - **Project renamed** from `mediamtx-manager` to `aduana`. External volume names parameterized via `POSTGRES_VOLUME_NAME`/`REDIS_VOLUME_NAME` in `.env` (dev machine: `mediamtx-manager_*`; production 172.16.150.50: `aduana_*`).
