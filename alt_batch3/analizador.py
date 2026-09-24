@@ -787,6 +787,7 @@ def _fusionar_fragmentos(trucks):
             for c, ct in t["tiers"].items():
                 o["tiers"].setdefault(c, Counter()).update(ct)
             _recalcular_pesos(o)
+            o["familia"], _ = mejor_codigo_peso(o["pesos"], o["tiers"])
             o["ts_inicio"] = min(o["ts_inicio"], t["ts_inicio"])
             o["ts_fin"] = max(o["ts_fin"], t["ts_fin"])
             out.remove(t)
@@ -817,6 +818,8 @@ def _fusionar_fragmentos(trucks):
                     for c, ct in o["tiers"].items():
                         t["tiers"].setdefault(c, Counter()).update(ct)
                     _recalcular_pesos(t)
+                    t["familia"], _ = mejor_codigo_peso(t["pesos"],
+                                                         t["tiers"])
                     t["ts_inicio"] = min(t["ts_inicio"], o["ts_inicio"])
                     t["ts_fin"] = max(t["ts_fin"], o["ts_fin"])
                     out.remove(o)
@@ -847,6 +850,7 @@ def construir(recs1, recs2, args):
     t1 = _fusionar_fragmentos(t1)
     t2 = _fusionar_fragmentos(t2)
     for t in t1 + t2:
+        t["familia"], _ = mejor_codigo_peso(t["pesos"], t["tiers"])
         t["color"] = _color_ancla(t)
     cerradas1 = [t for t in t1 if ahora - t["ts_fin"] >= CIERRE]
     cerradas2 = [t for t in t2 if ahora - t["ts_fin"] >= CIERRE]
@@ -875,12 +879,19 @@ def construir(recs1, recs2, args):
               if i not in usados1]
     filas += [(None, cerradas2[j], None) for j in range(len(cerradas2))
               if j not in usados2]
-    # red final: nunca dos colores distintos en la misma lectura
+    # red final: nunca dos colores distintos ni dos familias distintas
+    # en la misma lectura
     expandidas = []
     for a, b, motivo in filas:
-        if a and b and colores_distintos(a, b):
-            expandidas.append((a, None, "color"))
-            expandidas.append((None, b, "color"))
+        fa, fb = a.get("familia") if a else None, \
+            b.get("familia") if b else None
+        familias_cruzadas = (fa and fb and
+                             ocr_codes._levenshtein(fa, fb) > 2)
+        if a and b and (colores_distintos(a, b) or familias_cruzadas):
+            expandidas.append((a, None, "color" if
+                               colores_distintos(a, b) else "familia"))
+            expandidas.append((None, b, "color" if
+                               colores_distintos(a, b) else "familia"))
         else:
             expandidas.append((a, b, motivo))
     filas = expandidas
@@ -925,6 +936,8 @@ def construir(recs1, recs2, args):
             disc.append("CÓDIGO NO LEGIBLE")
         if motivo == "color":
             disc.append("COLOR DISTINTO")
+        if motivo == "familia":
+            disc.append("FAMILIAS DISTINTAS")
         s1 = sello_de(a) if a else None
         s2 = sello_de(b) if b else None
         sf = sello_fusion(s1 or {"cls": None, "conf": None},
